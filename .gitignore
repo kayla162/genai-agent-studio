@@ -1,0 +1,27 @@
+# Dependencies & build output
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment / secrets (never commit API keys)
+.env
+.env.*
+!.env.example
+
+# Your own product photos stay local (not pushed to GitHub)
+assets/products/*
+!assets/products/.gitkeep
+
+# Test artifacts
+playwright-report/
+test-results/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
