@@ -25,3 +25,6 @@ test-results/
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude Code worktrees
+.claude/worktrees/
