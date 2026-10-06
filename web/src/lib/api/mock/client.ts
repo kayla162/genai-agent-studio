@@ -34,6 +34,7 @@ export class MockApiClient implements ApiClient {
   readonly demo: DemoControls;
   private options: DemoOptions = { speed: 1, firstRoundFail: true, forceAllFail: false };
   private readonly jobs = new Map<string, JobRecord>();
+  private tail: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly store: KeyValueStore = new MemoryStore(),
@@ -43,6 +44,13 @@ export class MockApiClient implements ApiClient {
       get: () => ({ ...this.options }),
       set: (patch) => { this.options = { ...this.options, ...patch }; },
     };
+  }
+
+  /** 依序執行「讀取—修改—寫入」，避免並行呼叫互相覆蓋 */
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(fn, fn);
+    this.tail = run.catch(() => undefined);
+    return run;
   }
 
   async listBrands() { return BRANDS; }
@@ -61,24 +69,28 @@ export class MockApiClient implements ApiClient {
     return [...samples, ...custom].filter((p) => p.brandId === brandId);
   }
 
-  async saveProduct(draft: ProductDraft): Promise<Product> {
-    getBrandById(draft.brandId);
-    const custom = await this.customProducts();
-    const existing = draft.id
-      ? (custom.find((p) => p.id === draft.id) ?? SAMPLE_PRODUCTS.find((p) => p.id === draft.id))
-      : undefined;
-    const product: Product = { ...draft, id: draft.id ?? makeId('prod'), createdAt: existing?.createdAt ?? this.now().toISOString() };
-    await this.store.set(KEYS.products, [...custom.filter((p) => p.id !== product.id), product]);
-    return product;
+  saveProduct(draft: ProductDraft): Promise<Product> {
+    return this.serial(async () => {
+      getBrandById(draft.brandId);
+      const custom = await this.customProducts();
+      const existing = draft.id
+        ? (custom.find((p) => p.id === draft.id) ?? SAMPLE_PRODUCTS.find((p) => p.id === draft.id))
+        : undefined;
+      const product: Product = { ...draft, id: draft.id ?? makeId('prod'), createdAt: existing?.createdAt ?? this.now().toISOString() };
+      await this.store.set(KEYS.products, [...custom.filter((p) => p.id !== product.id), product]);
+      return product;
+    });
   }
 
-  async deleteProduct(id: string): Promise<void> {
-    const custom = await this.customProducts();
-    await this.store.set(KEYS.products, custom.filter((p) => p.id !== id));
-    if (SAMPLE_PRODUCTS.some((p) => p.id === id)) {
-      const deleted = (await this.store.get<string[]>(KEYS.deleted)) ?? [];
-      await this.store.set(KEYS.deleted, [...new Set([...deleted, id])]);
-    }
+  deleteProduct(id: string): Promise<void> {
+    return this.serial(async () => {
+      const custom = await this.customProducts();
+      await this.store.set(KEYS.products, custom.filter((p) => p.id !== id));
+      if (SAMPLE_PRODUCTS.some((p) => p.id === id)) {
+        const deleted = (await this.store.get<string[]>(KEYS.deleted)) ?? [];
+        await this.store.set(KEYS.deleted, [...new Set([...deleted, id])]);
+      }
+    });
   }
 
   private async findProduct(id: string): Promise<Product> {
@@ -133,7 +145,14 @@ export class MockApiClient implements ApiClient {
       }
     }
     rec.events.push(e);
-    for (const listener of rec.listeners) listener(e);
+    for (const listener of rec.listeners) {
+      try {
+        listener(e);
+      } catch (err) {
+        // 單一訂閱者出錯不可中斷整條事件流（與 WebSocket 各自處理訊息的行為一致）
+        console.error('[MockApiClient] subscriber threw while handling', e.type, err);
+      }
+    }
   }
 
   private getJob(jobId: string): JobRecord {
@@ -157,18 +176,20 @@ export class MockApiClient implements ApiClient {
     this.dispatch(rec, { type: 'job.status', stage: 'cancelled', round: rec.round });
   }
 
-  async selectRender(jobId: string, renderId: string, copy: Copy): Promise<HistoryEntry> {
-    const rec = this.getJob(jobId);
-    const render = rec.renders.get(renderId);
-    if (!render) throw new Error(`Unknown render: ${renderId}`);
-    const entry: HistoryEntry = {
-      id: makeId('hist'), jobId, brandId: rec.input.brandId, productId: rec.input.productId, templateId: render.templateId,
-      render: structuredClone(render), copy: structuredClone(copy), selectedAt: this.now().toISOString(),
-      favorite: false, writtenToRag: true,
-    };
-    const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];
-    await this.store.set(KEYS.history, [entry, ...history]);
-    return entry;
+  selectRender(jobId: string, renderId: string, copy: Copy): Promise<HistoryEntry> {
+    return this.serial(async () => {
+      const rec = this.getJob(jobId);
+      const render = rec.renders.get(renderId);
+      if (!render) throw new Error(`Unknown render: ${renderId}`);
+      const entry: HistoryEntry = {
+        id: makeId('hist'), jobId, brandId: rec.input.brandId, productId: rec.input.productId, templateId: render.templateId,
+        render: structuredClone(render), copy: structuredClone(copy), selectedAt: this.now().toISOString(),
+        favorite: false, writtenToRag: true,
+      };
+      const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];
+      await this.store.set(KEYS.history, [entry, ...history]);
+      return entry;
+    });
   }
 
   async listHistory(brandId?: string): Promise<HistoryEntry[]> {

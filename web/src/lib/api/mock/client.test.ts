@@ -104,6 +104,47 @@ describe('jobs', () => {
     expect(() => api.subscribe('nope', () => {})).toThrow('Unknown job');
     await expect(startJob(api, { templateIds: [] })).rejects.toThrow('至少要選一個通路模板');
   });
+
+  it('keeps every history entry when selections run concurrently', async () => {
+    const api = new MockApiClient();
+    const { jobId, events } = await startJob(api, { templateIds: ['ig-post', 'story'] });
+    await vi.advanceTimersByTimeAsync(14_500);
+    const done = events.find((e) => e.type === 'job.completed');
+    if (done?.type !== 'job.completed') throw new Error('job did not complete');
+    const prompt = events.find((e) => e.type === 'prompt.generated' && e.round === 2);
+    if (prompt?.type !== 'prompt.generated') throw new Error('missing round 2 prompt');
+    await Promise.all([
+      api.selectRender(jobId, done.bestRenderIds['ig-post']!, prompt.spec.copy),
+      api.selectRender(jobId, done.bestRenderIds.story!, prompt.spec.copy),
+    ]);
+    expect((await api.listHistory('selune')).map((h) => h.templateId).sort()).toEqual(['ig-post', 'story']);
+  });
+
+  it('keeps every product when saves run concurrently', async () => {
+    const api = new MockApiClient();
+    const draft = (name: string) => ({
+      brandId: 'selune', name, features: [], price: { sale: 1, original: 1 }, photo: { source: 'upload' as const, url: 'blob:x' },
+    });
+    await Promise.all([api.saveProduct(draft('A')), api.saveProduct(draft('B'))]);
+    expect((await api.listProducts('selune')).map((p) => p.name)).toEqual(['極光玻尿酸修護精華 30ml', 'A', 'B']);
+  });
+
+  it('keeps delivering to other subscribers when one throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const api = new MockApiClient();
+    const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
+    const { jobId } = await api.createJob({
+      brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
+      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
+    });
+    api.subscribe(jobId, () => { throw new Error('boom'); });
+    const events: JobEvent[] = [];
+    api.subscribe(jobId, (e) => events.push(e));
+    await vi.advanceTimersByTimeAsync(14_500);
+    expect(statuses(events).at(-1)).toBe('done');
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
 });
 
 describe('getApiClient', () => {
