@@ -5,6 +5,7 @@ import { WandSparkles } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
 import { PageHeader } from '@/components/common/page-header';
 import { BriefPanel } from '@/components/studio/brief-panel';
+import { CopyEditor } from '@/components/studio/copy-editor';
 import { ResultWall } from '@/components/studio/result-wall';
 import { RunStatus } from '@/components/studio/run-status';
 import { useCurrentBrand } from '@/lib/store/app';
@@ -27,6 +28,7 @@ function Results() {
     <>
       <RunStatus view={view} />
       <ResultWall brand={brand} product={product} />
+      <CopyEditor brand={brand} product={product} />
     </>
   );
 }
