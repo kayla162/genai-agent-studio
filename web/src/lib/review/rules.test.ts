@@ -74,6 +74,23 @@ describe('runRuleChecks', () => {
     const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', ocrDiffs: 2 }), 'ocr_typo');
     expect(c.status).toBe('fail');
   });
+
+  it('scans the price label and product name for banned words', () => {
+    const spec = makeSpec();
+    spec.copy.price.label = '保證有效活動價';
+    const c = byId(runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' }), 'banned_words');
+    expect(c.status).toBe('fail');
+    expect(c.target).toBe('price');
+  });
+
+  it('treats claim words in features as effect claims', () => {
+    const spec = makeSpec();
+    spec.copy.headline = ['一夜好眠', '醒來發光'];
+    spec.copy.subhead = '專業配方';
+    spec.copy.features = ['淡化細紋'];
+    spec.copy.disclaimer = '活動期間 2026/10/15–11/15';
+    expect(byId(runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' }), 'disclaimer').status).toBe('warn');
+  });
 });
 
 describe('scoreChecks', () => {

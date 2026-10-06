@@ -1,4 +1,4 @@
-import type { Brand, LayoutElementId, PromptSpec, RagTag, ReviewCheck } from '@/types/contract';
+import type { Brand, Copy, LayoutElementId, PromptSpec, RagTag, ReviewCheck } from '@/types/contract';
 import { boxMap } from '@/lib/compose/layout';
 import { areaRatio, verticalGap } from '@/lib/core/geometry';
 import { clamp, round1 } from '@/lib/core/num';
@@ -18,16 +18,22 @@ export function ragRefFor(brand: Brand, tag: RagTag): string | null {
   return brand.guidelineChunks.find((c) => c.tag === tag && !c.id.endsWith('-alt'))?.id ?? null;
 }
 
-/** 依版面元素拆出文案，讓禁用詞檢查能指出出現在哪個區塊 */
+/** 依版面元素拆出海報上的所有文字，讓禁用詞檢查能指出出現在哪個區塊 */
 export function copyTexts(spec: PromptSpec): { id: LayoutElementId; text: string }[] {
   const c = spec.copy;
   return [
     { id: 'headline', text: c.headline.join('') },
     { id: 'subhead', text: c.subhead },
     { id: 'features', text: c.features.join('、') },
-    { id: 'badge', text: `${c.badge.top}${c.badge.main}` },
+    { id: 'badge', text: [c.badge.top, c.badge.main, c.badge.sub].join('｜') },
+    { id: 'price', text: `${c.price.label}｜${c.productName}` },
     { id: 'disclaimer', text: c.disclaimer },
   ];
+}
+
+/** 視為行銷宣稱的文案範圍（不含商品名稱與價格）；Prompt 構建與審查共用，確保兩邊判斷一致 */
+export function claimTexts(copy: Pick<Copy, 'headline' | 'subhead' | 'features' | 'badge'>): string[] {
+  return [copy.headline.join(''), copy.subhead, copy.features.join('、'), [copy.badge.top, copy.badge.main].join('｜')];
 }
 
 export interface RuleContext {
@@ -53,7 +59,7 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: Ru
   const gap = verticalGap(B.logo, B.headline);
   const need = Math.round(B.logo.h * 0.5);
 
-  const claim = hasClaim([spec.copy.headline.join(''), spec.copy.subhead], brand.claimWords);
+  const claim = hasClaim(claimTexts(spec.copy), brand.claimWords);
   const hasNote = brand.disclaimerPhrase !== '' && spec.copy.disclaimer.includes(brand.disclaimerPhrase);
 
   const prod = areaRatio(B.product, W, H);
