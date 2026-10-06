@@ -5,12 +5,17 @@ import { WandSparkles } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
 import { PageHeader } from '@/components/common/page-header';
 import { BriefPanel } from '@/components/studio/brief-panel';
+import { ResultWall } from '@/components/studio/result-wall';
+import { RunStatus } from '@/components/studio/run-status';
 import { useCurrentBrand } from '@/lib/store/app';
 import { useProductsStore } from '@/lib/store/products';
 import { useStudioStore } from '@/lib/store/studio';
 
 function Results() {
+  const brand = useCurrentBrand();
   const view = useStudioStore((s) => s.view);
+  const productId = useStudioStore((s) => s.input?.productId);
+  const product = useProductsStore((s) => s.products.find((p) => p.id === productId) ?? null);
   if (!view) {
     return (
       <EmptyState icon={WandSparkles} title="輸入一句話需求，開始生成">
@@ -18,8 +23,12 @@ function Results() {
       </EmptyState>
     );
   }
-  // 進度與結果牆在 Task 11 加入
-  return <p className="text-sm text-muted-foreground">任務 {view.jobId} 已送出。</p>;
+  return (
+    <>
+      <RunStatus view={view} />
+      <ResultWall brand={brand} product={product} />
+    </>
+  );
 }
 
 export default function StudioPage() {
