@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makeSpec } from '@/test/fixtures';
-import { diffSpecs } from './diff';
+import { diffSpecs, inlineDiff } from './diff';
 
 describe('diffSpecs', () => {
   it('returns nothing for identical specs', () => {
@@ -25,5 +25,19 @@ describe('diffSpecs', () => {
     expect(diffSpecs(makeSpec(), b)).toEqual([
       { path: 'copy.features', before: '5重玻尿酸、神經醯胺、無香精', after: '改善外觀暗沉' },
     ]);
+  });
+});
+
+describe('inlineDiff', () => {
+  it('keeps the common prefix and suffix and isolates the change', () => {
+    expect(inlineDiff('lowres, blurry', 'lowres, blurry, neon')).toEqual({ prefix: 'lowres, blurry', removed: '', added: ', neon', suffix: '' });
+    expect(inlineDiff('[["logo",101,38,374]]', '[["logo",101,90,374]]')).toEqual({
+      prefix: '[["logo",101,', removed: '38', added: '90', suffix: ',374]]',
+    });
+  });
+
+  it('does not let the prefix and suffix overlap', () => {
+    expect(inlineDiff('aa', 'aaa')).toEqual({ prefix: 'aa', removed: '', added: 'a', suffix: '' });
+    expect(inlineDiff('same', 'same')).toEqual({ prefix: 'same', removed: '', added: '', suffix: '' });
   });
 });

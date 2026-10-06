@@ -22,6 +22,8 @@ import { useAppStore } from '@/lib/store/app';
 import { cn } from '@/lib/utils';
 import { EventStream } from './event-stream';
 import { FlowGraph } from './flow-graph';
+import { PromptPanel } from './prompt-panel';
+import { RagPanel } from './rag-panel';
 import { useJobStream } from './use-job-stream';
 
 function JobPicker({ jobs, value, onChange }: { jobs: JobSummary[]; value: string | null; onChange: (id: string) => void }) {
@@ -85,9 +87,17 @@ function JobInspector({ jobId, input }: { jobId: string; input: JobInput | null 
       <Tabs defaultValue="events">
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="events">事件串流</TabsTrigger>
+          <TabsTrigger value="prompt">Prompt 與注入參數</TabsTrigger>
+          <TabsTrigger value="rag">RAG Rerank</TabsTrigger>
         </TabsList>
         <TabsContent value="events">
           <EventStream messages={messages} />
+        </TabsContent>
+        <TabsContent value="prompt">
+          <PromptPanel view={view} />
+        </TabsContent>
+        <TabsContent value="rag">
+          <RagPanel view={view} messages={messages} />
         </TabsContent>
       </Tabs>
     </div>
