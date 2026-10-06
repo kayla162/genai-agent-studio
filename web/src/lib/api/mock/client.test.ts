@@ -101,10 +101,18 @@ describe('jobs', () => {
     expect(await api.listHistory('misty-isle')).toHaveLength(0);
   });
 
-  it('rejects unknown jobs and empty template lists', async () => {
+  it('rejects empty template lists', async () => {
     const api = new MockApiClient();
-    expect(() => api.subscribe('nope', () => {})).toThrow('Unknown job');
     await expect(startJob(api, { templateIds: [] })).rejects.toThrow('至少要選一個通路模板');
+  });
+
+  it('reports unknown jobs through onError instead of throwing', async () => {
+    const api = new MockApiClient();
+    const onError = vi.fn();
+    api.subscribe('nope', () => {}, onError);
+    expect(onError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Unknown job: nope' }));
   });
 
   it('keeps every history entry when selections run concurrently', async () => {
@@ -184,6 +192,66 @@ describe('jobs', () => {
     await expect(startJob(api, { variantsPerTemplate: 0 })).rejects.toThrow('每個模板的候選張數需為 1–8');
     await expect(startJob(api, { maxRetries: -1 })).rejects.toThrow('最大重試次數需為 0 以上的整數');
     await expect(startJob(api, { brandId: 'misty-isle' })).rejects.toThrow('商品不屬於所選品牌');
+  });
+});
+
+describe('job queries, connection and favorites', () => {
+  it('lists jobs newest first with their live status', async () => {
+    const api = new MockApiClient();
+    const first = await startJob(api);
+    await vi.advanceTimersByTimeAsync(14_500);
+    const second = await startJob(api, { templateIds: ['story'] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const jobs = await api.listJobs();
+    expect(jobs.map((j) => j.id)).toEqual([second.jobId, first.jobId]);
+    expect(jobs[1]).toMatchObject({ stage: 'done', round: 2, finished: true, createdAt: NOW.toISOString() });
+    expect(jobs[1].bestRenderIds['ig-post']).toMatch(/_r2_ig-post_v\d$/);
+    expect(jobs[0]).toMatchObject({ stage: 'parsing', finished: false, bestRenderIds: {} });
+    expect(jobs[0].input.templateIds).toEqual(['story']);
+  });
+
+  it('returns a snapshot of a job and its events', async () => {
+    const api = new MockApiClient();
+    const { jobId, events } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const snap = await api.getJob(jobId);
+    expect(snap.summary.id).toBe(jobId);
+    expect(snap.events).toEqual(events);
+    await expect(api.getJob('nope')).rejects.toThrow('Unknown job');
+  });
+
+  it('keeps the input it was given, even if the caller mutates it later', async () => {
+    const api = new MockApiClient();
+    const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
+    const input: JobInput = {
+      brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
+      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
+    };
+    const { jobId } = await api.createJob(input);
+    input.templateIds.push('story');
+    expect((await api.getJob(jobId)).summary.input.templateIds).toEqual(['ig-post']);
+  });
+
+  it('is always connected in mock mode', () => {
+    const api = new MockApiClient();
+    expect(api.connection.get()).toEqual({ status: 'connected', transport: 'mock', error: null });
+    expect(api.connection.get()).toBe(api.connection.get());
+    const unsubscribe = api.connection.subscribe(() => {});
+    expect(typeof unsubscribe).toBe('function');
+  });
+
+  it('toggles favorites on history entries', async () => {
+    const api = new MockApiClient();
+    const { jobId, events } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(14_500);
+    const done = events.find((e) => e.type === 'job.completed');
+    if (done?.type !== 'job.completed') throw new Error('job did not complete');
+    const prompt = events.find((e) => e.type === 'prompt.generated' && e.round === 2);
+    if (prompt?.type !== 'prompt.generated') throw new Error('missing round 2 prompt');
+    const entry = await api.selectRender(jobId, done.bestRenderIds['ig-post']!, prompt.spec.copy);
+    expect((await api.setFavorite(entry.id, true)).favorite).toBe(true);
+    expect((await api.listHistory('selune'))[0].favorite).toBe(true);
+    await expect(api.setFavorite('nope', true)).rejects.toThrow('Unknown history entry');
   });
 });
 

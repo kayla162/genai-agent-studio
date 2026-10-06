@@ -1,5 +1,7 @@
-import type { Copy, DemoOptions, HistoryEntry, JobEvent, JobInput, Product, Render } from '@/types/contract';
-import type { ApiClient, DemoControls, ProductDraft } from '../client';
+import type {
+  ConnectionState, Copy, DemoOptions, HistoryEntry, JobEvent, JobInput, JobStage, JobSummary, Product, Render, TemplateId,
+} from '@/types/contract';
+import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString } from '@/lib/core/num';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './data';
@@ -11,13 +13,19 @@ import { MemoryStore, type KeyValueStore } from './store';
 interface JobRecord {
   id: string;
   input: JobInput;
+  createdAt: string;
   events: JobEvent[];
   listeners: Set<(e: JobEvent) => void>;
   renders: Map<string, Render>;
+  stage: JobStage;
   round: number;
+  bestRenderIds: Partial<Record<TemplateId, string>>;
   finished: boolean;
   player: PlayerHandle | null;
 }
+
+/** mock 沒有真正的連線：永遠是「已連線」 */
+const MOCK_CONNECTION: ConnectionState = Object.freeze({ status: 'connected', transport: 'mock', error: null });
 
 const KEYS = { products: 'products', deleted: 'deletedSampleIds', history: 'history' } as const;
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -32,6 +40,7 @@ const makeId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.r
 
 export class MockApiClient implements ApiClient {
   readonly demo: DemoControls;
+  readonly connection: ConnectionChannel = { get: () => MOCK_CONNECTION, subscribe: () => () => {} };
   private options: DemoOptions = { speed: 1, firstRoundFail: true, forceAllFail: false };
   private readonly jobs = new Map<string, JobRecord>();
   private tail: Promise<unknown> = Promise.resolve();
@@ -117,9 +126,11 @@ export class MockApiClient implements ApiClient {
     if (product.brandId !== brand.id) throw new Error('商品不屬於所選品牌');
     const templates = input.templateIds.map((id) => getTemplate(id));
 
-    const jobId = makeJobId(this.now());
+    const now = this.now();
+    const jobId = makeJobId(now);
     const rec: JobRecord = {
-      id: jobId, input, events: [], listeners: new Set(), renders: new Map(), round: 0, finished: false, player: null,
+      id: jobId, input: structuredClone(input), createdAt: now.toISOString(), events: [], listeners: new Set(),
+      renders: new Map(), stage: 'parsing', round: 0, bestRenderIds: {}, finished: false, player: null,
     };
     this.jobs.set(jobId, rec);
 
@@ -136,7 +147,11 @@ export class MockApiClient implements ApiClient {
   private dispatch(rec: JobRecord, e: JobEvent) {
     switch (e.type) {
       case 'job.status':
+        rec.stage = e.stage;
         rec.round = e.round;
+        break;
+      case 'job.completed':
+        rec.bestRenderIds = { ...e.bestRenderIds };
         break;
       case 'render.completed':
         for (const r of e.renders) rec.renders.set(r.id, structuredClone(r));
@@ -163,21 +178,45 @@ export class MockApiClient implements ApiClient {
     }
   }
 
-  private getJob(jobId: string): JobRecord {
+  private requireJob(jobId: string): JobRecord {
     const rec = this.jobs.get(jobId);
     if (!rec) throw new Error(`Unknown job: ${jobId}`);
     return rec;
   }
 
-  subscribe(jobId: string, onEvent: (event: JobEvent) => void): () => void {
-    const rec = this.getJob(jobId);
+  subscribe(jobId: string, onEvent: (event: JobEvent) => void, onError?: (error: Error) => void): () => void {
+    const rec = this.jobs.get(jobId);
+    if (!rec) {
+      const timer = setTimeout(() => {
+        const error = new Error(`Unknown job: ${jobId}`);
+        if (onError) onError(error);
+        else console.error('[MockApiClient]', error.message);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
     for (const e of rec.events) this.deliver(onEvent, e);
     rec.listeners.add(onEvent);
     return () => { rec.listeners.delete(onEvent); };
   }
 
+  private summary(rec: JobRecord): JobSummary {
+    return {
+      id: rec.id, input: structuredClone(rec.input), createdAt: rec.createdAt, stage: rec.stage, round: rec.round,
+      finished: rec.finished, bestRenderIds: { ...rec.bestRenderIds },
+    };
+  }
+
+  async listJobs(): Promise<JobSummary[]> {
+    return [...this.jobs.values()].reverse().map((rec) => this.summary(rec));
+  }
+
+  async getJob(jobId: string): Promise<JobSnapshot> {
+    const rec = this.requireJob(jobId);
+    return { summary: this.summary(rec), events: [...rec.events] };
+  }
+
   async cancelJob(jobId: string): Promise<void> {
-    const rec = this.getJob(jobId);
+    const rec = this.requireJob(jobId);
     if (rec.finished) return;
     rec.player?.cancel();
     rec.finished = true;
@@ -186,7 +225,7 @@ export class MockApiClient implements ApiClient {
 
   selectRender(jobId: string, renderId: string, copy: Copy): Promise<HistoryEntry> {
     return this.serial(async () => {
-      const rec = this.getJob(jobId);
+      const rec = this.requireJob(jobId);
       const render = rec.renders.get(renderId);
       if (!render) throw new Error(`Unknown render: ${renderId}`);
       const entry: HistoryEntry = {
@@ -203,5 +242,16 @@ export class MockApiClient implements ApiClient {
   async listHistory(brandId?: string): Promise<HistoryEntry[]> {
     const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];
     return brandId ? history.filter((h) => h.brandId === brandId) : history;
+  }
+
+  setFavorite(historyId: string, favorite: boolean): Promise<HistoryEntry> {
+    return this.serial(async () => {
+      const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];
+      const entry = history.find((h) => h.id === historyId);
+      if (!entry) throw new Error(`Unknown history entry: ${historyId}`);
+      const updated = { ...entry, favorite };
+      await this.store.set(KEYS.history, history.map((h) => (h.id === historyId ? updated : h)));
+      return updated;
+    });
   }
 }

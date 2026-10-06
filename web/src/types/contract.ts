@@ -211,3 +211,24 @@ export interface HistoryEntry {
 }
 
 export interface DemoOptions { speed: 1 | 2 | 4; firstRoundFail: boolean; forceAllFail: boolean }
+
+/* ---------- 任務列表與連線狀態 ---------- */
+export interface JobSummary {
+  id: string;
+  input: JobInput;
+  createdAt: string;
+  stage: JobStage;
+  round: number;
+  /** 已結束（done／needs_review／cancelled） */
+  finished: boolean;
+  /** 任務完成時每個模板的最佳候選；尚未完成或需人工審核時為空物件 */
+  bestRenderIds: Partial<Record<TemplateId, string>>;
+}
+
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+export interface ConnectionState {
+  status: ConnectionStatus;
+  /** mock：瀏覽器內模擬；websocket：連線 FastAPI（第二階段） */
+  transport: 'mock' | 'websocket';
+  error: string | null;
+}
