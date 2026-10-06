@@ -27,7 +27,8 @@ export type BBox = [x: number, y: number, w: number, h: number];
 export interface LayoutBox { id: LayoutElementId; bbox: BBox; z: number }
 
 /* ---------- 品牌與 RAG ---------- */
-export type RagTag = 'color' | 'logo' | 'law' | 'layout' | 'font' | 'history';
+/** general：使用者上傳、無法歸類的文件切塊 */
+export type RagTag = 'color' | 'logo' | 'law' | 'layout' | 'font' | 'history' | 'general';
 export interface RagChunk { id: string; source: string; section: string; tag: RagTag; text: string }
 export interface CaseStudy { id: string; title: string; channel: string; ctr: number; notes: string }
 export interface BrandRules { maxDeltaE: number; minWhitespace: number; productRatio: [min: number, max: number] }
@@ -61,6 +62,9 @@ export type ProductPhoto =
   | { source: 'sample'; art: 'serum' | 'coldbrew' }
   | { source: 'upload' | 'local'; url: string };
 
+/** 去背結果。url 為 null 代表示意：mock 不真的去背，合成時以「色彩增值」讓白底融入背景 */
+export interface ProductCutout { model: string; url: string | null }
+
 export interface Product {
   id: string;
   brandId: string;
@@ -68,6 +72,8 @@ export interface Product {
   features: string[];
   price: { sale: number; original: number };
   photo: ProductPhoto;
+  /** 尚未去背為 null；示範商品是向量素材，不需要去背 */
+  cutout: ProductCutout | null;
   createdAt: string;
 }
 
@@ -224,6 +230,13 @@ export interface JobSummary {
   /** 任務完成時每個模板的最佳候選；尚未完成或需人工審核時為空物件 */
   bestRenderIds: Partial<Record<TemplateId, string>>;
 }
+
+/* ---------- 品牌文件上傳（chunking → embedding → 寫入 Chroma） ---------- */
+export interface BrandDocument { name: string; text: string }
+export type IngestEvent =
+  | { type: 'ingest.chunked'; source: string; chunks: RagChunk[] }
+  | { type: 'ingest.embedded'; chunkId: string; index: number; total: number; dims: number; preview: number[] }
+  | { type: 'ingest.stored'; collection: string; count: number };
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 export interface ConnectionState {

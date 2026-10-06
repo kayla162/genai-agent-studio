@@ -1,9 +1,11 @@
 import type {
-  ConnectionState, Copy, DemoOptions, HistoryEntry, JobEvent, JobInput, JobStage, JobSummary, Product, Render, TemplateId,
+  BrandDocument, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput, JobStage, JobSummary,
+  Product, ProductPhoto, RagChunk, Render, TemplateId,
 } from '@/types/contract';
 import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString } from '@/lib/core/num';
+import { chunkDocument, EMBED_DIMS, embedPreview } from '@/lib/rag/chunk';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './data';
 import { parseBrief } from './brief';
 import { playTimeline, type PlayerHandle } from './player';
@@ -27,7 +29,15 @@ interface JobRecord {
 /** mock 沒有真正的連線：永遠是「已連線」 */
 const MOCK_CONNECTION: ConnectionState = Object.freeze({ status: 'connected', transport: 'mock', error: null });
 
-const KEYS = { products: 'products', deleted: 'deletedSampleIds', history: 'history' } as const;
+const KEYS = { products: 'products', deleted: 'deletedSampleIds', history: 'history', docChunks: 'docChunks' } as const;
+
+/** Blob → data URL（mock 把上傳的照片直接存在本機） */
+async function toDataUrl(file: Blob): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:${file.type};base64,${btoa(binary)}`;
+}
 const pad = (n: number) => String(n).padStart(2, '0');
 
 export function makeJobId(now: Date, rand: () => number = Math.random): string {
@@ -62,7 +72,16 @@ export class MockApiClient implements ApiClient {
     return run;
   }
 
-  async listBrands() { return BRANDS; }
+  /** 等待 ms（1× 速度），依 Demo 播放速度縮短 */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms / this.options.speed));
+  }
+
+  /** 示範品牌 + 使用者上傳文件產生的切塊 */
+  async listBrands() {
+    const uploaded = (await this.store.get<Record<string, RagChunk[]>>(KEYS.docChunks)) ?? {};
+    return BRANDS.map((b) => (uploaded[b.id]?.length ? { ...b, guidelineChunks: [...b.guidelineChunks, ...uploaded[b.id]] } : b));
+  }
 
   async listTemplates() { return CHANNEL_TEMPLATES; }
 
@@ -106,6 +125,41 @@ export class MockApiClient implements ApiClient {
     const p = (await this.customProducts()).find((x) => x.id === id) ?? SAMPLE_PRODUCTS.find((x) => x.id === id);
     if (!p) throw new Error(`Unknown product: ${id}`);
     return p;
+  }
+
+  async uploadProductPhoto(file: Blob): Promise<ProductPhoto> {
+    if (!file.type.startsWith('image/')) throw new Error('只能上傳圖片檔');
+    return { source: 'upload', url: await toDataUrl(file) };
+  }
+
+  async requestCutout(productId: string): Promise<Product> {
+    const product = await this.findProduct(productId);
+    if (product.photo.source === 'sample') throw new Error('示範商品已是去背素材');
+    await this.sleep(1200);
+    return this.saveProduct({ ...product, cutout: { model: 'BiRefNet-general', url: null } });
+  }
+
+  async ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
+    getBrandById(brandId);
+    const chunks = chunkDocument(brandId, doc);
+    if (!chunks.length) throw new Error('文件沒有可用的文字內容');
+    await this.sleep(400);
+    this.deliver(onEvent, { type: 'ingest.chunked', source: doc.name, chunks: structuredClone(chunks) });
+    for (const [index, c] of chunks.entries()) {
+      await this.sleep(250);
+      this.deliver(onEvent, {
+        type: 'ingest.embedded', chunkId: c.id, index, total: chunks.length, dims: EMBED_DIMS, preview: embedPreview(c.text),
+      });
+    }
+    await this.serial(async () => {
+      const all = (await this.store.get<Record<string, RagChunk[]>>(KEYS.docChunks)) ?? {};
+      // 同名文件重新上傳時取代舊的切塊
+      const kept = (all[brandId] ?? []).filter((c) => c.source !== doc.name);
+      await this.store.set(KEYS.docChunks, { ...all, [brandId]: [...kept, ...chunks] });
+    });
+    await this.sleep(300);
+    this.deliver(onEvent, { type: 'ingest.stored', collection: `${brandId}_ci`, count: chunks.length });
+    return chunks;
   }
 
   async parseBrief(brandId: string, text: string, productId: string | null) {
@@ -170,7 +224,7 @@ export class MockApiClient implements ApiClient {
   }
 
   /** 單一訂閱者出錯不可中斷整條事件流（與 WebSocket 各自處理訊息的行為一致）；即時推送與重播共用 */
-  private deliver(listener: (e: JobEvent) => void, e: JobEvent) {
+  private deliver<E extends { type: string }>(listener: (e: E) => void, e: E) {
     try {
       listener(e);
     } catch (err) {

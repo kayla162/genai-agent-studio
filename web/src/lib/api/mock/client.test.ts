@@ -38,7 +38,7 @@ describe('products', () => {
     expect((await api.listProducts('selune')).map((p) => p.id)).toEqual(['prod_selune_serum']);
     const saved = await api.saveProduct({
       brandId: 'selune', name: '晚安面膜', features: ['保濕'], price: { sale: 680, original: 880 },
-      photo: { source: 'upload', url: 'blob:test' },
+      photo: { source: 'upload', url: 'blob:test' }, cutout: null,
     });
     expect(saved.id).toMatch(/^prod_/);
     expect(saved.createdAt).toBe(NOW.toISOString());
@@ -47,6 +47,68 @@ describe('products', () => {
     await api.deleteProduct('prod_selune_serum');
     expect(await api.listProducts('selune')).toEqual([]);
     expect(await api.listProducts('misty-isle')).toHaveLength(1);
+  });
+});
+
+describe('product photos and cutout', () => {
+  it('turns an uploaded image into a data URL photo', async () => {
+    const api = new MockApiClient();
+    const photo = await api.uploadProductPhoto(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }));
+    expect(photo).toEqual({ source: 'upload', url: 'data:image/png;base64,AQID' });
+    await expect(api.uploadProductPhoto(new Blob(['x'], { type: 'text/plain' }))).rejects.toThrow('只能上傳圖片檔');
+  });
+
+  it('simulates a cutout after 1.2 seconds and keeps it on the product', async () => {
+    const api = new MockApiClient();
+    const saved = await api.saveProduct({
+      brandId: 'selune', name: '晚安面膜', features: [], price: { sale: 680, original: 880 },
+      photo: { source: 'upload', url: 'data:image/png;base64,AQID' }, cutout: null,
+    });
+    let done = false;
+    const pending = api.requestCutout(saved.id).then((p) => { done = true; return p; });
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    const product = await pending;
+    expect(product.cutout).toEqual({ model: 'BiRefNet-general', url: null });
+    expect(product.createdAt).toBe(saved.createdAt);
+    expect((await api.listProducts('selune')).find((p) => p.id === saved.id)?.cutout).not.toBeNull();
+    await expect(api.requestCutout('prod_selune_serum')).rejects.toThrow('示範商品已是去背素材');
+  });
+});
+
+describe('brand documents', () => {
+  const DOC = { name: 'ci_update.md', text: ['# 色彩更新', '新增輔助色「霧粉」#E8C7C8。', '', '# Logo', '深色背景使用反白 Logo。'].join('\n') };
+
+  it('reports chunking, embedding and storing, then lists the new chunks on the brand', async () => {
+    const api = new MockApiClient();
+    const seen: string[] = [];
+    const pending = api.ingestBrandDocument('selune', DOC, (e) => seen.push(e.type));
+    await vi.advanceTimersByTimeAsync(1_300);
+    const chunks = await pending;
+    expect(seen).toEqual(['ingest.chunked', 'ingest.embedded', 'ingest.embedded', 'ingest.stored']);
+    expect(chunks.map((c) => c.tag)).toEqual(['color', 'logo']);
+    const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
+    expect(selune.guidelineChunks.slice(-2).map((c) => c.id)).toEqual(chunks.map((c) => c.id));
+    expect((await api.listBrands()).find((b) => b.id === 'misty-isle')!.guidelineChunks).toHaveLength(7);
+  });
+
+  it('replaces chunks when the same document is uploaded again', async () => {
+    const api = new MockApiClient();
+    api.demo.set({ speed: 4 });
+    const first = api.ingestBrandDocument('selune', DOC, () => {});
+    await vi.advanceTimersByTimeAsync(400);
+    await first;
+    const second = api.ingestBrandDocument('selune', { ...DOC, text: '只剩一段。' }, () => {});
+    await vi.advanceTimersByTimeAsync(400);
+    await second;
+    const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
+    expect(selune.guidelineChunks.filter((c) => c.source === 'ci_update.md').map((c) => c.text)).toEqual(['只剩一段。']);
+  });
+
+  it('rejects documents without text', async () => {
+    const api = new MockApiClient();
+    await expect(api.ingestBrandDocument('selune', { name: 'a.txt', text: '  ' }, () => {})).rejects.toThrow('文件沒有可用的文字內容');
   });
 });
 
@@ -134,6 +196,7 @@ describe('jobs', () => {
     const api = new MockApiClient();
     const draft = (name: string) => ({
       brandId: 'selune', name, features: [], price: { sale: 1, original: 1 }, photo: { source: 'upload' as const, url: 'blob:x' },
+      cutout: null,
     });
     await Promise.all([api.saveProduct(draft('A')), api.saveProduct(draft('B'))]);
     expect((await api.listProducts('selune')).map((p) => p.name)).toEqual(['極光玻尿酸修護精華 30ml', 'A', 'B']);

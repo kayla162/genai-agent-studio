@@ -1,6 +1,6 @@
 import type {
-  Brand, ChannelTemplate, ConnectionState, Copy, DemoOptions, HistoryEntry, JobEvent, JobInput, JobSummary, ParsedBrief,
-  Product,
+  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput,
+  JobSummary, ParsedBrief, Product, ProductPhoto, RagChunk,
 } from '@/types/contract';
 
 export type ProductDraft = Omit<Product, 'id' | 'createdAt'> & { id?: string };
@@ -24,11 +24,18 @@ export interface ApiClient {
   /** 只有 mock 模式有 Demo 控制台；live 模式為 null */
   readonly demo: DemoControls | null;
   readonly connection: ConnectionChannel;
+  /** 包含使用者上傳文件產生的切塊 */
   listBrands(): Promise<Brand[]>;
+  /** 上傳品牌文件：切塊 → 向量化 → 寫入知識庫，過程以 onEvent 回報；回傳新增的切塊 */
+  ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]>;
   listTemplates(): Promise<ChannelTemplate[]>;
   listProducts(brandId: string): Promise<Product[]>;
   saveProduct(draft: ProductDraft): Promise<Product>;
   deleteProduct(id: string): Promise<void>;
+  /** 上傳商品照，回傳可放進 Product.photo 的參照（mock：轉成 data URL 存在本機；live：上傳到後端） */
+  uploadProductPhoto(file: Blob): Promise<ProductPhoto>;
+  /** 對商品照去背並寫回 Product.cutout（mock：示意，約 1.2 秒） */
+  requestCutout(productId: string): Promise<Product>;
   parseBrief(brandId: string, text: string, productId: string | null): Promise<ParsedBrief>;
   createJob(input: JobInput): Promise<{ jobId: string }>;
   /**
