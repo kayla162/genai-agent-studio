@@ -1147,7 +1147,8 @@ git commit -m "feat: add demo brands (SÉLUNE, MISTY ISLE) and sample products" 
   - `findBannedWords(texts: string[], banned: string[]): string[]`（依禁用詞清單順序回傳命中的詞）
   - `hasClaim(texts: string[], claimWords: string[]): boolean`
   - `ragRefFor(brand: Brand, tag: RagTag): string | null`（略過 `-alt` 切塊）
-  - `copyTexts(spec: PromptSpec): { id: LayoutElementId; text: string }[]`
+  - `copyTexts(spec: PromptSpec): { id: LayoutElementId; text: string }[]`（涵蓋海報上所有文字，含徽章副標、價格標籤與商品名稱）
+  - `claimTexts(copy: Pick<Copy, 'headline' | 'subhead' | 'features' | 'badge'>): string[]`（行銷宣稱範圍；Task 8 的 `buildCopy` 與 `runRuleChecks` 共用）
   - `interface RuleContext { brand: Brand; spec: PromptSpec; measuredPrimary: string; ocrDiffs?: number }`
   - `runRuleChecks(ctx: RuleContext): ReviewCheck[]`：依序回傳 `banned_words`、`color_delta`、`logo_clearance`、`disclaimer`、`product_ratio`、`whitespace`、`ocr_typo`
   - `scoreChecks(checks: ReviewCheck[], jitter?: number): { score: number; passed: boolean }`：分數 = 100 − 14×fail − 6×warn − jitter（0–100），`passed` = 沒有 fail
@@ -1292,7 +1293,7 @@ Expected: FAIL，找不到 `./rules`
 - [ ] **Step 4: 實作 `web/src/lib/review/rules.ts`**
 
 ```ts
-import type { Brand, LayoutElementId, PromptSpec, RagTag, ReviewCheck } from '@/types/contract';
+import type { Brand, Copy, LayoutElementId, PromptSpec, RagTag, ReviewCheck } from '@/types/contract';
 import { boxMap } from '@/lib/compose/layout';
 import { areaRatio, verticalGap } from '@/lib/core/geometry';
 import { clamp, round1 } from '@/lib/core/num';
@@ -1312,16 +1313,22 @@ export function ragRefFor(brand: Brand, tag: RagTag): string | null {
   return brand.guidelineChunks.find((c) => c.tag === tag && !c.id.endsWith('-alt'))?.id ?? null;
 }
 
-/** 依版面元素拆出文案，讓禁用詞檢查能指出出現在哪個區塊 */
+/** 依版面元素拆出海報上的所有文字，讓禁用詞檢查能指出出現在哪個區塊 */
 export function copyTexts(spec: PromptSpec): { id: LayoutElementId; text: string }[] {
   const c = spec.copy;
   return [
     { id: 'headline', text: c.headline.join('') },
     { id: 'subhead', text: c.subhead },
     { id: 'features', text: c.features.join('、') },
-    { id: 'badge', text: `${c.badge.top}${c.badge.main}` },
+    { id: 'badge', text: [c.badge.top, c.badge.main, c.badge.sub].join('｜') },
+    { id: 'price', text: `${c.price.label}｜${c.productName}` },
     { id: 'disclaimer', text: c.disclaimer },
   ];
+}
+
+/** 視為行銷宣稱的文案範圍（不含商品名稱與價格）；Prompt 構建與審查共用，確保兩邊判斷一致 */
+export function claimTexts(copy: Pick<Copy, 'headline' | 'subhead' | 'features' | 'badge'>): string[] {
+  return [copy.headline.join(''), copy.subhead, copy.features.join('、'), [copy.badge.top, copy.badge.main].join('｜')];
 }
 
 export interface RuleContext {
@@ -1347,7 +1354,7 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: Ru
   const gap = verticalGap(B.logo, B.headline);
   const need = Math.round(B.logo.h * 0.5);
 
-  const claim = hasClaim([spec.copy.headline.join(''), spec.copy.subhead], brand.claimWords);
+  const claim = hasClaim(claimTexts(spec.copy), brand.claimWords);
   const hasNote = brand.disclaimerPhrase !== '' && spec.copy.disclaimer.includes(brand.disclaimerPhrase);
 
   const prod = areaRatio(B.product, W, H);
@@ -1534,7 +1541,7 @@ git commit -m "feat: add mock brief parser for one-sentence requests" -m "Co-Aut
 - Test: `web/src/lib/agent/prompt.test.ts`、`web/src/lib/agent/fixes.test.ts`、`web/src/lib/agent/diff.test.ts`
 
 **Interfaces:**
-- Consumes: `computeLayout`（Task 4）；`hasClaim`、`findBannedWords`、`copyTexts`、`runRuleChecks`（Task 6）；`parseBrief`（Task 7）；`makeSpec`（Task 6 fixture）
+- Consumes: `computeLayout`（Task 4）；`hasClaim`、`claimTexts`、`findBannedWords`、`copyTexts`、`runRuleChecks`（Task 6）；`parseBrief`（Task 7）；`makeSpec`（Task 6 fixture）
 - Produces:
   - `CAMPAIGN_PERIOD: string`、`BASE_NEGATIVE: string`
   - `makeBadge(brief: ParsedBrief): Copy['badge']`、`buildCopy(brand: Brand, product: Product, brief: ParsedBrief): Copy`
@@ -1703,7 +1710,7 @@ import type {
   Brand, ChannelTemplate, CheckId, ComfyInjection, Copy, Engine, ParsedBrief, Product, PromptSpec,
 } from '@/types/contract';
 import { computeLayout } from '@/lib/compose/layout';
-import { hasClaim } from '@/lib/review/rules';
+import { claimTexts, hasClaim } from '@/lib/review/rules';
 
 export const CAMPAIGN_PERIOD = '活動期間 2026/10/15–11/15';
 export const BASE_NEGATIVE = 'lowres, blurry, watermark, deformed product, extra objects, garbled text';
@@ -1733,7 +1740,10 @@ export function makeBadge(brief: ParsedBrief): Copy['badge'] {
 export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief): Copy {
   const preset = brand.copyPresets[brief.tone];
   const headline: [string, string] = [preset.headline[0], preset.headline[1]];
-  const claim = hasClaim([headline.join(''), preset.subhead], brand.claimWords);
+  const features = (brief.sellingPoints.length ? brief.sellingPoints : product.features).slice(0, 3);
+  const badge = makeBadge(brief);
+  // 與審查（runRuleChecks）使用同一個宣稱範圍，確保需要註記時一定會加上
+  const claim = hasClaim(claimTexts({ headline, subhead: preset.subhead, features, badge }), brand.claimWords);
   const notes = [
     claim && brand.disclaimerPhrase ? `*使用者感受，${brand.disclaimerPhrase}` : null,
     brief.campaign ? CAMPAIGN_PERIOD : null,
@@ -1743,8 +1753,8 @@ export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief): C
   return {
     headline,
     subhead: preset.subhead,
-    features: (brief.sellingPoints.length ? brief.sellingPoints : product.features).slice(0, 3),
-    badge: makeBadge(brief),
+    features,
+    badge,
     price: { label: `${brief.campaign ?? '限時'}活動價`, sale: product.price.sale, original: product.price.original },
     productName: product.name,
     disclaimer: notes.length ? notes.join('｜') : '圖片僅供參考',
