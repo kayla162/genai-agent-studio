@@ -3114,3 +3114,31 @@ git commit -m "feat: add timeline player, ApiClient interface and MockApiClient"
 | `/dashboard` 成效儀表板 | Plan 3 |
 | Playwright E2E | Plan 3 |
 
+
+---
+
+## 執行紀錄（2026-10-06，子代理逐步執行後補記）
+
+實作與計畫內文的差異。每項都是審查後由 controller 裁決，已有測試覆蓋：
+
+| 項目 | 計畫原文 | 實際程式 | 原因 |
+|---|---|---|---|
+| Task 1 Vitest 路徑別名 | `vite-tsconfig-paths` plugin | `resolve: { tsconfigPaths: true }`（Vite 原生），移除 plugin | plugin 每次執行都印出 deprecation 警告，測試輸出不乾淨 |
+| Task 1 `@types/node` | create-next-app 預設 ^20 | ^24 | vitest 5 的 peer 範圍要求；與 Node 24 一致 |
+| Task 1 `.gitignore` | — | 根目錄加 `.claude/worktrees/`；`web/.gitignore` 加 `!.env.example` | worktree 位於主 checkout 內；`.env*` 規則會忽略 `.env.example` |
+| Task 6 `copyTexts`／`claimTexts` | 只掃 headline、subhead、features、badge top/main、disclaimer | 另含 badge.sub、`price.label｜productName`；新增共用的 `claimTexts` | 禁用詞檢查不能漏掉價格標籤；Prompt 構建與審查判斷宣稱的範圍要一致（已於 1ca6dc1 寫回 Task 6／8） |
+| Task 10 修正累積 | `fixesForNext = [...reasons]` | 跨輪累積（Set 合併） | 第 3 輪改寫不應遺失第 1 輪的 negative prompt |
+| Task 11 `MockApiClient` | 無序列化、訂閱者錯誤會外拋 | `serial()` 串接讀改寫；`deliver()` 隔離每個訂閱者的錯誤（含重播） | 並行選圖會遺失歷史紀錄；一個訂閱者出錯不可中斷整條事件流 |
+| 最終修正 F1 | 改寫只加強 negative prompt | 上一輪 `banned_words`／`vlm_exaggeration` 失敗時，`buildCopy` 依品牌替代用語改寫文案（商品名稱不改） | 使用者可編輯賣點後，禁用詞否則會一路重試到需人工審核 |
+| 最終修正 F2 | — | `deepFreeze` 凍結時間軸事件與示範品牌／商品 | mock 事件需與 WebSocket 一樣是獨立物件，UI 不可就地修改 |
+| 最終修正 F3 | `HistoryEntry` 無原始輸入 | 新增 `input: JobInput` | 歷史紀錄「以相同設定重做」需要 |
+| 最終修正 F4–F9 | — | 取消後立即停止送出、驗證 `createJob` 輸入、重新檢索旗標只在實際檢索時為 true、VLM 誇大用語指向實際區塊、空字串 API 模式預設 mock | 最終審查建議的低成本修正 |
+
+**交給 Plan 2 的事項：**
+- 第一個任務先擴充 `ApiClient`，並在任何 UI 綁定前定案 `subscribe` 的簽名。要補的介面：收藏切換、`listJobs`／`getJob`（給 `/queue`、`/agent`）、模板管理、品牌文件上傳、連線／錯誤通道、儀表板統計、live 模式的照片上傳。另外加上 `Product.cutout`。
+- `getApiClient()` 只能在 client component 呼叫（單例內含計時器）。
+- 事件與示範資料是凍結的，編輯前要先複製。
+- 文字編輯器在 `selectRender` 前重新跑 `runRuleChecks`。
+- 取代 create-next-app 的 `layout.tsx`／`page.tsx`；不要使用 `next/font/google`（不發出網路請求）。
+- `CAMPAIGN_PERIOD` 寫死的日期，以及只適用單一商品的文案預設（例如「每瓶 120mg 咖啡因」），在匯出真實海報前要改成可設定。
+- 事件沒有時間戳或序號：Plan 3 的事件串流與第二階段的重連機制需要時再加入約定。

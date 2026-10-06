@@ -123,13 +123,14 @@ GenAI Agent/
 ## 7. 資料約定（`contract.ts` 摘要）
 
 - `Brand`：id、name、palette（primary／secondary／accent／ink）、fonts、bannedWords、guidelineChunks、caseStudies
-- `Product`：id、brandId、name、features[]、price（sale、original）、photo（來源：sample／upload／local）、cutout
-- `ChannelTemplate`：id、label、ratio、width、height、layoutPreset
+- `Product`：id、brandId、name、features[]、price（sale、original）、photo（來源：sample／upload／local）、createdAt。去背圖欄位 `cutout` 由 Plan 2 商品庫任務加入
+- `ChannelTemplate`：id、label、ratio、width、height（版型預設以模板 id 對應，不另設 layoutPreset 欄位）
 - `JobInput`：brief（一句話）、parsedBrief、productId、templateIds[]、variantsPerTemplate、llm、engine、vlm、maxRetries
-- `PromptSpec`：copy（headline、subhead、features、badge、price、disclaimer）、palette、layout（`{id, bbox:[x,y,w,h], z}`[]）、positivePrompt、negativePrompt、comfy（`ComfyInjection`）
-- `ComfyInjection`：workflowFile，以及 params：`{nodeId, input, label, value}`[]，涵蓋 positive／negative prompt、seed、sampler、steps、cfg、product image、ControlNet 強度、IP-Adapter 權重、排版座標
+- `PromptSpec`：copy（headline、subhead、features、badge、price、disclaimer）、palette、layout（`{id, bbox:[x,y,w,h], z}`[]）、positivePrompt、negativePrompt、injection（`ComfyInjection`）、ragRefs
+- `ComfyInjection`：engine（comfyui／ideogram）、workflowFile，以及 params：`{nodeId, input, label, value}`[]，涵蓋 positive／negative prompt、seed、sampler、steps、cfg、product image、ControlNet 強度、IP-Adapter 權重、排版座標
 - `RagHit`：chunkId、source、section、text、vectorScore、rerankScore
-- `Render`：id、round、templateId、variant、imageUrl、score、passed、checks[]
+- `Render`：id、jobId、round、templateId、variant、background（`{kind:'procedural', seed, palette, style}` 或 `{kind:'url', url}`；live 模式由後端回傳 url）、spec、score、passed、checks[]
+- `HistoryEntry`：選定的 render、使用者編輯後的 copy、原始 `input: JobInput`（供「以相同設定重做」）、favorite、writtenToRag
 - `ReviewCheck`：id、name、kind（rule／vlm）、rule、value、status（pass／warn／fail）、target（bbox id 或 canvas）、ragRef
 
 **WebSocket 事件**（mock 與 live 共用）
