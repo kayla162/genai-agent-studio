@@ -8,6 +8,8 @@ export type ProductDraft = Omit<Product, 'id' | 'createdAt'> & { id?: string };
 export interface DemoControls {
   get(): DemoOptions;
   set(patch: Partial<DemoOptions>): void;
+  /** 直接產生 count 筆已結束的示範任務（不播放），讓成效儀表板有資料；回傳新增筆數 */
+  seedJobs(count: number): Promise<number>;
 }
 
 export interface ConnectionChannel {
