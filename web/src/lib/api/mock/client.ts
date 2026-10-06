@@ -1,7 +1,11 @@
-import type { Copy, DemoOptions, HistoryEntry, JobEvent, JobInput, Product, Render } from '@/types/contract';
-import type { ApiClient, DemoControls, ProductDraft } from '../client';
+import type {
+  BrandDocument, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput, JobStage, JobSummary,
+  Product, ProductPhoto, RagChunk, Render, TemplateId,
+} from '@/types/contract';
+import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString } from '@/lib/core/num';
+import { chunkDocument, EMBED_DIMS, embedPreview } from '@/lib/rag/chunk';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './data';
 import { parseBrief } from './brief';
 import { playTimeline, type PlayerHandle } from './player';
@@ -11,15 +15,29 @@ import { MemoryStore, type KeyValueStore } from './store';
 interface JobRecord {
   id: string;
   input: JobInput;
+  createdAt: string;
   events: JobEvent[];
   listeners: Set<(e: JobEvent) => void>;
   renders: Map<string, Render>;
+  stage: JobStage;
   round: number;
+  bestRenderIds: Partial<Record<TemplateId, string>>;
   finished: boolean;
   player: PlayerHandle | null;
 }
 
-const KEYS = { products: 'products', deleted: 'deletedSampleIds', history: 'history' } as const;
+/** mock 沒有真正的連線：永遠是「已連線」 */
+const MOCK_CONNECTION: ConnectionState = Object.freeze({ status: 'connected', transport: 'mock', error: null });
+
+const KEYS = { products: 'products', deleted: 'deletedSampleIds', history: 'history', docChunks: 'docChunks' } as const;
+
+/** Blob → data URL（mock 把上傳的照片直接存在本機） */
+async function toDataUrl(file: Blob): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:${file.type};base64,${btoa(binary)}`;
+}
 const pad = (n: number) => String(n).padStart(2, '0');
 
 export function makeJobId(now: Date, rand: () => number = Math.random): string {
@@ -32,6 +50,7 @@ const makeId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.r
 
 export class MockApiClient implements ApiClient {
   readonly demo: DemoControls;
+  readonly connection: ConnectionChannel = { get: () => MOCK_CONNECTION, subscribe: () => () => {} };
   private options: DemoOptions = { speed: 1, firstRoundFail: true, forceAllFail: false };
   private readonly jobs = new Map<string, JobRecord>();
   private tail: Promise<unknown> = Promise.resolve();
@@ -53,7 +72,16 @@ export class MockApiClient implements ApiClient {
     return run;
   }
 
-  async listBrands() { return BRANDS; }
+  /** 等待 ms（1× 速度），依 Demo 播放速度縮短 */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms / this.options.speed));
+  }
+
+  /** 示範品牌 + 使用者上傳文件產生的切塊 */
+  async listBrands() {
+    const uploaded = (await this.store.get<Record<string, RagChunk[]>>(KEYS.docChunks)) ?? {};
+    return BRANDS.map((b) => (uploaded[b.id]?.length ? { ...b, guidelineChunks: [...b.guidelineChunks, ...uploaded[b.id]] } : b));
+  }
 
   async listTemplates() { return CHANNEL_TEMPLATES; }
 
@@ -99,6 +127,41 @@ export class MockApiClient implements ApiClient {
     return p;
   }
 
+  async uploadProductPhoto(file: Blob): Promise<ProductPhoto> {
+    if (!file.type.startsWith('image/')) throw new Error('只能上傳圖片檔');
+    return { source: 'upload', url: await toDataUrl(file) };
+  }
+
+  async requestCutout(productId: string): Promise<Product> {
+    const product = await this.findProduct(productId);
+    if (product.photo.source === 'sample') throw new Error('示範商品已是去背素材');
+    await this.sleep(1200);
+    return this.saveProduct({ ...product, cutout: { model: 'BiRefNet-general', url: null } });
+  }
+
+  async ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
+    getBrandById(brandId);
+    const chunks = chunkDocument(brandId, doc);
+    if (!chunks.length) throw new Error('文件沒有可用的文字內容');
+    await this.sleep(400);
+    this.deliver(onEvent, { type: 'ingest.chunked', source: doc.name, chunks: structuredClone(chunks) });
+    for (const [index, c] of chunks.entries()) {
+      await this.sleep(250);
+      this.deliver(onEvent, {
+        type: 'ingest.embedded', chunkId: c.id, index, total: chunks.length, dims: EMBED_DIMS, preview: embedPreview(c.text),
+      });
+    }
+    await this.serial(async () => {
+      const all = (await this.store.get<Record<string, RagChunk[]>>(KEYS.docChunks)) ?? {};
+      // 同名文件重新上傳時取代舊的切塊
+      const kept = (all[brandId] ?? []).filter((c) => c.source !== doc.name);
+      await this.store.set(KEYS.docChunks, { ...all, [brandId]: [...kept, ...chunks] });
+    });
+    await this.sleep(300);
+    this.deliver(onEvent, { type: 'ingest.stored', collection: `${brandId}_ci`, count: chunks.length });
+    return chunks;
+  }
+
   async parseBrief(brandId: string, text: string, productId: string | null) {
     const brand = getBrandById(brandId);
     const product = productId ? await this.findProduct(productId) : null;
@@ -117,9 +180,11 @@ export class MockApiClient implements ApiClient {
     if (product.brandId !== brand.id) throw new Error('商品不屬於所選品牌');
     const templates = input.templateIds.map((id) => getTemplate(id));
 
-    const jobId = makeJobId(this.now());
+    const now = this.now();
+    const jobId = makeJobId(now);
     const rec: JobRecord = {
-      id: jobId, input, events: [], listeners: new Set(), renders: new Map(), round: 0, finished: false, player: null,
+      id: jobId, input: structuredClone(input), createdAt: now.toISOString(), events: [], listeners: new Set(),
+      renders: new Map(), stage: 'parsing', round: 0, bestRenderIds: {}, finished: false, player: null,
     };
     this.jobs.set(jobId, rec);
 
@@ -136,7 +201,11 @@ export class MockApiClient implements ApiClient {
   private dispatch(rec: JobRecord, e: JobEvent) {
     switch (e.type) {
       case 'job.status':
+        rec.stage = e.stage;
         rec.round = e.round;
+        break;
+      case 'job.completed':
+        rec.bestRenderIds = { ...e.bestRenderIds };
         break;
       case 'render.completed':
         for (const r of e.renders) rec.renders.set(r.id, structuredClone(r));
@@ -155,7 +224,7 @@ export class MockApiClient implements ApiClient {
   }
 
   /** 單一訂閱者出錯不可中斷整條事件流（與 WebSocket 各自處理訊息的行為一致）；即時推送與重播共用 */
-  private deliver(listener: (e: JobEvent) => void, e: JobEvent) {
+  private deliver<E extends { type: string }>(listener: (e: E) => void, e: E) {
     try {
       listener(e);
     } catch (err) {
@@ -163,21 +232,45 @@ export class MockApiClient implements ApiClient {
     }
   }
 
-  private getJob(jobId: string): JobRecord {
+  private requireJob(jobId: string): JobRecord {
     const rec = this.jobs.get(jobId);
     if (!rec) throw new Error(`Unknown job: ${jobId}`);
     return rec;
   }
 
-  subscribe(jobId: string, onEvent: (event: JobEvent) => void): () => void {
-    const rec = this.getJob(jobId);
+  subscribe(jobId: string, onEvent: (event: JobEvent) => void, onError?: (error: Error) => void): () => void {
+    const rec = this.jobs.get(jobId);
+    if (!rec) {
+      const timer = setTimeout(() => {
+        const error = new Error(`Unknown job: ${jobId}`);
+        if (onError) onError(error);
+        else console.error('[MockApiClient]', error.message);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
     for (const e of rec.events) this.deliver(onEvent, e);
     rec.listeners.add(onEvent);
     return () => { rec.listeners.delete(onEvent); };
   }
 
+  private summary(rec: JobRecord): JobSummary {
+    return {
+      id: rec.id, input: structuredClone(rec.input), createdAt: rec.createdAt, stage: rec.stage, round: rec.round,
+      finished: rec.finished, bestRenderIds: { ...rec.bestRenderIds },
+    };
+  }
+
+  async listJobs(): Promise<JobSummary[]> {
+    return [...this.jobs.values()].reverse().map((rec) => this.summary(rec));
+  }
+
+  async getJob(jobId: string): Promise<JobSnapshot> {
+    const rec = this.requireJob(jobId);
+    return { summary: this.summary(rec), events: [...rec.events] };
+  }
+
   async cancelJob(jobId: string): Promise<void> {
-    const rec = this.getJob(jobId);
+    const rec = this.requireJob(jobId);
     if (rec.finished) return;
     rec.player?.cancel();
     rec.finished = true;
@@ -186,7 +279,7 @@ export class MockApiClient implements ApiClient {
 
   selectRender(jobId: string, renderId: string, copy: Copy): Promise<HistoryEntry> {
     return this.serial(async () => {
-      const rec = this.getJob(jobId);
+      const rec = this.requireJob(jobId);
       const render = rec.renders.get(renderId);
       if (!render) throw new Error(`Unknown render: ${renderId}`);
       const entry: HistoryEntry = {
@@ -203,5 +296,16 @@ export class MockApiClient implements ApiClient {
   async listHistory(brandId?: string): Promise<HistoryEntry[]> {
     const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];
     return brandId ? history.filter((h) => h.brandId === brandId) : history;
+  }
+
+  setFavorite(historyId: string, favorite: boolean): Promise<HistoryEntry> {
+    return this.serial(async () => {
+      const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];
+      const entry = history.find((h) => h.id === historyId);
+      if (!entry) throw new Error(`Unknown history entry: ${historyId}`);
+      const updated = { ...entry, favorite };
+      await this.store.set(KEYS.history, history.map((h) => (h.id === historyId ? updated : h)));
+      return updated;
+    });
   }
 }

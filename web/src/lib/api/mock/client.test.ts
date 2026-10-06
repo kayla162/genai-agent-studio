@@ -38,7 +38,7 @@ describe('products', () => {
     expect((await api.listProducts('selune')).map((p) => p.id)).toEqual(['prod_selune_serum']);
     const saved = await api.saveProduct({
       brandId: 'selune', name: '晚安面膜', features: ['保濕'], price: { sale: 680, original: 880 },
-      photo: { source: 'upload', url: 'blob:test' },
+      photo: { source: 'upload', url: 'blob:test' }, cutout: null,
     });
     expect(saved.id).toMatch(/^prod_/);
     expect(saved.createdAt).toBe(NOW.toISOString());
@@ -47,6 +47,68 @@ describe('products', () => {
     await api.deleteProduct('prod_selune_serum');
     expect(await api.listProducts('selune')).toEqual([]);
     expect(await api.listProducts('misty-isle')).toHaveLength(1);
+  });
+});
+
+describe('product photos and cutout', () => {
+  it('turns an uploaded image into a data URL photo', async () => {
+    const api = new MockApiClient();
+    const photo = await api.uploadProductPhoto(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }));
+    expect(photo).toEqual({ source: 'upload', url: 'data:image/png;base64,AQID' });
+    await expect(api.uploadProductPhoto(new Blob(['x'], { type: 'text/plain' }))).rejects.toThrow('只能上傳圖片檔');
+  });
+
+  it('simulates a cutout after 1.2 seconds and keeps it on the product', async () => {
+    const api = new MockApiClient();
+    const saved = await api.saveProduct({
+      brandId: 'selune', name: '晚安面膜', features: [], price: { sale: 680, original: 880 },
+      photo: { source: 'upload', url: 'data:image/png;base64,AQID' }, cutout: null,
+    });
+    let done = false;
+    const pending = api.requestCutout(saved.id).then((p) => { done = true; return p; });
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    const product = await pending;
+    expect(product.cutout).toEqual({ model: 'BiRefNet-general', url: null });
+    expect(product.createdAt).toBe(saved.createdAt);
+    expect((await api.listProducts('selune')).find((p) => p.id === saved.id)?.cutout).not.toBeNull();
+    await expect(api.requestCutout('prod_selune_serum')).rejects.toThrow('示範商品已是去背素材');
+  });
+});
+
+describe('brand documents', () => {
+  const DOC = { name: 'ci_update.md', text: ['# 色彩更新', '新增輔助色「霧粉」#E8C7C8。', '', '# Logo', '深色背景使用反白 Logo。'].join('\n') };
+
+  it('reports chunking, embedding and storing, then lists the new chunks on the brand', async () => {
+    const api = new MockApiClient();
+    const seen: string[] = [];
+    const pending = api.ingestBrandDocument('selune', DOC, (e) => seen.push(e.type));
+    await vi.advanceTimersByTimeAsync(1_300);
+    const chunks = await pending;
+    expect(seen).toEqual(['ingest.chunked', 'ingest.embedded', 'ingest.embedded', 'ingest.stored']);
+    expect(chunks.map((c) => c.tag)).toEqual(['color', 'logo']);
+    const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
+    expect(selune.guidelineChunks.slice(-2).map((c) => c.id)).toEqual(chunks.map((c) => c.id));
+    expect((await api.listBrands()).find((b) => b.id === 'misty-isle')!.guidelineChunks).toHaveLength(7);
+  });
+
+  it('replaces chunks when the same document is uploaded again', async () => {
+    const api = new MockApiClient();
+    api.demo.set({ speed: 4 });
+    const first = api.ingestBrandDocument('selune', DOC, () => {});
+    await vi.advanceTimersByTimeAsync(400);
+    await first;
+    const second = api.ingestBrandDocument('selune', { ...DOC, text: '只剩一段。' }, () => {});
+    await vi.advanceTimersByTimeAsync(400);
+    await second;
+    const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
+    expect(selune.guidelineChunks.filter((c) => c.source === 'ci_update.md').map((c) => c.text)).toEqual(['只剩一段。']);
+  });
+
+  it('rejects documents without text', async () => {
+    const api = new MockApiClient();
+    await expect(api.ingestBrandDocument('selune', { name: 'a.txt', text: '  ' }, () => {})).rejects.toThrow('文件沒有可用的文字內容');
   });
 });
 
@@ -101,10 +163,18 @@ describe('jobs', () => {
     expect(await api.listHistory('misty-isle')).toHaveLength(0);
   });
 
-  it('rejects unknown jobs and empty template lists', async () => {
+  it('rejects empty template lists', async () => {
     const api = new MockApiClient();
-    expect(() => api.subscribe('nope', () => {})).toThrow('Unknown job');
     await expect(startJob(api, { templateIds: [] })).rejects.toThrow('至少要選一個通路模板');
+  });
+
+  it('reports unknown jobs through onError instead of throwing', async () => {
+    const api = new MockApiClient();
+    const onError = vi.fn();
+    api.subscribe('nope', () => {}, onError);
+    expect(onError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Unknown job: nope' }));
   });
 
   it('keeps every history entry when selections run concurrently', async () => {
@@ -126,6 +196,7 @@ describe('jobs', () => {
     const api = new MockApiClient();
     const draft = (name: string) => ({
       brandId: 'selune', name, features: [], price: { sale: 1, original: 1 }, photo: { source: 'upload' as const, url: 'blob:x' },
+      cutout: null,
     });
     await Promise.all([api.saveProduct(draft('A')), api.saveProduct(draft('B'))]);
     expect((await api.listProducts('selune')).map((p) => p.name)).toEqual(['極光玻尿酸修護精華 30ml', 'A', 'B']);
@@ -184,6 +255,66 @@ describe('jobs', () => {
     await expect(startJob(api, { variantsPerTemplate: 0 })).rejects.toThrow('每個模板的候選張數需為 1–8');
     await expect(startJob(api, { maxRetries: -1 })).rejects.toThrow('最大重試次數需為 0 以上的整數');
     await expect(startJob(api, { brandId: 'misty-isle' })).rejects.toThrow('商品不屬於所選品牌');
+  });
+});
+
+describe('job queries, connection and favorites', () => {
+  it('lists jobs newest first with their live status', async () => {
+    const api = new MockApiClient();
+    const first = await startJob(api);
+    await vi.advanceTimersByTimeAsync(14_500);
+    const second = await startJob(api, { templateIds: ['story'] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const jobs = await api.listJobs();
+    expect(jobs.map((j) => j.id)).toEqual([second.jobId, first.jobId]);
+    expect(jobs[1]).toMatchObject({ stage: 'done', round: 2, finished: true, createdAt: NOW.toISOString() });
+    expect(jobs[1].bestRenderIds['ig-post']).toMatch(/_r2_ig-post_v\d$/);
+    expect(jobs[0]).toMatchObject({ stage: 'parsing', finished: false, bestRenderIds: {} });
+    expect(jobs[0].input.templateIds).toEqual(['story']);
+  });
+
+  it('returns a snapshot of a job and its events', async () => {
+    const api = new MockApiClient();
+    const { jobId, events } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const snap = await api.getJob(jobId);
+    expect(snap.summary.id).toBe(jobId);
+    expect(snap.events).toEqual(events);
+    await expect(api.getJob('nope')).rejects.toThrow('Unknown job');
+  });
+
+  it('keeps the input it was given, even if the caller mutates it later', async () => {
+    const api = new MockApiClient();
+    const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
+    const input: JobInput = {
+      brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
+      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
+    };
+    const { jobId } = await api.createJob(input);
+    input.templateIds.push('story');
+    expect((await api.getJob(jobId)).summary.input.templateIds).toEqual(['ig-post']);
+  });
+
+  it('is always connected in mock mode', () => {
+    const api = new MockApiClient();
+    expect(api.connection.get()).toEqual({ status: 'connected', transport: 'mock', error: null });
+    expect(api.connection.get()).toBe(api.connection.get());
+    const unsubscribe = api.connection.subscribe(() => {});
+    expect(typeof unsubscribe).toBe('function');
+  });
+
+  it('toggles favorites on history entries', async () => {
+    const api = new MockApiClient();
+    const { jobId, events } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(14_500);
+    const done = events.find((e) => e.type === 'job.completed');
+    if (done?.type !== 'job.completed') throw new Error('job did not complete');
+    const prompt = events.find((e) => e.type === 'prompt.generated' && e.round === 2);
+    if (prompt?.type !== 'prompt.generated') throw new Error('missing round 2 prompt');
+    const entry = await api.selectRender(jobId, done.bestRenderIds['ig-post']!, prompt.spec.copy);
+    expect((await api.setFavorite(entry.id, true)).favorite).toBe(true);
+    expect((await api.listHistory('selune'))[0].favorite).toBe(true);
+    await expect(api.setFavorite('nope', true)).rejects.toThrow('Unknown history entry');
   });
 });
 
