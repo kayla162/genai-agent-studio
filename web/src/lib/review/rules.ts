@@ -1,0 +1,105 @@
+import type { Brand, LayoutElementId, PromptSpec, RagTag, ReviewCheck } from '@/types/contract';
+import { boxMap } from '@/lib/compose/layout';
+import { areaRatio, verticalGap } from '@/lib/core/geometry';
+import { clamp, round1 } from '@/lib/core/num';
+import { deltaEHex } from './color';
+
+export function findBannedWords(texts: string[], banned: string[]): string[] {
+  const joined = texts.join('\n');
+  return banned.filter((w) => w !== '' && joined.includes(w));
+}
+
+export function hasClaim(texts: string[], claimWords: string[]): boolean {
+  const joined = texts.join('\n');
+  return claimWords.some((w) => joined.includes(w));
+}
+
+export function ragRefFor(brand: Brand, tag: RagTag): string | null {
+  return brand.guidelineChunks.find((c) => c.tag === tag && !c.id.endsWith('-alt'))?.id ?? null;
+}
+
+/** 依版面元素拆出文案，讓禁用詞檢查能指出出現在哪個區塊 */
+export function copyTexts(spec: PromptSpec): { id: LayoutElementId; text: string }[] {
+  const c = spec.copy;
+  return [
+    { id: 'headline', text: c.headline.join('') },
+    { id: 'subhead', text: c.subhead },
+    { id: 'features', text: c.features.join('、') },
+    { id: 'badge', text: `${c.badge.top}${c.badge.main}` },
+    { id: 'disclaimer', text: c.disclaimer },
+  ];
+}
+
+export interface RuleContext {
+  brand: Brand;
+  spec: PromptSpec;
+  /** 從生成圖中偵測到的主色（第二階段由影像分析取得） */
+  measuredPrimary: string;
+  /** OCR 結果與文案的差異字數 */
+  ocrDiffs?: number;
+}
+
+export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: RuleContext): ReviewCheck[] {
+  const B = boxMap(spec.layout);
+  const { width: W, height: H } = spec.canvas;
+  const pct = (v: number) => `${round1(v * 100)}%`;
+
+  const texts = copyTexts(spec);
+  const banned = findBannedWords(texts.map((t) => t.text), brand.bannedWords);
+  const bannedTarget = texts.find((t) => banned.some((w) => t.text.includes(w)))?.id ?? null;
+
+  const dE = deltaEHex(measuredPrimary, brand.palette.primary);
+
+  const gap = verticalGap(B.logo, B.headline);
+  const need = Math.round(B.logo.h * 0.5);
+
+  const claim = hasClaim([spec.copy.headline.join(''), spec.copy.subhead], brand.claimWords);
+  const hasNote = brand.disclaimerPhrase !== '' && spec.copy.disclaimer.includes(brand.disclaimerPhrase);
+
+  const prod = areaRatio(B.product, W, H);
+  const [lo, hi] = brand.rules.productRatio;
+  const whitespace = 1 - Object.values(B).reduce((s, r) => s + areaRatio(r, W, H), 0);
+
+  return [
+    {
+      id: 'banned_words', name: '禁用詞檢查', kind: 'rule', rule: '品牌禁用詞庫與法規用語',
+      value: banned.length ? `禁用詞${banned.map((w) => `「${w}」`).join('')}` : '未偵測到禁用詞',
+      status: banned.length ? 'fail' : 'pass', target: bannedTarget, ragRef: ragRefFor(brand, 'law'),
+    },
+    {
+      id: 'color_delta', name: '品牌主色色差', kind: 'rule', rule: `ΔE2000 ≤ ${brand.rules.maxDeltaE}`,
+      value: `ΔE ${round1(dE)} · 偵測主色 ${measuredPrimary.toUpperCase()}`,
+      status: dE <= brand.rules.maxDeltaE ? 'pass' : 'fail', target: 'canvas', ragRef: ragRefFor(brand, 'color'),
+    },
+    {
+      id: 'logo_clearance', name: 'Logo 淨空區', kind: 'rule', rule: `間距 ≥ 0.5 × Logo 高（${need}px）`,
+      value: gap < 0 ? `與標題重疊 ${-gap}px` : `間距 ${gap}px`,
+      status: gap >= need ? 'pass' : 'fail', target: 'logo', ragRef: ragRefFor(brand, 'logo'),
+    },
+    {
+      id: 'disclaimer', name: '效果宣稱註記', kind: 'rule',
+      rule: brand.disclaimerPhrase ? `效果宣稱需加註「${brand.disclaimerPhrase}」` : '效果宣稱需加註說明',
+      value: !claim ? '無效果宣稱' : hasNote ? '已加註' : '含效果宣稱但缺少註記',
+      status: !claim || hasNote ? 'pass' : 'warn', target: 'disclaimer', ragRef: ragRefFor(brand, 'law'),
+    },
+    {
+      id: 'product_ratio', name: '商品主體佔比', kind: 'rule', rule: `${round1(lo * 100)}% – ${round1(hi * 100)}%`,
+      value: pct(prod), status: prod >= lo && prod <= hi ? 'pass' : 'fail', target: 'product', ragRef: ragRefFor(brand, 'layout'),
+    },
+    {
+      id: 'whitespace', name: '留白比例', kind: 'rule', rule: `≥ ${round1(brand.rules.minWhitespace * 100)}%`,
+      value: pct(whitespace), status: whitespace >= brand.rules.minWhitespace ? 'pass' : 'fail', target: null,
+      ragRef: ragRefFor(brand, 'layout'),
+    },
+    {
+      id: 'ocr_typo', name: 'OCR 錯字比對', kind: 'rule', rule: '渲染文字與文案逐字比對',
+      value: `${ocrDiffs} 處差異`, status: ocrDiffs === 0 ? 'pass' : 'fail', target: 'headline', ragRef: null,
+    },
+  ];
+}
+
+export function scoreChecks(checks: ReviewCheck[], jitter = 0): { score: number; passed: boolean } {
+  const fails = checks.filter((c) => c.status === 'fail').length;
+  const warns = checks.filter((c) => c.status === 'warn').length;
+  return { score: clamp(Math.round(100 - fails * 14 - warns * 6 - jitter), 0, 100), passed: fails === 0 };
+}

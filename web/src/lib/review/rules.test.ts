@@ -1,0 +1,89 @@
+import { describe, it, expect } from 'vitest';
+import type { ReviewCheck } from '@/types/contract';
+import { SELUNE, MISTY_ISLE } from '@/lib/api/mock/data';
+import { makeSpec } from '@/test/fixtures';
+import { findBannedWords, hasClaim, ragRefFor, runRuleChecks, scoreChecks } from './rules';
+
+const byId = (checks: ReviewCheck[], id: ReviewCheck['id']) => checks.find((c) => c.id === id)!;
+
+describe('text rules', () => {
+  it('finds banned words in list order', () => {
+    expect(findBannedWords(['7天根治暗沉・醫療級修護'], SELUNE.bannedWords)).toEqual(['根治', '醫療級']);
+    expect(findBannedWords(['一夜溫柔修護'], SELUNE.bannedWords)).toEqual([]);
+  });
+
+  it('detects effect claims', () => {
+    expect(hasClaim(['醒來透亮發光'], SELUNE.claimWords)).toBe(true);
+    expect(hasClaim(['一口清醒'], MISTY_ISLE.claimWords)).toBe(false);
+  });
+
+  it('ragRefFor skips the law-alt chunk', () => {
+    expect(ragRefFor(SELUNE, 'law')).toBe('selune#law');
+  });
+});
+
+describe('runRuleChecks', () => {
+  it('passes all 7 rule checks for a compliant spec', () => {
+    const checks = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79' });
+    expect(checks.map((c) => c.id)).toEqual([
+      'banned_words', 'color_delta', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
+    ]);
+    expect(checks.every((c) => c.status === 'pass' && c.kind === 'rule')).toBe(true);
+  });
+
+  it('fails banned words and points at the subhead', () => {
+    const spec = makeSpec();
+    spec.copy.subhead = '7天根治暗沉・醫療級修護';
+    const c = byId(runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' }), 'banned_words');
+    expect(c.status).toBe('fail');
+    expect(c.target).toBe('subhead');
+    expect(c.value).toBe('禁用詞「根治」「醫療級」');
+  });
+
+  it('fails the color check for an off-brand pink', () => {
+    const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#E0458A' }), 'color_delta');
+    expect(c.status).toBe('fail');
+    expect(c.value).toContain('#E0458A');
+  });
+
+  it('fails logo clearance when the logo is pushed into the headline', () => {
+    const spec = makeSpec();
+    const logo = spec.layout.find((b) => b.id === 'logo')!;
+    const head = spec.layout.find((b) => b.id === 'headline')!;
+    logo.bbox[1] = head.bbox[1] - Math.round(logo.bbox[3] * 0.55);
+    const c = byId(runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' }), 'logo_clearance');
+    expect(c.status).toBe('fail');
+    expect(c.value).toBe('與標題重疊 36px');
+  });
+
+  it('warns when an effect claim has no disclaimer; brands without claims pass', () => {
+    const spec = makeSpec();
+    spec.copy.disclaimer = '活動期間 2026/10/15–11/15';
+    expect(byId(runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' }), 'disclaimer').status).toBe('warn');
+
+    const coffee = makeSpec({ brandId: MISTY_ISLE.id, palette: { ...MISTY_ISLE.palette } });
+    coffee.copy.headline = ['一口清醒', '慢萃十八小時'];
+    coffee.copy.subhead = '單一產區耶加雪菲・低溫冷萃 18 小時';
+    coffee.copy.disclaimer = '圖片僅供參考';
+    const checks = runRuleChecks({ brand: MISTY_ISLE, spec: coffee, measuredPrimary: '#2F4A44' });
+    expect(byId(checks, 'disclaimer').value).toBe('無效果宣稱');
+    expect(checks.every((c) => c.status === 'pass')).toBe(true);
+  });
+
+  it('fails OCR when diffs are reported', () => {
+    const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', ocrDiffs: 2 }), 'ocr_typo');
+    expect(c.status).toBe('fail');
+  });
+});
+
+describe('scoreChecks', () => {
+  const mk = (status: ReviewCheck['status']): ReviewCheck => ({
+    id: 'banned_words', name: 'x', kind: 'rule', rule: 'x', value: 'x', status, target: null, ragRef: null,
+  });
+
+  it('subtracts 14 per fail, 6 per warn and the jitter', () => {
+    expect(scoreChecks([mk('pass'), mk('pass')], 2)).toEqual({ score: 98, passed: true });
+    expect(scoreChecks([mk('fail'), mk('fail'), mk('warn')])).toEqual({ score: 66, passed: false });
+    expect(scoreChecks(Array.from({ length: 10 }, () => mk('fail'))).score).toBe(0);
+  });
+});
