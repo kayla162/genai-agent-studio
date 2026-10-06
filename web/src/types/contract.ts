@@ -201,6 +201,7 @@ export interface HistoryEntry {
   jobId: string;
   brandId: string;
   productId: string;
+  input: JobInput;
   templateId: TemplateId;
   render: Render;
   copy: Copy;

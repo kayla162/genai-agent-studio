@@ -95,6 +95,8 @@ describe('jobs', () => {
     expect(entry.render.passed).toBe(true);
     expect(entry.render.checks).toHaveLength(10);
     expect(entry.copy.price.sale).toBe(999);
+    expect(entry.input.brief).toBe(BRIEF);
+    expect(entry.input.templateIds).toEqual(['ig-post']);
     expect(await api.listHistory('selune')).toHaveLength(1);
     expect(await api.listHistory('misty-isle')).toHaveLength(0);
   });
@@ -131,19 +133,57 @@ describe('jobs', () => {
 
   it('keeps delivering to other subscribers when one throws', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const api = new MockApiClient();
+      const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
+      const { jobId } = await api.createJob({
+        brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
+        variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
+      });
+      api.subscribe(jobId, () => { throw new Error('boom'); });
+      const events: JobEvent[] = [];
+      api.subscribe(jobId, (e) => events.push(e));
+      await vi.advanceTimersByTimeAsync(14_500);
+      expect(statuses(events).at(-1)).toBe('done');
+      expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('stops delivery immediately when a subscriber cancels inside a handler', async () => {
     const api = new MockApiClient();
-    const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
-    const { jobId } = await api.createJob({
-      brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
-      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
-    });
-    api.subscribe(jobId, () => { throw new Error('boom'); });
-    const events: JobEvent[] = [];
-    api.subscribe(jobId, (e) => events.push(e));
-    await vi.advanceTimersByTimeAsync(14_500);
-    expect(statuses(events).at(-1)).toBe('done');
-    expect(error).toHaveBeenCalled();
-    error.mockRestore();
+    const { jobId, events } = await startJob(api);
+    api.subscribe(jobId, (e) => { if (e.type === 'job.accepted') void api.cancelJob(jobId); });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(events.map((e) => (e.type === 'job.status' ? e.stage : e.type))).toEqual(['job.accepted', 'cancelled']);
+  });
+
+  it('registers a subscriber even if it throws while replaying past events', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const api = new MockApiClient();
+      const { jobId } = await startJob(api);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const seen: string[] = [];
+      api.subscribe(jobId, (e) => {
+        if (e.type === 'job.accepted') throw new Error('replay boom');
+        seen.push(e.type);
+      });
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(seen).toContain('job.completed');
+      expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('rejects invalid job input', async () => {
+    const api = new MockApiClient();
+    await expect(startJob(api, { templateIds: ['ig-post', 'ig-post'] })).rejects.toThrow('通路模板不可重複');
+    await expect(startJob(api, { variantsPerTemplate: 0 })).rejects.toThrow('每個模板的候選張數需為 1–8');
+    await expect(startJob(api, { maxRetries: -1 })).rejects.toThrow('最大重試次數需為 0 以上的整數');
+    await expect(startJob(api, { brandId: 'misty-isle' })).rejects.toThrow('商品不屬於所選品牌');
   });
 });
 

@@ -4,8 +4,9 @@ import type { TimedEvent } from './scenario';
 export interface PlayerHandle { cancel(): void }
 
 /**
- * 依 `at`（1× 毫秒）播放事件。每段等待時間 ÷ getSpeed()，所以播放中改速度會立即生效。
+ * 依 `at`（1× 毫秒）播放事件。每段等待時間 ÷ getSpeed()，所以播放中改速度會從下一段等待開始生效（不會改動已排定的等待）。
  * 第一批事件也用 setTimeout 送出，讓呼叫端有機會先訂閱。
+ * 在事件處理函式內呼叫 cancel() 會立刻停止後續事件（包含同一時間點尚未送出的事件），也不會再呼叫 onDone。
  */
 export function playTimeline(
   events: TimedEvent[],
@@ -18,7 +19,8 @@ export function playTimeline(
 
   const step = () => {
     if (cancelled) return;
-    while (i < events.length && events[i].at <= now) opts.onEvent(events[i++].event);
+    while (!cancelled && i < events.length && events[i].at <= now) opts.onEvent(events[i++].event);
+    if (cancelled) return;
     if (i >= events.length) {
       opts.onDone();
       return;

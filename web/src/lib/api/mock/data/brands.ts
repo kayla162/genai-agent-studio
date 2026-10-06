@@ -1,6 +1,7 @@
 import type { Brand } from '@/types/contract';
+import { deepFreeze } from '@/lib/core/freeze';
 
-export const SELUNE: Brand = {
+export const SELUNE: Brand = deepFreeze({
   id: 'selune',
   name: 'SÉLUNE 晞月',
   category: '美妝保養',
@@ -40,9 +41,9 @@ export const SELUNE: Brand = {
     playful: { headline: ['熬夜也不怕', '肌膚喝飽水！'], subhead: '水潤透亮一起帶走，買一送一只到月底*' },
     minimal: { headline: ['少即是多', '純粹修護'], subhead: '5重玻尿酸・無香精・敏感肌適用*' },
   },
-};
+});
 
-export const MISTY_ISLE: Brand = {
+export const MISTY_ISLE: Brand = deepFreeze({
   id: 'misty-isle',
   name: '霧嶼咖啡 MISTY ISLE',
   category: '冷萃咖啡',
@@ -81,4 +82,4 @@ export const MISTY_ISLE: Brand = {
     science: { headline: ['18H 低溫萃取', '每瓶 120mg 咖啡因'], subhead: '單一產區・無添加糖・冷鏈配送' },
     playful: { headline: ['冰冰的', '剛剛好！'], subhead: '買二送一，辦公室續命必備' },
   },
-};
+});

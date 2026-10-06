@@ -29,13 +29,25 @@ export function makeBadge(brief: ParsedBrief): Copy['badge'] {
   };
 }
 
-export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief): Copy {
+/** 依品牌的合規替代用語改寫文字（替代詞為空字串時直接刪除該詞） */
+export function applyReplacements(text: string, replacements: Record<string, string>): string {
+  return Object.entries(replacements).reduce((s, [word, alt]) => s.split(word).join(alt), text);
+}
+
+export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief, rewrite = false): Copy {
   const preset = brand.copyPresets[brief.tone];
-  const headline: [string, string] = [preset.headline[0], preset.headline[1]];
-  const features = (brief.sellingPoints.length ? brief.sellingPoints : product.features).slice(0, 3);
-  const badge = makeBadge(brief);
+  // 上一輪文案審查未通過時，依品牌替代用語改寫；商品名稱是登錄的商品資料，不改寫
+  const fix = (text: string) => (rewrite ? applyReplacements(text, brand.replacements) : text);
+  const headline: [string, string] = [fix(preset.headline[0]), fix(preset.headline[1])];
+  const subhead = fix(preset.subhead);
+  const features = (brief.sellingPoints.length ? brief.sellingPoints : product.features)
+    .slice(0, 3)
+    .map(fix)
+    .filter((f) => f !== '');
+  const baseBadge = makeBadge(brief);
+  const badge = { ...baseBadge, top: fix(baseBadge.top), main: fix(baseBadge.main) };
   // 與審查（runRuleChecks）使用同一個宣稱範圍，確保需要註記時一定會加上
-  const claim = hasClaim(claimTexts({ headline, subhead: preset.subhead, features, badge }), brand.claimWords);
+  const claim = hasClaim(claimTexts({ headline, subhead, features, badge }), brand.claimWords);
   const notes = [
     claim && brand.disclaimerPhrase ? `*使用者感受，${brand.disclaimerPhrase}` : null,
     brief.campaign ? CAMPAIGN_PERIOD : null,
@@ -44,10 +56,10 @@ export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief): C
 
   return {
     headline,
-    subhead: preset.subhead,
+    subhead,
     features,
     badge,
-    price: { label: `${brief.campaign ?? '限時'}活動價`, sale: product.price.sale, original: product.price.original },
+    price: { label: fix(`${brief.campaign ?? '限時'}活動價`), sale: product.price.sale, original: product.price.original },
     productName: product.name,
     disclaimer: notes.length ? notes.join('｜') : '圖片僅供參考',
   };
@@ -135,6 +147,7 @@ export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
     .map((id) => NEGATIVE_BY_FIX[id])
     .filter((s): s is string => s !== undefined);
   const negativePrompt = [BASE_NEGATIVE, ...extra].join(', ');
+  const rewrite = input.fixes.some((id) => id === 'banned_words' || id === 'vlm_exaggeration');
   const canvas = { width: template.width, height: template.height, ratio: template.ratio };
 
   return {
@@ -144,7 +157,7 @@ export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
     brandId: brand.id,
     canvas,
     palette,
-    copy: buildCopy(brand, product, brief),
+    copy: buildCopy(brand, product, brief, rewrite),
     layout,
     positivePrompt,
     negativePrompt,

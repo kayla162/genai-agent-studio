@@ -7,7 +7,9 @@ type Verdict = Pick<ReviewCheck, 'status' | 'value'>;
 
 /** 模擬 VLM 看圖後的判斷。第二階段改為呼叫 Gemini Vision 或微調的 Llama 3.2 Vision，輸出格式不變。 */
 export function mockVlmChecks(spec: PromptSpec, brand: Brand, variant: number): ReviewCheck[] {
-  const words = findBannedWords(copyTexts(spec).map((t) => t.text), brand.bannedWords);
+  const texts = copyTexts(spec);
+  const words = findBannedWords(texts.map((t) => t.text), brand.bannedWords);
+  const exaggerationTarget = texts.find((t) => words.some((w) => t.text.includes(w)))?.id ?? null;
   const B = boxMap(spec.layout);
   const crowded = verticalGap(B.logo, B.headline) < 0;
 
@@ -23,7 +25,7 @@ export function mockVlmChecks(spec: PromptSpec, brand: Brand, variant: number): 
     {
       id: 'vlm_exaggeration', name: '誇大／療效用語', kind: 'vlm', rule: 'VLM 判讀海報文字語意',
       value: words.length ? `偵測到${words.map((w) => `「${w}」`).join('')}` : '未發現誇大用語',
-      status: words.length ? 'fail' : 'pass', target: words.length ? 'subhead' : null, ragRef: ragRefFor(brand, 'law'),
+      status: words.length ? 'fail' : 'pass', target: exaggerationTarget, ragRef: ragRefFor(brand, 'law'),
     },
     {
       id: 'vlm_occlusion', name: '物件與文字遮擋', kind: 'vlm', rule: 'VLM 判讀元素是否重疊', ...occlusion,

@@ -18,4 +18,12 @@ describe('diffSpecs', () => {
       { path: 'copy.subhead', before: '7天感受透亮光采・專業修護配方*', after: '7天根治暗沉・醫療級修護' },
     ]);
   });
+
+  it('shows rewritten headline and features', () => {
+    const b = makeSpec();
+    b.copy.features = ['改善外觀暗沉'];
+    expect(diffSpecs(makeSpec(), b)).toEqual([
+      { path: 'copy.features', before: '5重玻尿酸、神經醯胺、無香精', after: '改善外觀暗沉' },
+    ]);
+  });
 });

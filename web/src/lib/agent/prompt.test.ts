@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { SELUNE, MISTY_ISLE, SAMPLE_PRODUCTS } from '@/lib/api/mock/data';
 import { parseBrief } from '@/lib/api/mock/brief';
 import { getTemplate } from '@/lib/compose/templates';
-import { BASE_NEGATIVE, buildPromptSpec, seedOf, setParam, type PromptBuildInput } from './prompt';
+import { applyReplacements, BASE_NEGATIVE, buildPromptSpec, seedOf, setParam, type PromptBuildInput } from './prompt';
 
 const serum = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
 const coldbrew = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_misty_coldbrew')!;
@@ -71,5 +71,19 @@ describe('buildPromptSpec', () => {
     const next = setParam(spec.injection, 'seed', 7);
     expect(next.params.find((p) => p.label === 'seed')?.value).toBe(7);
     expect(seedOf(spec)).toBe(123456789);
+  });
+
+  it('applyReplacements swaps or deletes banned words', () => {
+    expect(applyReplacements('7天根治暗沉・醫療級修護', SELUNE.replacements)).toBe('7天改善外觀暗沉・專業配方修護');
+    expect(applyReplacements('保證有效', SELUNE.replacements)).toBe('');
+  });
+
+  it('rewrites banned selling points after a copy failure, but not before', () => {
+    const tainted = { ...serum, features: ['根治暗沉', '保證有效', '神經醯胺'] };
+    const brief = parseBrief('週年慶主打買一送一，溫柔療癒', SELUNE, tainted);
+    expect(buildPromptSpec(input({ product: tainted, brief })).copy.features).toEqual(['根治暗沉', '保證有效', '神經醯胺']);
+    const rewritten = buildPromptSpec(input({ product: tainted, brief, round: 2, fixes: ['banned_words'] }));
+    expect(rewritten.copy.features).toEqual(['改善外觀暗沉', '神經醯胺']);
+    expect(rewritten.copy.productName).toBe(serum.name);
   });
 });

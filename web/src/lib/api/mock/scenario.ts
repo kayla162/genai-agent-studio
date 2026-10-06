@@ -4,6 +4,7 @@ import type {
 } from '@/types/contract';
 import { buildPromptSpec, seedOf } from '@/lib/agent/prompt';
 import { planFixes } from '@/lib/agent/fixes';
+import { deepFreeze } from '@/lib/core/freeze';
 import { hashString, mulberry32 } from '@/lib/core/num';
 import { truncate } from '@/lib/core/text';
 import { applyFlaws, FLAWS } from './flaws';
@@ -81,7 +82,7 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
   emit(0, { type: 'job.status', stage: 'parsing', round: 0 });
   log(0, 'ws', `→ job.create brand=${brand.id} product=${product.id} templates=${templates.map((t) => t.id).join(',')}`);
   log(300, 'agent', `${input.llm}：拆解需求「${truncate(input.brief, 24)}」`);
-  emit(PHASE_MS.parse, { type: 'brief.parsed', parsedBrief: input.parsedBrief });
+  emit(PHASE_MS.parse, { type: 'brief.parsed', parsedBrief: structuredClone(input.parsedBrief) });
   const pb = input.parsedBrief;
   log(PHASE_MS.parse, 'agent', `✓ 語氣=${pb.tone}・檔期=${pb.campaign ?? '無'}・優惠=${pb.offer ?? '無'}`, 'ok');
 
@@ -177,6 +178,8 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
     // 7. Query Rewriting（必要時重新檢索合規用語）
     emit(t, { type: 'job.status', stage: 'rewriting', round });
     const reasons = new Set<CheckId>();
+    const altId = `${brand.id}#law-alt`;
+    const altAlreadyRetrieved = ragRefs.includes(altId);
     let requery = false;
     for (const template of failed) {
       const top = byScore(template.id)[0];
@@ -186,12 +189,11 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
       requery ||= needRequery;
       emit(t, {
         type: 'rewrite.started', round, templateId: template.id, reasons: failing,
-        fixes: planFixes(top.result.checks, brand, top.render.spec), requery: needRequery,
+        fixes: planFixes(top.result.checks, brand, top.render.spec), requery: needRequery && !altAlreadyRetrieved,
       });
     }
     log(t, 'api', `觸發 Query Rewriting（重試 ${round}/${input.maxRetries}）`, 'warn');
-    const altId = `${brand.id}#law-alt`;
-    if (requery && !ragRefs.includes(altId)) {
+    if (requery && !altAlreadyRetrieved) {
       const hit = requeryHit(brand);
       emit(t + PHASE_MS.rewrite / 2, { type: 'rag.retrieved', query: `${brand.category} 禁用詞 合規替代用語`, hits: [hit] });
       log(t + PHASE_MS.rewrite / 2, 'rag', `re-query → ${hit.chunkId}（${hit.vectorScore}）`, 'ok');
@@ -217,5 +219,5 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
     log(t, 'ws', '← job.needs_review', 'warn');
   }
   // Array.prototype.sort 是穩定排序：同一時間點的事件維持加入順序
-  return out.sort((a, b) => a.at - b.at);
+  return deepFreeze(out.sort((a, b) => a.at - b.at));
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TONES } from '@/types/contract';
 import { hexToRgb } from '@/lib/review/color';
-import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './index';
+import { BRANDS, getBrandById, SAMPLE_PRODUCTS, SELUNE } from './index';
 
 describe.each(BRANDS)('brand $id', (brand) => {
   it('has a valid palette', () => {
@@ -29,6 +29,13 @@ describe.each(BRANDS)('brand $id', (brand) => {
       const text = brand.copyPresets[tone].headline.join('') + brand.copyPresets[tone].subhead;
       for (const word of brand.bannedWords) expect(text).not.toContain(word);
     }
+  });
+});
+
+describe('mock data immutability', () => {
+  it('is frozen so shared demo data cannot be mutated', () => {
+    expect(Object.isFrozen(SELUNE.palette)).toBe(true);
+    expect(Object.isFrozen(SAMPLE_PRODUCTS[0].price)).toBe(true);
   });
 });
 

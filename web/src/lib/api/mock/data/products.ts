@@ -1,6 +1,7 @@
 import type { Product } from '@/types/contract';
+import { deepFreeze } from '@/lib/core/freeze';
 
-export const SAMPLE_PRODUCTS: Product[] = [
+export const SAMPLE_PRODUCTS: Product[] = deepFreeze([
   {
     id: 'prod_selune_serum', brandId: 'selune', name: '極光玻尿酸修護精華 30ml',
     features: ['5重玻尿酸', '神經醯胺', '無香精', '敏感肌適用'],
@@ -13,4 +14,4 @@ export const SAMPLE_PRODUCTS: Product[] = [
     price: { sale: 120, original: 150 }, photo: { source: 'sample', art: 'coldbrew' },
     createdAt: '2026-10-01T09:00:00.000Z',
   },
-];
+]);

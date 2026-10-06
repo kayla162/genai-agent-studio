@@ -109,6 +109,12 @@ export class MockApiClient implements ApiClient {
     const brand = getBrandById(input.brandId);
     const product = await this.findProduct(input.productId);
     if (!input.templateIds.length) throw new Error('至少要選一個通路模板');
+    if (new Set(input.templateIds).size !== input.templateIds.length) throw new Error('通路模板不可重複');
+    if (!Number.isInteger(input.variantsPerTemplate) || input.variantsPerTemplate < 1 || input.variantsPerTemplate > 8) {
+      throw new Error('每個模板的候選張數需為 1–8');
+    }
+    if (!Number.isInteger(input.maxRetries) || input.maxRetries < 0) throw new Error('最大重試次數需為 0 以上的整數');
+    if (product.brandId !== brand.id) throw new Error('商品不屬於所選品牌');
     const templates = input.templateIds.map((id) => getTemplate(id));
 
     const jobId = makeJobId(this.now());
@@ -145,13 +151,15 @@ export class MockApiClient implements ApiClient {
       }
     }
     rec.events.push(e);
-    for (const listener of rec.listeners) {
-      try {
-        listener(e);
-      } catch (err) {
-        // 單一訂閱者出錯不可中斷整條事件流（與 WebSocket 各自處理訊息的行為一致）
-        console.error('[MockApiClient] subscriber threw while handling', e.type, err);
-      }
+    for (const listener of rec.listeners) this.deliver(listener, e);
+  }
+
+  /** 單一訂閱者出錯不可中斷整條事件流（與 WebSocket 各自處理訊息的行為一致）；即時推送與重播共用 */
+  private deliver(listener: (e: JobEvent) => void, e: JobEvent) {
+    try {
+      listener(e);
+    } catch (err) {
+      console.error('[MockApiClient] subscriber threw while handling', e.type, err);
     }
   }
 
@@ -163,7 +171,7 @@ export class MockApiClient implements ApiClient {
 
   subscribe(jobId: string, onEvent: (event: JobEvent) => void): () => void {
     const rec = this.getJob(jobId);
-    for (const e of rec.events) onEvent(e);
+    for (const e of rec.events) this.deliver(onEvent, e);
     rec.listeners.add(onEvent);
     return () => { rec.listeners.delete(onEvent); };
   }
@@ -182,8 +190,8 @@ export class MockApiClient implements ApiClient {
       const render = rec.renders.get(renderId);
       if (!render) throw new Error(`Unknown render: ${renderId}`);
       const entry: HistoryEntry = {
-        id: makeId('hist'), jobId, brandId: rec.input.brandId, productId: rec.input.productId, templateId: render.templateId,
-        render: structuredClone(render), copy: structuredClone(copy), selectedAt: this.now().toISOString(),
+        id: makeId('hist'), jobId, brandId: rec.input.brandId, productId: rec.input.productId, input: structuredClone(rec.input),
+        templateId: render.templateId, render: structuredClone(render), copy: structuredClone(copy), selectedAt: this.now().toISOString(),
         favorite: false, writtenToRag: true,
       };
       const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];

@@ -74,6 +74,12 @@ describe('buildTimeline (default demo)', () => {
   it('is deterministic for the same seed', () => {
     expect(buildTimeline(ctx())).toEqual(tl);
   });
+
+  it('freezes every event payload', () => {
+    const render = ofType(tl, 'render.completed')[0].renders[0];
+    expect(Object.isFrozen(tl[0].event)).toBe(true);
+    expect(Reflect.set(render.spec.copy, 'subhead', 'x')).toBe(false);
+  });
 });
 
 describe('buildTimeline (other demo options)', () => {
@@ -98,5 +104,23 @@ describe('buildTimeline (other demo options)', () => {
     expect(Object.keys(done.bestRenderIds).sort()).toEqual(['ecom-main', 'story']);
     expect(done.bestRenderIds['ecom-main']).toMatch(/^job_test_r2_ecom-main_v\d$/);
     expect(ofType(tl, 'render.completed').flatMap((e) => e.renders)).toHaveLength(16);
+  });
+
+  it('rewrites a banned selling point and passes on the next round', () => {
+    const tainted = { ...serum, features: ['根治暗沉', '神經醯胺', '無香精'] };
+    const tl = buildTimeline(ctx(
+      { product: tainted, demo: { speed: 1, firstRoundFail: false, forceAllFail: false } },
+      { parsedBrief: parseBrief(BRIEF, SELUNE, tainted) },
+    ));
+    expect(ofType(tl, 'rewrite.started')).toHaveLength(1);
+    expect(ofType(tl, 'job.completed')).toHaveLength(1);
+    const round2 = ofType(tl, 'prompt.generated').find((e) => e.round === 2)!;
+    expect(round2.spec.copy.features).toEqual(['改善外觀暗沉', '神經醯胺', '無香精']);
+  });
+
+  it('flags a re-query only when one actually happens', () => {
+    const tl = buildTimeline(ctx({ demo: { speed: 1, firstRoundFail: true, forceAllFail: true } }, { maxRetries: 2 }));
+    expect(ofType(tl, 'rewrite.started').map((e) => e.requery)).toEqual([true, false]);
+    expect(ofType(tl, 'rag.retrieved')).toHaveLength(2);
   });
 });
