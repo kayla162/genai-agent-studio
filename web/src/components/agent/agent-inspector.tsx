@@ -24,6 +24,8 @@ import { EventStream } from './event-stream';
 import { FlowGraph } from './flow-graph';
 import { PromptPanel } from './prompt-panel';
 import { RagPanel } from './rag-panel';
+import { RetryPanel } from './retry-panel';
+import { ReviewPanel } from './review-panel';
 import { useJobStream } from './use-job-stream';
 
 function JobPicker({ jobs, value, onChange }: { jobs: JobSummary[]; value: string | null; onChange: (id: string) => void }) {
@@ -85,10 +87,13 @@ function JobInspector({ jobId, input }: { jobId: string; input: JobInput | null 
       <JobHeader view={view} flow={flow} messages={messages} input={input} />
       <FlowGraph flow={flow} view={view} input={input} />
       <Tabs defaultValue="events">
-        <TabsList className="h-auto flex-wrap">
+        {/* line 樣式：主題的 background 與 muted 顏色接近，預設樣式看不出目前分頁 */}
+        <TabsList variant="line" className="h-auto flex-wrap">
           <TabsTrigger value="events">事件串流</TabsTrigger>
           <TabsTrigger value="prompt">Prompt 與注入參數</TabsTrigger>
           <TabsTrigger value="rag">RAG Rerank</TabsTrigger>
+          <TabsTrigger value="review">合規報告</TabsTrigger>
+          <TabsTrigger value="retry">重試 diff{view.rewrites.length > 0 && `（${view.rewrites.length}）`}</TabsTrigger>
         </TabsList>
         <TabsContent value="events">
           <EventStream messages={messages} />
@@ -98,6 +103,12 @@ function JobInspector({ jobId, input }: { jobId: string; input: JobInput | null 
         </TabsContent>
         <TabsContent value="rag">
           <RagPanel view={view} messages={messages} />
+        </TabsContent>
+        <TabsContent value="review">
+          <ReviewPanel view={view} input={input} />
+        </TabsContent>
+        <TabsContent value="retry">
+          <RetryPanel view={view} />
         </TabsContent>
       </Tabs>
     </div>
