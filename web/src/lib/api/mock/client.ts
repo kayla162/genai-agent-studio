@@ -1,6 +1,6 @@
 import type {
-  BrandDocument, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput, JobStage, JobSummary,
-  Product, ProductPhoto, RagChunk, Render, TemplateId,
+  BrandDocument, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput, JobMessage, JobStage,
+  JobSummary, Product, ProductPhoto, RagChunk, Render, TemplateId,
 } from '@/types/contract';
 import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
@@ -16,8 +16,8 @@ interface JobRecord {
   id: string;
   input: JobInput;
   createdAt: string;
-  events: JobEvent[];
-  listeners: Set<(e: JobEvent) => void>;
+  events: JobMessage[];
+  listeners: Set<(e: JobMessage) => void>;
   renders: Map<string, Render>;
   stage: JobStage;
   round: number;
@@ -197,7 +197,7 @@ export class MockApiClient implements ApiClient {
     return { jobId };
   }
 
-  /** 更新任務狀態（給 selectRender 用），再轉發給訂閱者 */
+  /** 更新任務狀態（給 selectRender 用），加上序號與時間戳後轉發給訂閱者 */
   private dispatch(rec: JobRecord, e: JobEvent) {
     switch (e.type) {
       case 'job.status':
@@ -219,8 +219,9 @@ export class MockApiClient implements ApiClient {
         break;
       }
     }
-    rec.events.push(e);
-    for (const listener of rec.listeners) this.deliver(listener, e);
+    const message: JobMessage = Object.freeze({ ...e, seq: rec.events.length + 1, ts: this.now().toISOString() });
+    rec.events.push(message);
+    for (const listener of rec.listeners) this.deliver(listener, message);
   }
 
   /** 單一訂閱者出錯不可中斷整條事件流（與 WebSocket 各自處理訊息的行為一致）；即時推送與重播共用 */
@@ -238,7 +239,7 @@ export class MockApiClient implements ApiClient {
     return rec;
   }
 
-  subscribe(jobId: string, onEvent: (event: JobEvent) => void, onError?: (error: Error) => void): () => void {
+  subscribe(jobId: string, onEvent: (event: JobMessage) => void, onError?: (error: Error) => void): () => void {
     const rec = this.jobs.get(jobId);
     if (!rec) {
       const timer = setTimeout(() => {

@@ -1,5 +1,5 @@
 import type {
-  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput,
+  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobInput, JobMessage,
   JobSummary, ParsedBrief, Product, ProductPhoto, RagChunk,
 } from '@/types/contract';
 
@@ -17,7 +17,7 @@ export interface ConnectionChannel {
   subscribe(listener: (state: ConnectionState) => void): () => void;
 }
 
-export interface JobSnapshot { summary: JobSummary; events: JobEvent[] }
+export interface JobSnapshot { summary: JobSummary; events: JobMessage[] }
 
 /** UI 只依賴這個介面：第一階段由 MockApiClient 實作，第二階段由連線 FastAPI 的 HttpApiClient 實作 */
 export interface ApiClient {
@@ -39,10 +39,10 @@ export interface ApiClient {
   parseBrief(brandId: string, text: string, productId: string | null): Promise<ParsedBrief>;
   createJob(input: JobInput): Promise<{ jobId: string }>;
   /**
-   * 先重播已發生的事件，再接收即時事件；回傳取消訂閱的函式。
+   * 先重播已發生的事件，再接收即時事件；回傳取消訂閱的函式。事件附帶序號（seq）與時間戳（ts）。
    * 任務不存在或連線中斷時以 onError 非同步回報，不丟出例外（與 WebSocket 的行為一致）。
    */
-  subscribe(jobId: string, onEvent: (event: JobEvent) => void, onError?: (error: Error) => void): () => void;
+  subscribe(jobId: string, onEvent: (event: JobMessage) => void, onError?: (error: Error) => void): () => void;
   cancelJob(jobId: string): Promise<void>;
   /** 最新的任務在前 */
   listJobs(): Promise<JobSummary[]>;

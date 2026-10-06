@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { JobEvent, JobInput } from '@/types/contract';
+import type { JobEvent, JobInput, JobMessage } from '@/types/contract';
 import { getApiClient } from '../index';
 import { MockApiClient, makeJobId } from './client';
 
@@ -124,6 +124,20 @@ describe('jobs', () => {
     expect(late).toEqual(events);
   });
 
+  it('stamps every event with a consecutive sequence number and the time it was sent', async () => {
+    const api = new MockApiClient();
+    const { jobId } = await startJob(api);
+    const messages: JobMessage[] = [];
+    api.subscribe(jobId, (m) => messages.push(m));
+    await vi.advanceTimersByTimeAsync(14_500);
+    expect(messages.map((m) => m.seq)).toEqual(messages.map((_, i) => i + 1));
+    expect(messages[0].ts).toBe(NOW.toISOString());
+    expect(Date.parse(messages.at(-1)!.ts) - NOW.getTime()).toBe(14_500);
+    const times = messages.map((m) => Date.parse(m.ts));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    expect(Object.isFrozen(messages[0])).toBe(true);
+  });
+
   it('respects the demo speed', async () => {
     const api = new MockApiClient();
     api.demo.set({ speed: 4 });
@@ -138,7 +152,7 @@ describe('jobs', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await api.cancelJob(jobId);
     await vi.advanceTimersByTimeAsync(20_000);
-    expect(events.at(-1)).toEqual({ type: 'job.status', stage: 'cancelled', round: 0 });
+    expect(events.at(-1)).toMatchObject({ type: 'job.status', stage: 'cancelled', round: 0 });
     expect(events.some((e) => e.type === 'job.completed')).toBe(false);
   });
 

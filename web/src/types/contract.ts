@@ -1,6 +1,6 @@
 /**
  * 前後端資料約定。第二階段 FastAPI 以 Pydantic 照此定義，
- * WebSocket `/ws/jobs/{jobId}` 送出的事件即 `JobEvent`。
+ * WebSocket `/ws/jobs/{jobId}` 送出的訊息是 `JobMessage`（`JobEvent` 加上序號與時間戳）。
  */
 
 export const TEMPLATE_IDS = ['ecom-main', 'scene', 'ig-post', 'story', 'banner'] as const;
@@ -200,6 +200,13 @@ export type JobEvent =
   | { type: 'job.completed'; jobId: string; bestRenderIds: Partial<Record<TemplateId, string>> }
   | { type: 'job.needs_review'; jobId: string; reason: string }
   | { type: 'log'; source: LogSource; level: LogLevel; message: string };
+
+/**
+ * 每則事件訊息附帶的序號與時間戳。
+ * seq：同一任務內從 1 開始連續遞增，重新連線時用來補齊漏掉的事件；ts：後端送出時間（ISO 8601）。
+ */
+export interface EventMeta { seq: number; ts: string }
+export type JobMessage = JobEvent & EventMeta;
 
 /* ---------- 歷史紀錄與 Demo ---------- */
 export interface HistoryEntry {
