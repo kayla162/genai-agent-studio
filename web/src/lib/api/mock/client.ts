@@ -1,11 +1,12 @@
 import type {
-  BrandDocument, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput, JobMessage, JobStage,
-  JobSummary, Product, ProductPhoto, RagChunk, Render, TemplateId,
+  BrandDocument, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput,
+  JobMessage, JobStage, JobSummary, Product, ProductPhoto, RagChunk, Render, TemplateId,
 } from '@/types/contract';
 import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString } from '@/lib/core/num';
 import { chunkDocument, EMBED_DIMS, embedPreview } from '@/lib/rag/chunk';
+import { dashboardStats } from '@/lib/stats/dashboard';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './data';
 import { parseBrief } from './brief';
 import { playTimeline, type PlayerHandle } from './player';
@@ -416,5 +417,12 @@ export class MockApiClient implements ApiClient {
       await this.store.set(KEYS.history, history.map((h) => (h.id === historyId ? updated : h)));
       return updated;
     });
+  }
+
+  async getDashboardStats(brandId?: string): Promise<DashboardStats> {
+    const live = [...this.jobs.values()].filter((rec) => rec.finished).map((rec) => this.snapshot(rec));
+    const ids = new Set(live.map((s) => s.summary.id));
+    const all = [...live, ...(await this.storedJobs()).filter((s) => !ids.has(s.summary.id))];
+    return dashboardStats(brandId ? all.filter((s) => s.summary.input.brandId === brandId) : all);
   }
 }

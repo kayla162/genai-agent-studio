@@ -383,6 +383,23 @@ describe('stored jobs', () => {
     await api.demo.seedJobs(MAX_STORED_JOBS);
     expect(await api.listJobs()).toHaveLength(MAX_STORED_JOBS);
   });
+
+  it('computes dashboard stats from finished jobs, per brand or overall', async () => {
+    const api = new MockApiClient();
+    expect((await api.getDashboardStats()).jobs).toBe(0);
+    await api.demo.seedJobs(6);
+    const { jobId } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(1_000);
+    // 執行中的任務不列入
+    expect((await api.getDashboardStats()).jobs).toBe(6);
+    await vi.advanceTimersByTimeAsync(13_500);
+    const all = await api.getDashboardStats();
+    expect(all.jobs).toBe(7);
+    expect(all.recent[0].jobId).toBe(jobId);
+    expect(all.passRate).toBeCloseTo(6 / 7, 10);
+    expect((await api.getDashboardStats('selune')).jobs).toBe(4);
+    expect((await api.getDashboardStats('misty-isle')).jobs).toBe(3);
+  });
 });
 
 describe('getApiClient', () => {

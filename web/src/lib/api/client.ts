@@ -1,6 +1,6 @@
 import type {
-  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobInput, JobMessage,
-  JobSummary, ParsedBrief, Product, ProductPhoto, RagChunk,
+  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent,
+  JobInput, JobMessage, JobSummary, ParsedBrief, Product, ProductPhoto, RagChunk,
 } from '@/types/contract';
 
 export type ProductDraft = Omit<Product, 'id' | 'createdAt'> & { id?: string };
@@ -52,4 +52,6 @@ export interface ApiClient {
   selectRender(jobId: string, renderId: string, copy: Copy): Promise<HistoryEntry>;
   listHistory(brandId?: string): Promise<HistoryEntry[]>;
   setFavorite(historyId: string, favorite: boolean): Promise<HistoryEntry>;
+  /** 成效儀表板：統計已結束的任務；省略 brandId 時統計所有品牌 */
+  getDashboardStats(brandId?: string): Promise<DashboardStats>;
 }

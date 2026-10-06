@@ -245,6 +245,53 @@ export type IngestEvent =
   | { type: 'ingest.embedded'; chunkId: string; index: number; total: number; dims: number; preview: number[] }
   | { type: 'ingest.stored'; collection: string; count: number };
 
+/* ---------- 成效儀表板 ---------- */
+export interface CheckFailureStat { checkId: CheckId; name: string; kind: 'rule' | 'vlm'; fail: number; warn: number }
+
+/**
+ * Rerank 對命中率的影響：前 k 筆檢索結果涵蓋了多少「審查未通過項目所引用的規範」。
+ * vector 為向量召回的順序，rerank 為 BGE Rerank 後的順序；值為 0–1，取各任務平均。
+ */
+export interface RerankHitStat { k: number; vector: number; rerank: number }
+
+export interface JobStat {
+  jobId: string;
+  brandId: string;
+  createdAt: string;
+  outcome: 'done' | 'needs_review';
+  templates: number;
+  /** 共跑了幾輪（1 代表沒有重試） */
+  rounds: number;
+  /** 生成的候選張數（含重試） */
+  renders: number;
+  /** 交付張數（各模板的最佳候選） */
+  delivered: number;
+  durationMs: number;
+  costUsd: number;
+}
+
+export interface DashboardStats {
+  /** 已結束的任務數（不含取消） */
+  jobs: number;
+  /** 審查過的候選張數 */
+  renders: number;
+  /** 任務通過率：完成 ÷（完成 + 需人工審核） */
+  passRate: number;
+  /** 第一輪就通過審查的模板比例 */
+  firstPassRate: number;
+  /** 每個任務平均重試幾輪 */
+  avgRetries: number;
+  avgDurationMs: number;
+  /** 每張交付圖的平均成本（美元，估算）；沒有交付任何圖時為 null */
+  costPerImage: number | null;
+  /** 依 CHECK_IDS 的順序 */
+  checkFailures: CheckFailureStat[];
+  /** k = 1 到檢索筆數 */
+  rerankHits: RerankHitStat[];
+  /** 最近的任務，新到舊，最多 8 筆 */
+  recent: JobStat[];
+}
+
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 export interface ConnectionState {
   status: ConnectionStatus;

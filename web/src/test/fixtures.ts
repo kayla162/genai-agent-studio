@@ -1,9 +1,13 @@
-import type { Brand, Product, PromptSpec, TemplateId } from '@/types/contract';
+import type {
+  Brand, DemoOptions, Engine, JobInput, JobMessage, JobStage, Product, PromptSpec, TemplateId,
+} from '@/types/contract';
+import type { JobSnapshot } from '@/lib/api/client';
 import { buildPromptSpec } from '@/lib/agent/prompt';
 import { parseBrief } from '@/lib/api/mock/brief';
+import { buildTimeline } from '@/lib/api/mock/scenario';
 import { computeLayout } from '@/lib/compose/layout';
 import { getTemplate } from '@/lib/compose/templates';
-import { SAMPLE_PRODUCTS, SELUNE } from '@/lib/api/mock/data';
+import { getBrandById, SAMPLE_PRODUCTS, SELUNE } from '@/lib/api/mock/data';
 
 /** 一份「合規」的 SÉLUNE PromptSpec，測試時再用 overrides 製造問題 */
 export function makeSpec(overrides: Partial<PromptSpec> = {}, templateId: TemplateId = 'ig-post'): PromptSpec {
@@ -41,4 +45,48 @@ export function cleanSpec(brand: Brand = SELUNE, product: Product = SERUM, templ
     jobId: 'job_t', round: 1, brand, product, brief: parseBrief('週年慶主打買一送一，溫柔療癒', brand, product),
     template: getTemplate(templateId), engine: 'comfyui', seed: 42, ragRefs: [], fixes: [],
   });
+}
+
+export interface JobFixture {
+  brandId?: string;
+  templateIds?: TemplateId[];
+  variants?: number;
+  engine?: Engine;
+  maxRetries?: number;
+  demo?: Partial<DemoOptions>;
+  jobId?: string;
+  createdAt?: string;
+  /** 只取前 n 則訊息，模擬執行中的任務 */
+  upTo?: number;
+}
+
+/** 依 mock 劇本產生一個任務的完整訊息（時間戳以 1× 計）；預設首輪失敗、第二輪通過 */
+export function makeJobSnapshot(f: JobFixture = {}): JobSnapshot {
+  const brand = getBrandById(f.brandId ?? 'selune');
+  const product = SAMPLE_PRODUCTS.find((p) => p.brandId === brand.id)!;
+  const jobId = f.jobId ?? 'job_fixture';
+  const createdAt = f.createdAt ?? '2026-10-05T01:30:00.000Z';
+  const brief = brand.id === 'selune' ? '週年慶主打買一送一，溫柔療癒' : '幫我設計一款簡約風格的冷萃咖啡宣傳海報';
+  const input: JobInput = {
+    brandId: brand.id, productId: product.id, brief, parsedBrief: parseBrief(brief, brand, product),
+    templateIds: f.templateIds ?? ['ig-post'], variantsPerTemplate: f.variants ?? 4, llm: 'Gemini 3.7 Flash',
+    engine: f.engine ?? 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: f.maxRetries ?? 2,
+  };
+  const timeline = buildTimeline({
+    jobId, input, brand, product, templates: input.templateIds.map((id) => getTemplate(id)),
+    demo: { speed: 1, firstRoundFail: true, forceAllFail: false, ...f.demo }, seed: 1,
+  });
+  const t0 = Date.parse(createdAt);
+  const events: JobMessage[] = timeline
+    .slice(0, f.upTo ?? timeline.length)
+    .map(({ at, event }, i) => ({ ...event, seq: i + 1, ts: new Date(t0 + at).toISOString() }));
+  let stage: JobStage = 'parsing';
+  let round = 0;
+  let bestRenderIds: JobSnapshot['summary']['bestRenderIds'] = {};
+  for (const e of events) {
+    if (e.type === 'job.status') ({ stage, round } = e);
+    if (e.type === 'job.completed') bestRenderIds = e.bestRenderIds;
+  }
+  const finished = stage === 'done' || stage === 'needs_review' || stage === 'cancelled';
+  return { summary: { id: jobId, input, createdAt, stage, round, finished, bestRenderIds }, events };
 }
