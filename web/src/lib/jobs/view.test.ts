@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import type { DemoOptions, JobEvent, JobInput, TemplateId } from '@/types/contract';
+import type { DemoOptions, JobEvent, JobInput, JobSummary, TemplateId } from '@/types/contract';
 import { getTemplate } from '@/lib/compose/templates';
 import { SELUNE, SAMPLE_PRODUCTS } from '@/lib/api/mock/data';
 import { parseBrief } from '@/lib/api/mock/brief';
 import { buildTimeline } from '@/lib/api/mock/scenario';
-import { applyEvents, defaultSelection, emptyJobView, finalCandidates, jobProgress, reduceJob, specKey } from './view';
+import { makeJobSnapshot } from '@/test/fixtures';
+import {
+  applyEvents, defaultSelection, emptyJobView, finalCandidates, jobProgress, reduceJob, specKey, withLiveStage,
+} from './view';
 
 const serum = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
 const BRIEF = '週年慶主打買一送一，溫柔療癒';
@@ -104,5 +107,28 @@ describe('jobProgress', () => {
     const p = jobProgress(applyEvents(evs.slice(0, firstGenerate + 1)));
     expect(p).toBeGreaterThan(0.2);
     expect(p).toBeLessThan(0.7);
+  });
+});
+
+describe('withLiveStage', () => {
+  // 任務列表是讀取當下的快照：job_a 讀取時還在 ComfyUI 生成
+  const viewing: JobSummary = { ...makeJobSnapshot({ jobId: 'job_a' }).summary, stage: 'rendering', round: 1, finished: false };
+  const other = makeJobSnapshot({ jobId: 'job_b' }).summary;
+
+  it.each([
+    ['reviewing', 1, false],
+    ['done', 2, true],
+    ['needs_review', 3, true],
+    ['cancelled', 1, true],
+  ] as const)('uses the stream for the job being viewed (%s)', (stage, round, finished) => {
+    const view = reduceJob(emptyJobView('job_a'), { type: 'job.status', stage, round });
+    const [a, b] = withLiveStage([viewing, other], view);
+    expect(a).toMatchObject({ id: 'job_a', stage, round, finished });
+    expect(b).toBe(other);
+  });
+
+  it('keeps the snapshot until the stream has an event', () => {
+    const jobs = [viewing, other];
+    expect(withLiveStage(jobs, emptyJobView('job_a'))).toEqual(jobs);
   });
 });
