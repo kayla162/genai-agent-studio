@@ -21,3 +21,14 @@ export function diffSpecs(a: PromptSpec, b: PromptSpec): SpecDiff[] {
   ];
   return rows.filter(([, x, y]) => x !== y).map(([path, before, after]) => ({ path, before, after }));
 }
+
+export interface InlineDiff { prefix: string; removed: string; added: string; suffix: string }
+
+/** 兩段文字只標出中間改變的部分（共同的前綴與後綴原樣保留）；注入參數對照使用 */
+export function inlineDiff(a: string, b: string): InlineDiff {
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+  return { prefix: a.slice(0, p), removed: a.slice(p, a.length - s), added: b.slice(p, b.length - s), suffix: a.slice(a.length - s) };
+}

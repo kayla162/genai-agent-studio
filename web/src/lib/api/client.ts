@@ -1,6 +1,6 @@
 import type {
-  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput,
-  JobSummary, ParsedBrief, Product, ProductPhoto, RagChunk,
+  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent,
+  JobInput, JobMessage, JobSummary, ParsedBrief, Product, ProductPhoto, RagChunk,
 } from '@/types/contract';
 
 export type ProductDraft = Omit<Product, 'id' | 'createdAt'> & { id?: string };
@@ -8,6 +8,8 @@ export type ProductDraft = Omit<Product, 'id' | 'createdAt'> & { id?: string };
 export interface DemoControls {
   get(): DemoOptions;
   set(patch: Partial<DemoOptions>): void;
+  /** 直接產生 count 筆已結束的示範任務（不播放），讓成效儀表板有資料；回傳新增筆數 */
+  seedJobs(count: number): Promise<number>;
 }
 
 export interface ConnectionChannel {
@@ -17,7 +19,7 @@ export interface ConnectionChannel {
   subscribe(listener: (state: ConnectionState) => void): () => void;
 }
 
-export interface JobSnapshot { summary: JobSummary; events: JobEvent[] }
+export interface JobSnapshot { summary: JobSummary; events: JobMessage[] }
 
 /** UI 只依賴這個介面：第一階段由 MockApiClient 實作，第二階段由連線 FastAPI 的 HttpApiClient 實作 */
 export interface ApiClient {
@@ -39,10 +41,10 @@ export interface ApiClient {
   parseBrief(brandId: string, text: string, productId: string | null): Promise<ParsedBrief>;
   createJob(input: JobInput): Promise<{ jobId: string }>;
   /**
-   * 先重播已發生的事件，再接收即時事件；回傳取消訂閱的函式。
+   * 先重播已發生的事件，再接收即時事件；回傳取消訂閱的函式。事件附帶序號（seq）與時間戳（ts）。
    * 任務不存在或連線中斷時以 onError 非同步回報，不丟出例外（與 WebSocket 的行為一致）。
    */
-  subscribe(jobId: string, onEvent: (event: JobEvent) => void, onError?: (error: Error) => void): () => void;
+  subscribe(jobId: string, onEvent: (event: JobMessage) => void, onError?: (error: Error) => void): () => void;
   cancelJob(jobId: string): Promise<void>;
   /** 最新的任務在前 */
   listJobs(): Promise<JobSummary[]>;
@@ -50,4 +52,6 @@ export interface ApiClient {
   selectRender(jobId: string, renderId: string, copy: Copy): Promise<HistoryEntry>;
   listHistory(brandId?: string): Promise<HistoryEntry[]>;
   setFavorite(historyId: string, favorite: boolean): Promise<HistoryEntry>;
+  /** 成效儀表板：統計已結束的任務；省略 brandId 時統計所有品牌 */
+  getDashboardStats(brandId?: string): Promise<DashboardStats>;
 }

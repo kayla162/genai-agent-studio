@@ -1,14 +1,16 @@
 import type {
-  BrandDocument, ConnectionState, Copy, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput, JobStage, JobSummary,
-  Product, ProductPhoto, RagChunk, Render, TemplateId,
+  BrandDocument, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput,
+  JobMessage, JobStage, JobSummary, Product, ProductPhoto, RagChunk, Render, TemplateId,
 } from '@/types/contract';
 import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString } from '@/lib/core/num';
 import { chunkDocument, EMBED_DIMS, embedPreview } from '@/lib/rag/chunk';
+import { dashboardStats } from '@/lib/stats/dashboard';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './data';
 import { parseBrief } from './brief';
 import { playTimeline, type PlayerHandle } from './player';
+import { sampleJobs } from './samples';
 import { buildTimeline } from './scenario';
 import { MemoryStore, type KeyValueStore } from './store';
 
@@ -16,8 +18,8 @@ interface JobRecord {
   id: string;
   input: JobInput;
   createdAt: string;
-  events: JobEvent[];
-  listeners: Set<(e: JobEvent) => void>;
+  events: JobMessage[];
+  listeners: Set<(e: JobMessage) => void>;
   renders: Map<string, Render>;
   stage: JobStage;
   round: number;
@@ -29,7 +31,51 @@ interface JobRecord {
 /** mock 沒有真正的連線：永遠是「已連線」 */
 const MOCK_CONNECTION: ConnectionState = Object.freeze({ status: 'connected', transport: 'mock', error: null });
 
-const KEYS = { products: 'products', deleted: 'deletedSampleIds', history: 'history', docChunks: 'docChunks' } as const;
+const KEYS = {
+  products: 'products', deleted: 'deletedSampleIds', history: 'history', docChunks: 'docChunks', jobs: 'jobs',
+} as const;
+
+/** 本機保留的已結束任務數（Agent 透視與成效儀表板使用），超過時刪掉最舊的 */
+export const MAX_STORED_JOBS = 40;
+
+function newRecord(id: string, input: JobInput, createdAt: string): JobRecord {
+  return {
+    id, input: structuredClone(input), createdAt, events: [], listeners: new Set(), renders: new Map(),
+    stage: 'parsing', round: 0, bestRenderIds: {}, finished: false, player: null,
+  };
+}
+
+/** 依事件更新任務狀態（任務列表與 selectRender 使用） */
+function apply(rec: JobRecord, e: JobEvent) {
+  switch (e.type) {
+    case 'job.status':
+      rec.stage = e.stage;
+      rec.round = e.round;
+      break;
+    case 'job.completed':
+      rec.bestRenderIds = { ...e.bestRenderIds };
+      break;
+    case 'render.completed':
+      for (const r of e.renders) rec.renders.set(r.id, structuredClone(r));
+      break;
+    case 'review.check':
+      rec.renders.get(e.renderId)?.checks.push(e.check);
+      break;
+    case 'review.completed': {
+      const r = rec.renders.get(e.renderId);
+      if (r) { r.score = e.score; r.passed = e.passed; }
+      break;
+    }
+  }
+}
+
+/** 套用事件，加上序號與時間戳後保存；回傳凍結的訊息 */
+function record(rec: JobRecord, e: JobEvent, ts: string): JobMessage {
+  apply(rec, e);
+  const message: JobMessage = Object.freeze({ ...e, seq: rec.events.length + 1, ts });
+  rec.events.push(message);
+  return message;
+}
 
 /** Blob → data URL（mock 把上傳的照片直接存在本機） */
 async function toDataUrl(file: Blob): Promise<string> {
@@ -62,6 +108,7 @@ export class MockApiClient implements ApiClient {
     this.demo = {
       get: () => ({ ...this.options }),
       set: (patch) => { this.options = { ...this.options, ...patch }; },
+      seedJobs: (count) => this.seedJobs(count),
     };
   }
 
@@ -182,45 +229,88 @@ export class MockApiClient implements ApiClient {
 
     const now = this.now();
     const jobId = makeJobId(now);
-    const rec: JobRecord = {
-      id: jobId, input: structuredClone(input), createdAt: now.toISOString(), events: [], listeners: new Set(),
-      renders: new Map(), stage: 'parsing', round: 0, bestRenderIds: {}, finished: false, player: null,
-    };
+    const rec = newRecord(jobId, input, now.toISOString());
     this.jobs.set(jobId, rec);
 
     const timeline = buildTimeline({ jobId, input, brand, product, templates, demo: this.demo.get(), seed: hashString(jobId) });
     rec.player = playTimeline(timeline, {
       getSpeed: () => this.options.speed,
       onEvent: (e) => this.dispatch(rec, e),
-      onDone: () => { rec.finished = true; },
+      onDone: () => {
+        rec.finished = true;
+        void this.persist(rec);
+      },
     });
     return { jobId };
   }
 
-  /** 更新任務狀態（給 selectRender 用），再轉發給訂閱者 */
-  private dispatch(rec: JobRecord, e: JobEvent) {
-    switch (e.type) {
-      case 'job.status':
-        rec.stage = e.stage;
-        rec.round = e.round;
-        break;
-      case 'job.completed':
-        rec.bestRenderIds = { ...e.bestRenderIds };
-        break;
-      case 'render.completed':
-        for (const r of e.renders) rec.renders.set(r.id, structuredClone(r));
-        break;
-      case 'review.check':
-        rec.renders.get(e.renderId)?.checks.push(e.check);
-        break;
-      case 'review.completed': {
-        const r = rec.renders.get(e.renderId);
-        if (r) { r.score = e.score; r.passed = e.passed; }
-        break;
+  /** 示範任務：直接算出完整時間軸（時間戳以 1× 速度計），寫入已結束的任務紀錄 */
+  private async seedJobs(count: number): Promise<number> {
+    const snaps = sampleJobs(count, this.now()).map(({ input, demo, createdAt }) => {
+      const brand = getBrandById(input.brandId);
+      const product = SAMPLE_PRODUCTS.find((p) => p.id === input.productId);
+      if (!product) throw new Error(`Unknown product: ${input.productId}`);
+      const jobId = makeJobId(createdAt);
+      const rec = newRecord(jobId, input, createdAt.toISOString());
+      const templates = input.templateIds.map((id) => getTemplate(id));
+      for (const { at, event } of buildTimeline({ jobId, input, brand, product, templates, demo, seed: hashString(jobId) })) {
+        record(rec, event, new Date(createdAt.getTime() + at).toISOString());
       }
+      rec.finished = true;
+      return this.snapshot(rec);
+    });
+    await this.saveJobs(snaps);
+    return snaps.length;
+  }
+
+  /** 即時事件：保存後轉發給訂閱者 */
+  private dispatch(rec: JobRecord, e: JobEvent) {
+    const message = record(rec, e, this.now().toISOString());
+    for (const listener of rec.listeners) this.deliver(listener, message);
+  }
+
+  /** 任務結束時保存到本機：重新整理後，Agent 透視與成效儀表板仍看得到 */
+  private persist(rec: JobRecord): Promise<void> {
+    return this.saveJobs([this.snapshot(rec)]).catch((err: unknown) => console.error('[MockApiClient] failed to save job', err));
+  }
+
+  private async storedJobs(): Promise<JobSnapshot[]> {
+    return (await this.store.get<JobSnapshot[]>(KEYS.jobs)) ?? [];
+  }
+
+  /** 取代同 id 的舊紀錄；依建立時間由新到舊，只保留 MAX_STORED_JOBS 筆 */
+  private saveJobs(snaps: JobSnapshot[]): Promise<void> {
+    return this.serial(async () => {
+      const ids = new Set(snaps.map((s) => s.summary.id));
+      const kept = (await this.storedJobs()).filter((s) => !ids.has(s.summary.id));
+      const all = [...snaps, ...kept].sort((a, b) => b.summary.createdAt.localeCompare(a.summary.createdAt));
+      await this.store.set(KEYS.jobs, all.slice(0, MAX_STORED_JOBS));
+    });
+  }
+
+  /** 記憶體中的任務；不在記憶體時從本機紀錄還原（已結束的任務） */
+  private async loadJob(jobId: string): Promise<JobRecord | null> {
+    const live = this.jobs.get(jobId);
+    if (live) return live;
+    const snap = (await this.storedJobs()).find((s) => s.summary.id === jobId);
+    if (!snap) return null;
+    // 讀取期間可能已被另一個呼叫還原
+    const loaded = this.jobs.get(jobId);
+    if (loaded) return loaded;
+    const rec = newRecord(jobId, snap.summary.input, snap.summary.createdAt);
+    for (const m of snap.events) {
+      apply(rec, m);
+      rec.events.push(Object.freeze(m));
     }
-    rec.events.push(e);
-    for (const listener of rec.listeners) this.deliver(listener, e);
+    rec.finished = true;
+    this.jobs.set(jobId, rec);
+    return rec;
+  }
+
+  private async requireJob(jobId: string): Promise<JobRecord> {
+    const rec = await this.loadJob(jobId);
+    if (!rec) throw new Error(`Unknown job: ${jobId}`);
+    return rec;
   }
 
   /** 單一訂閱者出錯不可中斷整條事件流（與 WebSocket 各自處理訊息的行為一致）；即時推送與重播共用 */
@@ -232,25 +322,35 @@ export class MockApiClient implements ApiClient {
     }
   }
 
-  private requireJob(jobId: string): JobRecord {
-    const rec = this.jobs.get(jobId);
-    if (!rec) throw new Error(`Unknown job: ${jobId}`);
-    return rec;
-  }
-
-  subscribe(jobId: string, onEvent: (event: JobEvent) => void, onError?: (error: Error) => void): () => void {
-    const rec = this.jobs.get(jobId);
-    if (!rec) {
-      const timer = setTimeout(() => {
-        const error = new Error(`Unknown job: ${jobId}`);
-        if (onError) onError(error);
-        else console.error('[MockApiClient]', error.message);
-      }, 0);
-      return () => clearTimeout(timer);
+  subscribe(jobId: string, onEvent: (event: JobMessage) => void, onError?: (error: Error) => void): () => void {
+    let active = true;
+    const attach = (rec: JobRecord) => {
+      for (const e of rec.events) this.deliver(onEvent, e);
+      rec.listeners.add(onEvent);
+    };
+    const fail = (error: Error) => {
+      if (onError) onError(error);
+      else console.error('[MockApiClient]', error.message);
+    };
+    const live = this.jobs.get(jobId);
+    if (live) attach(live);
+    else {
+      // 不在記憶體時從本機紀錄還原；找不到時與 WebSocket 一樣非同步回報
+      void this.loadJob(jobId).then(
+        (rec) => {
+          if (!active) return;
+          if (rec) attach(rec);
+          else fail(new Error(`Unknown job: ${jobId}`));
+        },
+        (err: unknown) => {
+          if (active) fail(err instanceof Error ? err : new Error(String(err)));
+        },
+      );
     }
-    for (const e of rec.events) this.deliver(onEvent, e);
-    rec.listeners.add(onEvent);
-    return () => { rec.listeners.delete(onEvent); };
+    return () => {
+      active = false;
+      this.jobs.get(jobId)?.listeners.delete(onEvent);
+    };
   }
 
   private summary(rec: JobRecord): JobSummary {
@@ -260,26 +360,36 @@ export class MockApiClient implements ApiClient {
     };
   }
 
-  async listJobs(): Promise<JobSummary[]> {
-    return [...this.jobs.values()].reverse().map((rec) => this.summary(rec));
-  }
-
-  async getJob(jobId: string): Promise<JobSnapshot> {
-    const rec = this.requireJob(jobId);
+  private snapshot(rec: JobRecord): JobSnapshot {
     return { summary: this.summary(rec), events: [...rec.events] };
   }
 
+  /** 記憶體中的任務 + 本機保存的已結束任務 */
+  async listJobs(): Promise<JobSummary[]> {
+    const live = [...this.jobs.values()].reverse().map((rec) => this.summary(rec));
+    const ids = new Set(live.map((j) => j.id));
+    const stored = (await this.storedJobs()).filter((s) => !ids.has(s.summary.id)).map((s) => s.summary);
+    // 穩定排序：同一時間建立的任務維持原本的先後
+    return [...live, ...stored].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getJob(jobId: string): Promise<JobSnapshot> {
+    return this.snapshot(await this.requireJob(jobId));
+  }
+
   async cancelJob(jobId: string): Promise<void> {
-    const rec = this.requireJob(jobId);
+    // 執行中的任務一定在記憶體：同步取消，在事件處理函式內呼叫時會立刻停止後續事件
+    const rec = this.jobs.get(jobId) ?? (await this.requireJob(jobId));
     if (rec.finished) return;
     rec.player?.cancel();
     rec.finished = true;
     this.dispatch(rec, { type: 'job.status', stage: 'cancelled', round: rec.round });
+    await this.persist(rec);
   }
 
   selectRender(jobId: string, renderId: string, copy: Copy): Promise<HistoryEntry> {
     return this.serial(async () => {
-      const rec = this.requireJob(jobId);
+      const rec = await this.requireJob(jobId);
       const render = rec.renders.get(renderId);
       if (!render) throw new Error(`Unknown render: ${renderId}`);
       const entry: HistoryEntry = {
@@ -307,5 +417,12 @@ export class MockApiClient implements ApiClient {
       await this.store.set(KEYS.history, history.map((h) => (h.id === historyId ? updated : h)));
       return updated;
     });
+  }
+
+  async getDashboardStats(brandId?: string): Promise<DashboardStats> {
+    const live = [...this.jobs.values()].filter((rec) => rec.finished).map((rec) => this.snapshot(rec));
+    const ids = new Set(live.map((s) => s.summary.id));
+    const all = [...live, ...(await this.storedJobs()).filter((s) => !ids.has(s.summary.id))];
+    return dashboardStats(brandId ? all.filter((s) => s.summary.input.brandId === brandId) : all);
   }
 }

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { JobEvent, JobInput } from '@/types/contract';
+import type { JobEvent, JobInput, JobMessage } from '@/types/contract';
 import { getApiClient } from '../index';
-import { MockApiClient, makeJobId } from './client';
+import { MAX_STORED_JOBS, MockApiClient, makeJobId } from './client';
+import { MemoryStore } from './store';
 
 const BRIEF = '週年慶主打買一送一，溫柔療癒';
 const NOW = new Date(2026, 9, 5, 9, 30);
@@ -124,6 +125,20 @@ describe('jobs', () => {
     expect(late).toEqual(events);
   });
 
+  it('stamps every event with a consecutive sequence number and the time it was sent', async () => {
+    const api = new MockApiClient();
+    const { jobId } = await startJob(api);
+    const messages: JobMessage[] = [];
+    api.subscribe(jobId, (m) => messages.push(m));
+    await vi.advanceTimersByTimeAsync(14_500);
+    expect(messages.map((m) => m.seq)).toEqual(messages.map((_, i) => i + 1));
+    expect(messages[0].ts).toBe(NOW.toISOString());
+    expect(Date.parse(messages.at(-1)!.ts) - NOW.getTime()).toBe(14_500);
+    const times = messages.map((m) => Date.parse(m.ts));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    expect(Object.isFrozen(messages[0])).toBe(true);
+  });
+
   it('respects the demo speed', async () => {
     const api = new MockApiClient();
     api.demo.set({ speed: 4 });
@@ -138,7 +153,7 @@ describe('jobs', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await api.cancelJob(jobId);
     await vi.advanceTimersByTimeAsync(20_000);
-    expect(events.at(-1)).toEqual({ type: 'job.status', stage: 'cancelled', round: 0 });
+    expect(events.at(-1)).toMatchObject({ type: 'job.status', stage: 'cancelled', round: 0 });
     expect(events.some((e) => e.type === 'job.completed')).toBe(false);
   });
 
@@ -315,6 +330,75 @@ describe('job queries, connection and favorites', () => {
     expect((await api.setFavorite(entry.id, true)).favorite).toBe(true);
     expect((await api.listHistory('selune'))[0].favorite).toBe(true);
     await expect(api.setFavorite('nope', true)).rejects.toThrow('Unknown history entry');
+  });
+});
+
+describe('stored jobs', () => {
+  it('keeps finished and cancelled jobs so a reloaded client can list, replay and select from them', async () => {
+    const store = new MemoryStore();
+    const api = new MockApiClient(store);
+    const { jobId, events } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(14_500);
+    const cancelled = await startJob(api, { templateIds: ['story'] });
+    await api.cancelJob(cancelled.jobId);
+
+    const reloaded = new MockApiClient(store);
+    const jobs = await reloaded.listJobs();
+    expect(jobs.map((j) => j.id)).toEqual([cancelled.jobId, jobId]);
+    expect(jobs[0]).toMatchObject({ stage: 'cancelled', finished: true });
+    expect(jobs[1]).toMatchObject({ stage: 'done', round: 2, finished: true });
+    expect((await reloaded.getJob(jobId)).events).toEqual(events);
+
+    const replayed: JobMessage[] = [];
+    reloaded.subscribe(jobId, (m) => replayed.push(m));
+    await vi.waitFor(() => expect(replayed).toEqual(events));
+
+    const done = events.find((e) => e.type === 'job.completed');
+    if (done?.type !== 'job.completed') throw new Error('job did not complete');
+    const prompt = events.find((e) => e.type === 'prompt.generated' && e.round === 2);
+    if (prompt?.type !== 'prompt.generated') throw new Error('missing round 2 prompt');
+    const entry = await reloaded.selectRender(jobId, done.bestRenderIds['ig-post']!, prompt.spec.copy);
+    expect(entry.render).toMatchObject({ passed: true, round: 2 });
+    expect(entry.render.checks).toHaveLength(10);
+  });
+
+  it('seeds finished sample jobs with 1× timestamps and keeps only the newest ones', async () => {
+    const api = new MockApiClient();
+    expect(await api.demo.seedJobs(6)).toBe(6);
+    const jobs = await api.listJobs();
+    expect(jobs).toHaveLength(6);
+    expect(jobs.every((j) => j.finished)).toBe(true);
+    expect(jobs.map((j) => j.stage).sort()).toEqual(['done', 'done', 'done', 'done', 'done', 'needs_review']);
+    const created = jobs.map((j) => j.createdAt);
+    expect(created).toEqual([...created].sort().reverse());
+
+    // 「強制全部失敗」的那一筆：3 輪後需人工審核，1× 共 20.8 秒
+    const failed = jobs.find((j) => j.stage === 'needs_review')!;
+    const snap = await api.getJob(failed.id);
+    expect(snap.summary.round).toBe(3);
+    expect(snap.events[0].ts).toBe(failed.createdAt);
+    expect(snap.events.map((m) => m.seq)).toEqual(snap.events.map((_, i) => i + 1));
+    expect(Date.parse(snap.events.at(-1)!.ts) - Date.parse(snap.events[0].ts)).toBe(20_800);
+
+    await api.demo.seedJobs(MAX_STORED_JOBS);
+    expect(await api.listJobs()).toHaveLength(MAX_STORED_JOBS);
+  });
+
+  it('computes dashboard stats from finished jobs, per brand or overall', async () => {
+    const api = new MockApiClient();
+    expect((await api.getDashboardStats()).jobs).toBe(0);
+    await api.demo.seedJobs(6);
+    const { jobId } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(1_000);
+    // 執行中的任務不列入
+    expect((await api.getDashboardStats()).jobs).toBe(6);
+    await vi.advanceTimersByTimeAsync(13_500);
+    const all = await api.getDashboardStats();
+    expect(all.jobs).toBe(7);
+    expect(all.recent[0].jobId).toBe(jobId);
+    expect(all.passRate).toBeCloseTo(6 / 7, 10);
+    expect((await api.getDashboardStats('selune')).jobs).toBe(4);
+    expect((await api.getDashboardStats('misty-isle')).jobs).toBe(3);
   });
 });
 
