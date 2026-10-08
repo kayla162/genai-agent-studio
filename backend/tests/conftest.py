@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 
 import asyncpg
 import pytest
+from redis.asyncio import Redis
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,8 @@ from app.db.session import Database
 from app.settings import settings
 
 TEST_DATABASE = 'genai_test'
+#: 測試使用 Redis 的第 15 個資料庫，開始時清空
+TEST_REDIS_URL = settings.redis_url.rsplit('/', 1)[0] + '/15'
 
 
 @pytest.fixture(scope='session')
@@ -31,6 +34,14 @@ async def db() -> AsyncIterator[Database]:
     await database.migrate()
     yield database
     await database.dispose()
+
+
+@pytest.fixture(scope='session')
+async def redis() -> AsyncIterator[Redis]:
+    client = Redis.from_url(TEST_REDIS_URL, decode_responses=True)
+    await client.flushdb()
+    yield client
+    await client.aclose()
 
 
 @pytest.fixture

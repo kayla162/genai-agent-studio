@@ -521,6 +521,13 @@ class JobSummary(Model):
     best_render_ids: dict[TemplateId, str]
 
 
+class JobSnapshot(Model):
+    """任務摘要與完整訊息（對應 web/src/lib/api/client.ts 的 JobSnapshot；訊息保持原始 JSON）。"""
+
+    summary: JobSummary
+    events: list[dict[str, Any]]
+
+
 # ---------- 品牌文件上傳 ----------
 class BrandDocument(Model):
     name: str
