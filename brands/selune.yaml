@@ -1,0 +1,50 @@
+# 示範品牌 SÉLUNE 晞月（美妝保養）。欄位說明見 _template.yaml。
+id: selune
+name: SÉLUNE 晞月
+category: 美妝保養
+ciVersion: v2.3
+palette: {primary: '#B76E79', secondary: '#F6EFE9', accent: '#C9A96E', ink: '#3A3335'}
+fonts: {headline: Noto Serif TC, body: Noto Sans TC}
+visualStyle: serene luxury skincare, crescent moon halo, aurora light ribbons, pearl-gold bokeh, soft diffused studio light
+defaultTone: gentle
+rules:
+  maxDeltaE: 5
+  minWhitespace: 0.3
+  productRatio: [0.2, 0.5]
+bannedWords: [根治, 治療, 醫療級, 消炎, 保證有效, 永久]
+replacements: {根治: 改善外觀, 治療: 保養, 醫療級: 專業配方, 消炎: 舒緩, 保證有效: '', 永久: 持久}
+claimWords: [感受, 透亮, 修護, 淡化, 改善, 鎖水]
+disclaimerPhrase: 效果因個人膚況而異
+copyPresets:
+  gentle:
+    headline: [一夜溫柔修護, 醒來透亮發光]
+    subhead: 7天感受透亮光采・專業修護配方*
+  science:
+    headline: [5重玻尿酸, 72H 長效鎖水]
+    subhead: 神經醯胺 × 5重玻尿酸｜科學配比深層保濕*
+  playful:
+    headline: [熬夜也不怕, 肌膚喝飽水！]
+    subhead: 水潤透亮一起帶走，買一送一只到月底*
+  minimal:
+    headline: [少即是多, 純粹修護]
+    subhead: 5重玻尿酸・無香精・敏感肌適用*
+guidelines:
+- {key: color, source: brand_guideline_v2.3.pdf, section: §2.1 色彩系統, tag: color, text: 品牌主色「晞月玫瑰」#B76E79，輔助色「月光米白」#F6EFE9、點綴色「珍珠金」#C9A96E、文字「墨灰」#3A3335。主色色差需控制在 ΔE2000 ≤ 5，禁止使用高飽和桃紅與螢光色系。}
+- {key: logo, source: brand_guideline_v2.3.pdf, section: §3.4 Logo 使用規範, tag: logo, text: Logo 四周需保留至少 0.5 倍 Logo 高度之淨空區，不得與標題、商品或其他元素重疊；建議置於左上角網格起點。}
+- {key: law, source: compliance_cosmetics_tw.md, section: 化粧品衛生安全管理法 §10, tag: law, text: 化粧品之標示、宣傳及廣告不得有虛偽或誇大之情事，且不得宣稱醫療效能。禁用詞例：根治、治療、醫療級、消炎、保證有效、永久。含效果宣稱時應加註「效果因個人膚況而異」。}
+- {key: layout, source: layout_style_guide.pdf, section: §1.2 海報版型, tag: layout, text: 標題靠左對齊 8 欄網格；商品主體佔畫面 20–50%；整體留白 ≥ 30%；促銷徽章置於商品左側。}
+- {key: font, source: brand_guideline_v2.3.pdf, section: §4.1 字型, tag: font, text: 標題使用 Noto Serif TC Bold，內文使用 Noto Sans TC；標題最多兩行，第二行可使用主色強調。}
+- {key: history, source: campaign_history/2025_anniversary.json, section: 2025 週年慶素材成效, tag: history, text: 去年週年慶高互動素材特徵：柔光漸層背景、水波紋與珍珠金點綴，文案以「修護」「透亮」為主軸，平均 CTR 4.2%。}
+- {key: law-alt, source: compliance_cosmetics_tw.md, section: 合規替代用語對照, tag: law, text: 「根治」→「改善外觀」；「醫療級」→「專業配方」；「治療」→「保養」；「保證有效」→ 刪除。效果宣稱句尾加註「*」，並於頁尾標示使用者感受說明。}
+caseStudies:
+- {id: selune-case-1, title: 2025 週年慶 IG 貼文, channel: IG 貼文, ctr: 4.2, notes: 柔光漸層 + 水波紋，文案主打修護}
+- {id: selune-case-2, title: 夏季保濕電商主圖, channel: 電商主圖, ctr: 3.1, notes: 淺色背景 + 水珠，強調長效保濕}
+logo: null
+styleImages: []
+samples:
+- id: prod_selune_serum
+  name: 極光玻尿酸修護精華 30ml
+  features: [5重玻尿酸, 神經醯胺, 無香精, 敏感肌適用]
+  price: {sale: 1280, original: 1680}
+  art: serum
+  createdAt: '2026-10-01T09:00:00.000Z'

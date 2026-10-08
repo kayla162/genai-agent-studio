@@ -5,7 +5,9 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-FIXTURES_DIR = Path(__file__).resolve().parents[2] / 'contracts' / 'fixtures'
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FIXTURES_DIR = REPO_ROOT / 'contracts' / 'fixtures'
+BRANDS_DIR = REPO_ROOT / 'brands'
 TIMELINES = ('selune-retry', 'selune-needs-review', 'misty-first-pass')
 
 

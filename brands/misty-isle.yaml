@@ -1,0 +1,49 @@
+# 示範品牌 霧嶼咖啡 MISTY ISLE（冷萃咖啡）。欄位說明見 _template.yaml。
+id: misty-isle
+name: 霧嶼咖啡 MISTY ISLE
+category: 冷萃咖啡
+ciVersion: v1.4
+palette: {primary: '#2F4A44', secondary: '#EEF0EC', accent: '#C8A27A', ink: '#1F2624'}
+fonts: {headline: Noto Serif TC, body: Noto Sans TC}
+visualStyle: minimal Japanese cafe aesthetic, morning mist, matte ceramic surface, soft window light, clean geometric shadows
+defaultTone: minimal
+rules:
+  maxDeltaE: 5
+  minWhitespace: 0.4
+  productRatio: [0.2, 0.5]
+bannedWords: [治療, 保證, 減肥, 瘦身, 降血壓, 醫療, 根治]
+replacements: {治療: 舒緩, 保證: '', 減肥: 輕盈, 瘦身: 輕盈, 降血壓: '', 醫療: '', 根治: ''}
+claimWords: []
+disclaimerPhrase: ''
+copyPresets:
+  minimal:
+    headline: [一口清醒, 慢萃十八小時]
+    subhead: 單一產區耶加雪菲・低溫冷萃 18 小時
+  gentle:
+    headline: [把早晨, 留給自己]
+    subhead: 低酸順口・冷藏即飲
+  science:
+    headline: [18H 低溫萃取, 每瓶 120mg 咖啡因]
+    subhead: 單一產區・無添加糖・冷鏈配送
+  playful:
+    headline: [冰冰的, 剛剛好！]
+    subhead: 買二送一，辦公室續命必備
+guidelines:
+- {key: color, source: misty_isle_ci_v1.4.pdf, section: §2 色彩, tag: color, text: 品牌主色「霧林綠」#2F4A44，輔助色「晨霧白」#EEF0EC、點綴色「牛皮紙棕」#C8A27A。整體低飽和，主色色差 ΔE2000 ≤ 5，避免高彩度藍綠與螢光色。}
+- {key: logo, source: misty_isle_ci_v1.4.pdf, section: §3 Logo, tag: logo, text: Logo 淨空區至少 0.5 倍 Logo 高度；深色背景使用反白 Logo。}
+- {key: law, source: compliance_food_tw.md, section: 食品安全衛生管理法 §28, tag: law, text: 食品之標示、宣傳或廣告不得有不實、誇張或易生誤解之情形，亦不得宣稱醫療效能。禁用詞例：治療、減肥、瘦身、降血壓、保證。}
+- {key: layout, source: misty_isle_ci_v1.4.pdf, section: §5 簡約版型, tag: layout, text: 留白 ≥ 40%，畫面只用一個主色；標題最多兩行，商品置於視覺重心。}
+- {key: font, source: misty_isle_ci_v1.4.pdf, section: §4 字型, tag: font, text: 標題 Noto Serif TC，字距略寬；內文 Noto Sans TC Regular。}
+- {key: history, source: campaign_history/2025_summer_coldbrew.json, section: 2025 夏季冷萃素材成效, tag: history, text: 霧面陶瓷桌面 + 晨光側光的素材互動最佳，平均 CTR 3.8%；簡約文案優於促銷導向文案。}
+- {key: law-alt, source: compliance_food_tw.md, section: 合規替代用語對照, tag: law, text: 「治療疲勞」→ 刪除；「保證提神」→「一口清醒」；「減肥」「瘦身」→「輕盈無負擔」。}
+caseStudies:
+- {id: misty-case-1, title: 2025 夏季冷萃 IG 貼文, channel: IG 貼文, ctr: 3.8, notes: 霧面陶瓷 + 晨光側光}
+logo: null
+styleImages: []
+samples:
+- id: prod_misty_coldbrew
+  name: 單一產區冷萃咖啡 330ml
+  features: [18小時冷萃, 單一產區, 無添加糖, 低酸順口]
+  price: {sale: 120, original: 150}
+  art: coldbrew
+  createdAt: '2026-10-01T09:00:00.000Z'
