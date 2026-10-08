@@ -9,7 +9,7 @@ const coldbrew = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_misty_coldbrew')!;
 
 const input = (over: Partial<PromptBuildInput> = {}): PromptBuildInput => ({
   jobId: 'job_t', round: 1, brand: SELUNE, product: serum,
-  brief: parseBrief('週年慶主打買一送一，溫柔療癒', SELUNE, serum),
+  brief: parseBrief('週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒', SELUNE, serum),
   template: getTemplate('ig-post'), engine: 'comfyui', seed: 123456789, ragRefs: ['selune#color'], fixes: [],
   ...over,
 });
@@ -28,6 +28,11 @@ describe('buildPromptSpec', () => {
     expect(spec.copy.disclaimer).toBe('*使用者感受，效果因個人膚況而異｜活動期間 2026/10/15–11/15｜數量有限，售完為止');
     expect(spec.negativePrompt).toBe(BASE_NEGATIVE);
     expect(spec.ragRefs).toEqual(['selune#color']);
+  });
+
+  it('leaves the campaign period out when the brief does not mention one', () => {
+    const spec = buildPromptSpec(input({ brief: parseBrief('週年慶主打買一送一，溫柔療癒', SELUNE, serum) }));
+    expect(spec.copy.disclaimer).toBe('*使用者感受，效果因個人膚況而異｜數量有限，售完為止');
   });
 
   it('injects prompt, seed, size and layout boxes into the ComfyUI workflow', () => {

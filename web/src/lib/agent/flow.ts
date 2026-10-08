@@ -1,7 +1,7 @@
 import type { JobMessage, JobStage } from '@/types/contract';
 
 export type FlowNodeId = 'orchestrator' | 'brief' | 'rag' | 'prompt' | 'comfy' | 'compose' | 'review' | 'save';
-/** warn：曾經未通過、重試後完成；error：需人工審核或在此節點取消 */
+/** warn：曾經未通過、重試後完成；error：需人工審核，或在此節點取消／失敗 */
 export type FlowStatus = 'idle' | 'active' | 'done' | 'warn' | 'error';
 
 export interface FlowNodeDef { id: FlowNodeId; step: number; label: string; tech: string }
@@ -84,14 +84,15 @@ export function flowState(messages: JobMessage[]): FlowState {
   const end = messages.at(-1);
   if (end) close(Date.parse(end.ts));
 
-  const running = stage !== null && stage !== 'done' && stage !== 'needs_review' && stage !== 'cancelled';
+  const stopped = stage === 'cancelled' || stage === 'failed';
+  const running = stage !== null && stage !== 'done' && stage !== 'needs_review' && !stopped;
   for (const n of FLOW_NODES) if (nodes[n.id].visits > 0) nodes[n.id].status = 'done';
   if (loop.count > 0) nodes.review.status = 'warn';
   if (stage === 'needs_review') nodes.review.status = 'error';
   if (running && last && last !== 'loop') nodes[last].status = 'active';
-  if (stage === 'cancelled' && last && last !== 'loop') nodes[last].status = 'error';
+  if (stopped && last && last !== 'loop') nodes[last].status = 'error';
   loop.active = stage === 'rewriting';
-  if (nodes.orchestrator.visits) nodes.orchestrator.status = running ? 'active' : stage === 'cancelled' ? 'error' : 'done';
+  if (nodes.orchestrator.visits) nodes.orchestrator.status = running ? 'active' : stopped ? 'error' : 'done';
 
   const elapsedMs = first && end ? Date.parse(end.ts) - Date.parse(first.ts) : 0;
   nodes.orchestrator.ms = elapsedMs;

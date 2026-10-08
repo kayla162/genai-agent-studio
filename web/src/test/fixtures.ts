@@ -39,10 +39,10 @@ export function makeSpec(overrides: Partial<PromptSpec> = {}, templateId: Templa
 
 const SERUM = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
 
-/** 由 buildPromptSpec 產生的合規 spec（週年慶買一送一、溫柔語氣） */
+/** 由 buildPromptSpec 產生的合規 spec（週年慶 2026/10/15–11/15 買一送一、溫柔語氣） */
 export function cleanSpec(brand: Brand = SELUNE, product: Product = SERUM, templateId: TemplateId = 'ig-post'): PromptSpec {
   return buildPromptSpec({
-    jobId: 'job_t', round: 1, brand, product, brief: parseBrief('週年慶主打買一送一，溫柔療癒', brand, product),
+    jobId: 'job_t', round: 1, brand, product, brief: parseBrief('週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒', brand, product),
     template: getTemplate(templateId), engine: 'comfyui', seed: 42, ragRefs: [], fixes: [],
   });
 }

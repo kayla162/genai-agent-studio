@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobEvent, JobInput, JobMessage } from '@/types/contract';
+import type { ApiClient } from '../client';
 import { getApiClient } from '../index';
 import { MAX_STORED_JOBS, MockApiClient, makeJobId } from './client';
 import { MemoryStore } from './store';
@@ -399,6 +400,28 @@ describe('stored jobs', () => {
     expect(all.passRate).toBeCloseTo(6 / 7, 10);
     expect((await api.getDashboardStats('selune')).jobs).toBe(4);
     expect((await api.getDashboardStats('misty-isle')).jobs).toBe(3);
+  });
+});
+
+describe('options, system status and local photos', () => {
+  it('offers every model and engine of the demo', async () => {
+    expect(await new MockApiClient().getOptions()).toEqual({
+      llm: ['Gemini 3.7 Flash', 'Llama 3.2 Vision（Unsloth 微調）'],
+      vlm: ['Gemini 3.7 Vision', 'Llama 3.2 Vision（Unsloth 微調）'],
+      engines: ['comfyui', 'ideogram'],
+    });
+  });
+
+  it('reports a single simulated component', async () => {
+    expect(await new MockApiClient().getSystemStatus()).toEqual({
+      components: [{ id: 'mock', label: '瀏覽器內模擬', status: 'sim', detail: 'MockApiClient：事件格式與 FastAPI WebSocket 相同' }],
+    });
+  });
+
+  it('cannot read the local product folder', async () => {
+    const api: ApiClient = new MockApiClient();
+    expect(await api.listLocalPhotos()).toBeNull();
+    await expect(api.importLocalPhoto('mask.png', 'selune')).rejects.toThrow('只有 live 模式可以匯入本機資料夾');
   });
 });
 

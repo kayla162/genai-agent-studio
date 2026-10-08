@@ -41,6 +41,7 @@ export const SELUNE: Brand = deepFreeze({
     playful: { headline: ['熬夜也不怕', '肌膚喝飽水！'], subhead: '水潤透亮一起帶走，買一送一只到月底*' },
     minimal: { headline: ['少即是多', '純粹修護'], subhead: '5重玻尿酸・無香精・敏感肌適用*' },
   },
+  logo: null,
 });
 
 export const MISTY_ISLE: Brand = deepFreeze({
@@ -82,4 +83,5 @@ export const MISTY_ISLE: Brand = deepFreeze({
     science: { headline: ['18H 低溫萃取', '每瓶 120mg 咖啡因'], subhead: '單一產區・無添加糖・冷鏈配送' },
     playful: { headline: ['冰冰的', '剛剛好！'], subhead: '買二送一，辦公室續命必備' },
   },
+  logo: null,
 });

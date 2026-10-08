@@ -14,8 +14,16 @@ describe('parseBrief', () => {
       tone: 'minimal',
       campaign: null,
       offer: null,
+      period: null,
       style: ['minimal'],
     });
+  });
+
+  it('extracts the campaign period and normalises the separator', () => {
+    expect(parseBrief('雙11 11/1–11/11 全館85折', SELUNE, serum).period).toBe('11/1–11/11');
+    expect(parseBrief('週年慶 2026/10/15 ~ 11/15 買一送一', SELUNE, serum).period).toBe('2026/10/15–11/15');
+    expect(parseBrief('週年慶 10/15 至 11/15', SELUNE, serum).period).toBe('10/15–11/15');
+    expect(parseBrief('週年慶買一送一', SELUNE, serum).period).toBeNull();
   });
 
   it('extracts campaign, offer, tone and style for skincare', () => {

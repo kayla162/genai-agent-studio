@@ -1,10 +1,11 @@
 import { create } from 'zustand';
 import type { Copy, Engine, JobInput, ParsedBrief, TemplateId, Tone } from '@/types/contract';
 import { getApiClient } from '@/lib/api';
+import { MOCK_OPTIONS } from '@/lib/api/mock/options';
 import { defaultSelection, emptyJobView, reduceJob, type JobView } from '@/lib/jobs/view';
 
-export const LLM_OPTIONS = ['Gemini 3.7 Flash', 'Llama 3.2 Vision（Unsloth 微調）'];
-export const VLM_OPTIONS = ['Gemini 3.7 Vision', 'Llama 3.2 Vision（Unsloth 微調）'];
+export const LLM_OPTIONS = MOCK_OPTIONS.llm;
+export const VLM_OPTIONS = MOCK_OPTIONS.vlm;
 export const ENGINE_LABEL: Record<Engine, string> = { comfyui: 'ComfyUI（SDXL + ControlNet + IP-Adapter）', ideogram: 'Ideogram 4.0' };
 export const TONE_LABEL: Record<Tone, string> = { gentle: '溫柔療癒', science: '專業科研', playful: '活潑年輕', minimal: '簡約' };
 

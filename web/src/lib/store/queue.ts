@@ -112,8 +112,8 @@ export const useQueueStore = create<QueueState>()((set, get) => {
             const item = get().items.find((i) => i.id === next.id);
             if (!item?.view) return;
             const view = reduceJob(item.view, e);
-            const status: QueueStatus = view.outcome === 'running' ? 'running' : view.outcome;
-            update(next.id, { view, status });
+            const status: QueueStatus = view.outcome === 'running' ? 'running' : view.outcome === 'failed' ? 'error' : view.outcome;
+            update(next.id, { view, status, error: view.failureReason });
             if (status !== 'running' && !finished) {
               finished = true;
               unsubscribe?.();

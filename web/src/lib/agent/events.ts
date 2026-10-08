@@ -20,6 +20,7 @@ export function eventGroup(e: JobEvent): EventGroup {
     case 'job.status':
     case 'job.completed':
     case 'job.needs_review':
+    case 'job.failed':
       return 'job';
     case 'brief.parsed':
     case 'prompt.generated':
@@ -79,6 +80,7 @@ export function describeEvent(e: JobEvent): string {
     case 'job.completed':
       return `最佳候選 ${Object.keys(e.bestRenderIds).length} 張`;
     case 'job.needs_review':
+    case 'job.failed':
       return e.reason;
     case 'log':
       return `[${e.source.toUpperCase()}] ${e.message}`;

@@ -1,6 +1,6 @@
 import type {
-  BrandDocument, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent, JobEvent, JobInput,
-  JobMessage, JobStage, JobSummary, Product, ProductPhoto, RagChunk, Render, TemplateId,
+  ApiOptions, BrandDocument, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent, JobEvent,
+  JobInput, JobMessage, JobStage, JobSummary, LocalPhoto, Product, ProductPhoto, RagChunk, Render, SystemStatus, TemplateId,
 } from '@/types/contract';
 import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
@@ -9,6 +9,7 @@ import { chunkDocument, EMBED_DIMS, embedPreview } from '@/lib/rag/chunk';
 import { dashboardStats } from '@/lib/stats/dashboard';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './data';
 import { parseBrief } from './brief';
+import { MOCK_OPTIONS } from './options';
 import { playTimeline, type PlayerHandle } from './player';
 import { sampleJobs } from './samples';
 import { buildTimeline } from './scenario';
@@ -122,6 +123,25 @@ export class MockApiClient implements ApiClient {
   /** 等待 ms（1× 速度），依 Demo 播放速度縮短 */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms / this.options.speed));
+  }
+
+  async getOptions(): Promise<ApiOptions> {
+    return structuredClone(MOCK_OPTIONS);
+  }
+
+  async getSystemStatus(): Promise<SystemStatus> {
+    return {
+      components: [{ id: 'mock', label: '瀏覽器內模擬', status: 'sim', detail: 'MockApiClient：事件格式與 FastAPI WebSocket 相同' }],
+    };
+  }
+
+  /** 瀏覽器讀不到本機資料夾：只有 live 模式由後端提供 */
+  async listLocalPhotos(): Promise<LocalPhoto[] | null> {
+    return null;
+  }
+
+  async importLocalPhoto(): Promise<Product> {
+    throw new Error('只有 live 模式可以匯入本機資料夾');
   }
 
   /** 示範品牌 + 使用者上傳文件產生的切塊 */

@@ -3,7 +3,7 @@ import type {
   TemplateId,
 } from '@/types/contract';
 
-export type JobOutcome = 'running' | 'done' | 'needs_review' | 'cancelled';
+export type JobOutcome = 'running' | 'done' | 'needs_review' | 'cancelled' | 'failed';
 export interface RewriteInfo { round: number; templateId: TemplateId; reasons: CheckId[]; fixes: Fix[]; requery: boolean }
 export interface LogLine { source: LogSource; level: LogLevel; message: string }
 export interface RenderProgress { round: number; node: RenderNode; step: number; maxStep: number }
@@ -28,12 +28,15 @@ export interface JobView {
   rewrites: RewriteInfo[];
   bestRenderIds: Partial<Record<TemplateId, string>>;
   needsReviewReason: string | null;
+  /** 任務失敗（技術故障）的原因 */
+  failureReason: string | null;
   logs: LogLine[];
 }
 
 export const specKey = (round: number, templateId: TemplateId) => `${round}:${templateId}`;
 
 export const STAGE_LABEL: Record<JobStage, string> = {
+  queued: '排隊中',
   parsing: '需求拆解',
   retrieving: 'RAG 檢索',
   prompting: 'Prompt 構建',
@@ -45,16 +48,19 @@ export const STAGE_LABEL: Record<JobStage, string> = {
   done: '完成',
   needs_review: '需人工審核',
   cancelled: '已取消',
+  failed: '失敗',
 };
 
 export function emptyJobView(jobId: string | null = null): JobView {
   return {
     jobId, stage: null, round: 0, outcome: 'running', parsedBrief: null, ragHits: [], requeryHits: [], specs: {},
-    renders: {}, renderIds: [], progress: null, rewrites: [], bestRenderIds: {}, needsReviewReason: null, logs: [],
+    renders: {}, renderIds: [], progress: null, rewrites: [], bestRenderIds: {}, needsReviewReason: null, failureReason: null, logs: [],
   };
 }
 
-const OUTCOME: Partial<Record<JobStage, JobOutcome>> = { done: 'done', needs_review: 'needs_review', cancelled: 'cancelled' };
+const OUTCOME: Partial<Record<JobStage, JobOutcome>> = {
+  done: 'done', needs_review: 'needs_review', cancelled: 'cancelled', failed: 'failed',
+};
 
 /** 純函式：回傳新的 view，不修改輸入（事件是凍結的物件） */
 export function reduceJob(v: JobView, e: JobEvent): JobView {
@@ -97,6 +103,8 @@ export function reduceJob(v: JobView, e: JobEvent): JobView {
       return { ...v, bestRenderIds: e.bestRenderIds };
     case 'job.needs_review':
       return { ...v, needsReviewReason: e.reason };
+    case 'job.failed':
+      return { ...v, failureReason: e.reason };
     case 'log':
       return { ...v, logs: [...v.logs, { source: e.source, level: e.level, message: e.message }] };
   }
@@ -140,7 +148,8 @@ const NODE_SPAN: Record<RenderNode, [start: number, span: number]> = {
 export function jobProgress(v: JobView): number {
   if (v.outcome === 'done' || v.outcome === 'needs_review') return 1;
   switch (v.stage) {
-    case null: return 0;
+    case null:
+    case 'queued': return 0;
     case 'parsing': return 0.04;
     case 'retrieving': return 0.1;
     case 'prompting': return 0.16;

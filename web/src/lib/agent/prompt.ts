@@ -4,7 +4,6 @@ import type {
 import { computeLayout } from '@/lib/compose/layout';
 import { claimTexts, hasClaim } from '@/lib/review/rules';
 
-export const CAMPAIGN_PERIOD = '活動期間 2026/10/15–11/15';
 export const BASE_NEGATIVE = 'lowres, blurry, watermark, deformed product, extra objects, garbled text';
 
 const OFFER_SUB: [RegExp, string][] = [
@@ -50,7 +49,7 @@ export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief, re
   const claim = hasClaim(claimTexts({ headline, subhead, features, badge }), brand.claimWords);
   const notes = [
     claim && brand.disclaimerPhrase ? `*使用者感受，${brand.disclaimerPhrase}` : null,
-    brief.campaign ? CAMPAIGN_PERIOD : null,
+    brief.period ? `活動期間 ${brief.period}` : null,
     brief.offer ? '數量有限，售完為止' : null,
   ].filter((s): s is string => s !== null);
 

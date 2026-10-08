@@ -20,6 +20,7 @@ describe('eventGroup', () => {
       'rewrite.started': 'agent',
     });
     expect(eventGroup({ type: 'job.needs_review', jobId: 'j', reason: 'x' })).toBe('job');
+    expect(eventGroup({ type: 'job.failed', jobId: 'j', reason: 'x' })).toBe('job');
   });
 });
 
@@ -27,6 +28,8 @@ describe('describeEvent', () => {
   it('summarises status, review and rewrite events', () => {
     expect(describeEvent({ type: 'job.status', stage: 'parsing', round: 0 })).toBe('需求拆解');
     expect(describeEvent({ type: 'job.status', stage: 'reviewing', round: 2 })).toBe('合規審查・第 2 輪');
+    expect(describeEvent({ type: 'job.status', stage: 'queued', round: 0 })).toBe('排隊中');
+    expect(describeEvent({ type: 'job.failed', jobId: 'j', reason: 'ComfyUI 沒有回應' })).toBe('ComfyUI 沒有回應');
     expect(describeEvent(pick((e) => e.type === 'review.check' && e.check.id === 'banned_words' && e.round === 1)))
       .toBe('r1_ig-post_v0・✗ 禁用詞檢查：禁用詞「根治」「醫療級」');
     expect(describeEvent(pick((e) => e.type === 'rewrite.started'))).toBe(

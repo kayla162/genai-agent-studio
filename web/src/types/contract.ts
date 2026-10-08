@@ -55,6 +55,8 @@ export interface Brand {
   guidelineChunks: RagChunk[];
   caseStudies: CaseStudy[];
   copyPresets: Record<Tone, { headline: [string, string]; subhead: string }>;
+  /** Logo 圖檔；null 時排版以向量標誌加品牌名稱繪製 */
+  logo: { url: string } | null;
 }
 
 /* ---------- 商品與模板 ---------- */
@@ -87,6 +89,8 @@ export interface ParsedBrief {
   tone: Tone;
   campaign: string | null;
   offer: string | null;
+  /** 活動期間，例如 10/15–11/15；需求沒有提到時為 null */
+  period: string | null;
   /** 英文風格標籤，例如 minimal、premium */
   style: string[];
 }
@@ -149,7 +153,8 @@ export interface ReviewCheck {
 
 export type RenderBackground =
   | { kind: 'procedural'; seed: number; palette: Palette; style: string }
-  | { kind: 'url'; url: string };
+  /** includesProduct：生成圖已包含商品（ComfyUI 打光融合後），繪製時跳過商品圖層 */
+  | { kind: 'url'; url: string; includesProduct: boolean };
 
 export interface Render {
   id: string;
@@ -178,8 +183,8 @@ export interface Fix { checkId: CheckId; title: string; desc: string }
 
 /* ---------- WebSocket 事件 ---------- */
 export type JobStage =
-  | 'parsing' | 'retrieving' | 'prompting' | 'rendering' | 'composing' | 'reviewing'
-  | 'rewriting' | 'saving' | 'done' | 'needs_review' | 'cancelled';
+  | 'queued' | 'parsing' | 'retrieving' | 'prompting' | 'rendering' | 'composing' | 'reviewing'
+  | 'rewriting' | 'saving' | 'done' | 'needs_review' | 'cancelled' | 'failed';
 export type RenderNode = 'cutout' | 'generate' | 'relight' | 'upscale';
 export type LogSource = 'ws' | 'api' | 'agent' | 'rag' | 'comfy' | 'compose' | 'vlm' | 'db';
 export type LogLevel = 'info' | 'ok' | 'warn' | 'error';
@@ -199,6 +204,8 @@ export type JobEvent =
   | { type: 'rewrite.started'; round: number; templateId: TemplateId; reasons: CheckId[]; fixes: Fix[]; requery: boolean }
   | { type: 'job.completed'; jobId: string; bestRenderIds: Partial<Record<TemplateId, string>> }
   | { type: 'job.needs_review'; jobId: string; reason: string }
+  /** 技術故障（外部服務無回應、worker 重新啟動等），與「需人工審核」不同 */
+  | { type: 'job.failed'; jobId: string; reason: string }
   | { type: 'log'; source: LogSource; level: LogLevel; message: string };
 
 /**
@@ -232,7 +239,7 @@ export interface JobSummary {
   createdAt: string;
   stage: JobStage;
   round: number;
-  /** 已結束（done／needs_review／cancelled） */
+  /** 已結束（done／needs_review／cancelled／failed） */
   finished: boolean;
   /** 任務完成時每個模板的最佳候選；尚未完成或需人工審核時為空物件 */
   bestRenderIds: Partial<Record<TemplateId, string>>;
@@ -291,6 +298,23 @@ export interface DashboardStats {
   /** 最近的任務，新到舊，最多 8 筆 */
   recent: JobStat[];
 }
+
+/* ---------- 本機資料夾、可用選項與系統狀態 ---------- */
+/** assets/products/ 的照片（只有 live 模式由後端提供） */
+export interface LocalPhoto {
+  file: string;
+  /** 檔名去掉副檔名，底線與連字號換成空白 */
+  name: string;
+  url: string;
+  size: number;
+}
+
+/** 目前可用的 LLM、VLM 與生圖引擎（顯示名稱即 JobInput 的值） */
+export interface ApiOptions { llm: string[]; vlm: string[]; engines: Engine[] }
+
+/** ok 正常、sim 使用模擬版、off 未啟用、error 異常 */
+export interface ComponentStatus { id: string; label: string; status: 'ok' | 'sim' | 'off' | 'error'; detail: string }
+export interface SystemStatus { components: ComponentStatus[] }
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 export interface ConnectionState {

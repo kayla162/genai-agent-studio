@@ -16,6 +16,8 @@ const STYLE_WORDS: [zh: string, en: string][] = [
 const CAMPAIGN_RE = /週年慶|雙\s*11|中秋|母親節|聖誕|新品上市|夏季|開學/;
 const OFFER_RE = /買一送一|買二送一|第二件\s*\d+(?:\.\d+)?\s*折|\d+(?:\.\d+)?\s*折/;
 const AUDIENCE_RE = /(?:給|針對|適合)([^，。,.！!]+)/;
+/** 10/15–11/15、2026/10/15 ~ 11/15、10/15 至 11/15 */
+const PERIOD_RE = /((?:\d{4}\/)?\d{1,2}\/\d{1,2})\s*(?:–|-|~|～|至|到)\s*((?:\d{4}\/)?\d{1,2}\/\d{1,2})/;
 
 /** 以關鍵字規則模擬 LLM 的需求拆解（第二階段改由後端 LLM 產生同格式結果） */
 export function parseBrief(text: string, brand: Brand, product: Product | null): ParsedBrief {
@@ -23,11 +25,13 @@ export function parseBrief(text: string, brand: Brand, product: Product | null):
   const campaign = text.match(CAMPAIGN_RE)?.[0].replace(/\s+/g, '') ?? null;
   const offer = text.match(OFFER_RE)?.[0].replace(/\s+/g, '') ?? null;
   const audience = text.match(AUDIENCE_RE)?.[1].trim() ?? '一般消費者';
+  const range = text.match(PERIOD_RE);
+  const period = range ? `${range[1]}–${range[2]}` : null;
   const style = STYLE_WORDS.filter(([zh]) => text.includes(zh)).map(([, en]) => en);
 
   const features = product?.features ?? [];
   const mentioned = features.filter((f) => text.includes(f));
   const sellingPoints = [...mentioned, ...features.filter((f) => !mentioned.includes(f))].slice(0, 3);
 
-  return { productName: product?.name ?? null, sellingPoints, audience, tone, campaign, offer, style };
+  return { productName: product?.name ?? null, sellingPoints, audience, tone, campaign, offer, period, style };
 }

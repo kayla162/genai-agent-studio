@@ -63,6 +63,30 @@ describe('flowState', () => {
     expect(s.orchestrator).toBe('error');
   });
 
+  it('marks the node that was running when the job failed', () => {
+    const { events } = makeJobSnapshot();
+    const rendering = events.findIndex((e) => e.type === 'job.status' && e.stage === 'rendering');
+    const head = events.slice(0, rendering + 3);
+    const ts = head.at(-1)!.ts;
+    const tail: JobMessage[] = [
+      { type: 'job.failed', jobId: 'job_fixture', reason: 'ComfyUI 沒有回應', seq: head.length + 1, ts },
+      { type: 'job.status', stage: 'failed', round: 1, seq: head.length + 2, ts },
+    ];
+    const s = statuses([...head, ...tail]);
+    expect(s.comfy).toBe('error');
+    expect(s.orchestrator).toBe('error');
+  });
+
+  it('keeps only the orchestrator active while the job is queued', () => {
+    const queued: JobMessage[] = [
+      { type: 'job.accepted', jobId: 'j', seq: 1, ts: '2026-10-07T01:00:00.000Z' },
+      { type: 'job.status', stage: 'queued', round: 0, seq: 2, ts: '2026-10-07T01:00:00.000Z' },
+    ];
+    expect(statuses(queued)).toEqual({
+      orchestrator: 'active', brief: 'idle', rag: 'idle', prompt: 'idle', comfy: 'idle', compose: 'idle', review: 'idle', save: 'idle',
+    });
+  });
+
   it('is idle without messages', () => {
     const flow = flowState([]);
     expect(Object.values(flow.nodes).every((n) => n.status === 'idle' && n.visits === 0)).toBe(true);

@@ -6,7 +6,7 @@ import { parseBrief } from '@/lib/api/mock/brief';
 import { buildTimeline } from '@/lib/api/mock/scenario';
 import { makeJobSnapshot } from '@/test/fixtures';
 import {
-  applyEvents, defaultSelection, emptyJobView, finalCandidates, jobProgress, reduceJob, specKey, withLiveStage,
+  applyEvents, defaultSelection, emptyJobView, finalCandidates, jobProgress, reduceJob, specKey, STAGE_LABEL, withLiveStage,
 } from './view';
 
 const serum = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
@@ -81,6 +81,21 @@ describe('needs review and cancel', () => {
   it('marks a cancelled job', () => {
     const v = reduceJob(emptyJobView('j'), { type: 'job.status', stage: 'cancelled', round: 1 });
     expect(v.outcome).toBe('cancelled');
+  });
+
+  it('marks a failed job and keeps the reason', () => {
+    let v = reduceJob(emptyJobView('j'), { type: 'job.status', stage: 'rendering', round: 1 });
+    v = reduceJob(v, { type: 'job.failed', jobId: 'j', reason: 'ComfyUI 沒有回應' });
+    v = reduceJob(v, { type: 'job.status', stage: 'failed', round: 1 });
+    expect(v).toMatchObject({ outcome: 'failed', stage: 'failed', failureReason: 'ComfyUI 沒有回應' });
+    expect(STAGE_LABEL.failed).toBe('失敗');
+  });
+
+  it('keeps a queued job running with no progress yet', () => {
+    const v = reduceJob(emptyJobView('j'), { type: 'job.status', stage: 'queued', round: 0 });
+    expect(v.outcome).toBe('running');
+    expect(STAGE_LABEL.queued).toBe('排隊中');
+    expect(jobProgress(v)).toBe(0);
   });
 });
 

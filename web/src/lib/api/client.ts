@@ -1,6 +1,6 @@
 import type {
-  Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent,
-  JobInput, JobMessage, JobSummary, ParsedBrief, Product, ProductPhoto, RagChunk,
+  ApiOptions, Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry,
+  IngestEvent, JobInput, JobMessage, JobSummary, LocalPhoto, ParsedBrief, Product, ProductPhoto, RagChunk, SystemStatus,
 } from '@/types/contract';
 
 export type ProductDraft = Omit<Product, 'id' | 'createdAt'> & { id?: string };
@@ -26,6 +26,10 @@ export interface ApiClient {
   /** 只有 mock 模式有 Demo 控制台；live 模式為 null */
   readonly demo: DemoControls | null;
   readonly connection: ConnectionChannel;
+  /** 目前可用的 LLM、VLM 與生圖引擎 */
+  getOptions(): Promise<ApiOptions>;
+  /** 各服務的狀態（資料庫、佇列、向量庫、composer、ComfyUI、Gemini） */
+  getSystemStatus(): Promise<SystemStatus>;
   /** 包含使用者上傳文件產生的切塊 */
   listBrands(): Promise<Brand[]>;
   /** 上傳品牌文件：切塊 → 向量化 → 寫入知識庫，過程以 onEvent 回報；回傳新增的切塊 */
@@ -38,6 +42,10 @@ export interface ApiClient {
   uploadProductPhoto(file: Blob): Promise<ProductPhoto>;
   /** 對商品照去背並寫回 Product.cutout（mock：示意，約 1.2 秒） */
   requestCutout(productId: string): Promise<Product>;
+  /** 列出 assets/products/ 的照片；此模式無法讀取本機資料夾時回傳 null */
+  listLocalPhotos(): Promise<LocalPhoto[] | null>;
+  /** 把 assets/products/ 的照片匯入成商品（檔名當商品名稱） */
+  importLocalPhoto(file: string, brandId: string): Promise<Product>;
   parseBrief(brandId: string, text: string, productId: string | null): Promise<ParsedBrief>;
   createJob(input: JobInput): Promise<{ jobId: string }>;
   /**
