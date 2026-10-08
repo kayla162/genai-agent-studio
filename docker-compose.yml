@@ -1,0 +1,34 @@
+# 虛實整合 GenAI Agent：本機執行（所有連接埠只綁定 127.0.0.1）。ComfyUI 在 Windows 另外啟動。
+# 映像檔取自 AWS 的 Docker 官方映像鏡像（public.ecr.aws/docker/library），不需要登入 Docker Hub。
+name: genai-agent
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:18-alpine
+    environment:
+      POSTGRES_USER: genai
+      POSTGRES_PASSWORD: genai
+      POSTGRES_DB: genai
+    # 5433：避免和 Windows 上原生安裝的 PostgreSQL（5432）衝突；容器之間仍用 postgres:5432
+    ports: ['127.0.0.1:5433:5432']
+    volumes: ['postgres:/var/lib/postgresql']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U genai -d genai']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:8-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    ports: ['127.0.0.1:6379:6379']
+    volumes: ['redis:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres:
+  redis:

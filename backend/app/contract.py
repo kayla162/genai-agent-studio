@@ -172,6 +172,18 @@ class Product(Model):
     created_at: str
 
 
+class ProductDraft(Model):
+    """新增或修改商品（對應 web/src/lib/api/client.ts 的 ProductDraft：沒有 id 時新增）。"""
+
+    id: str | None = None
+    brand_id: str
+    name: str
+    features: list[str]
+    price: Price
+    photo: ProductPhoto
+    cutout: ProductCutout | None
+
+
 class ChannelTemplate(Model):
     id: TemplateId
     label: str

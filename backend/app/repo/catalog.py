@@ -1,0 +1,165 @@
+"""品牌、RAG 切塊與商品。"""
+
+import secrets
+from collections.abc import Sequence
+from datetime import datetime
+
+from sqlalchemy import case, delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.brands import LoadedBrand
+from app.contract import Brand, Product, ProductDraft, RagChunk
+from app.core.clock import iso, parse_iso
+from app.db.models import BrandChunkRow, BrandRow, ProductRow
+
+#: 列出切塊的順序：設定檔、合規替代用語、上傳的手冊、回寫的歷史案例
+_ORIGIN_ORDER = case(
+    {'config': 0, 'alt': 1, 'upload': 2, 'history': 3},
+    value=BrandChunkRow.origin,
+)
+
+
+async def sync_brands(session: AsyncSession, loaded: Sequence[LoadedBrand], now: datetime) -> None:
+    """品牌設定檔 → 資料庫。內容改變時取代設定檔的切塊；補上還沒有的示範商品（刪除過的不再加回）；
+    設定檔已移除的品牌不再列出。"""
+    rows = {row.id: row for row in (await session.scalars(select(BrandRow))).all()}
+    for item in loaded:
+        brand = item.brand
+        row = rows.get(brand.id)
+        if row is None:
+            row = BrandRow(id=brand.id, source_hash='')
+            session.add(row)
+        row.active = True
+        if row.source_hash == item.source_hash:
+            continue
+        config = brand.to_json()
+        config['guidelineChunks'] = []
+        row.name, row.config, row.source_hash, row.updated_at = brand.name, config, item.source_hash, now
+        await session.flush()
+        await session.execute(
+            delete(BrandChunkRow).where(BrandChunkRow.brand_id == brand.id, BrandChunkRow.origin.in_(('config', 'alt')))
+        )
+        for i, c in enumerate(brand.guideline_chunks):
+            origin = 'alt' if c.id.endswith('#law-alt') else 'config'
+            session.add(_chunk_row(brand.id, c, origin, i, now))
+        for product in item.samples:
+            if await session.get(ProductRow, product.id) is None:
+                session.add(
+                    ProductRow(
+                        id=product.id,
+                        brand_id=brand.id,
+                        data=product.to_json(),
+                        sample=True,
+                        deleted=False,
+                        created_at=parse_iso(product.created_at),
+                    )
+                )
+    active = [b.brand.id for b in loaded]
+    await session.execute(update(BrandRow).where(BrandRow.id.not_in(active)).values(active=False))
+    await session.commit()
+
+
+def _chunk_row(brand_id: str, chunk: RagChunk, origin: str, position: int, now: datetime) -> BrandChunkRow:
+    return BrandChunkRow(
+        id=chunk.id,
+        brand_id=brand_id,
+        source=chunk.source,
+        section=chunk.section,
+        tag=chunk.tag,
+        text=chunk.text,
+        origin=origin,
+        position=position,
+        created_at=now,
+    )
+
+
+async def _chunks(session: AsyncSession, brand_id: str) -> list[RagChunk]:
+    rows = await session.scalars(
+        select(BrandChunkRow)
+        .where(BrandChunkRow.brand_id == brand_id)
+        .order_by(_ORIGIN_ORDER, BrandChunkRow.created_at, BrandChunkRow.position)
+    )
+    return [
+        RagChunk.model_validate({'id': r.id, 'source': r.source, 'section': r.section, 'tag': r.tag, 'text': r.text})
+        for r in rows
+    ]
+
+
+async def _brand(session: AsyncSession, row: BrandRow) -> Brand:
+    return Brand.model_validate(
+        {**row.config, 'guidelineChunks': [c.to_json() for c in await _chunks(session, row.id)]}
+    )
+
+
+async def list_brands(session: AsyncSession) -> list[Brand]:
+    rows = await session.scalars(select(BrandRow).where(BrandRow.active).order_by(BrandRow.id))
+    return [await _brand(session, row) for row in rows.all()]
+
+
+async def get_brand(session: AsyncSession, brand_id: str) -> Brand | None:
+    row = await session.get(BrandRow, brand_id)
+    return await _brand(session, row) if row and row.active else None
+
+
+async def replace_document_chunks(
+    session: AsyncSession, brand_id: str, source: str, chunks: Sequence[RagChunk], now: datetime
+) -> None:
+    """上傳的手冊：同名文件重新上傳時取代舊的切塊。"""
+    await session.execute(
+        delete(BrandChunkRow).where(
+            BrandChunkRow.brand_id == brand_id, BrandChunkRow.origin == 'upload', BrandChunkRow.source == source
+        )
+    )
+    for i, c in enumerate(chunks):
+        session.add(_chunk_row(brand_id, c, 'upload', i, now))
+    await session.commit()
+
+
+async def list_products(session: AsyncSession, brand_id: str) -> list[Product]:
+    rows = await session.scalars(
+        select(ProductRow)
+        .where(ProductRow.brand_id == brand_id, ProductRow.deleted.is_(False))
+        .order_by(ProductRow.sample.desc(), ProductRow.created_at, ProductRow.id)
+    )
+    return [Product.model_validate(r.data) for r in rows]
+
+
+async def get_product(session: AsyncSession, product_id: str) -> Product | None:
+    row = await session.get(ProductRow, product_id)
+    return Product.model_validate(row.data) if row and not row.deleted else None
+
+
+async def save_product(session: AsyncSession, draft: ProductDraft, now: datetime) -> Product:
+    """沒有 id（或 id 不存在）時新增；有時更新內容並保留建立時間。"""
+    row = await session.get(ProductRow, draft.id) if draft.id else None
+    if row is None:
+        row = ProductRow(
+            id=draft.id or f'prod_{secrets.token_hex(5)}', brand_id=draft.brand_id, sample=False, created_at=now
+        )
+        session.add(row)
+    product = Product(
+        id=row.id,
+        brand_id=draft.brand_id,
+        name=draft.name,
+        features=draft.features,
+        price=draft.price,
+        photo=draft.photo,
+        cutout=draft.cutout,
+        created_at=iso(row.created_at),
+    )
+    row.brand_id, row.data, row.deleted = draft.brand_id, product.to_json(), False
+    await session.commit()
+    return product
+
+
+async def delete_product(session: AsyncSession, product_id: str) -> bool:
+    """示範商品只標記刪除；自建商品直接刪除。回傳是否有刪到。"""
+    row = await session.get(ProductRow, product_id)
+    if row is None or row.deleted:
+        return False
+    if row.sample:
+        row.deleted = True
+    else:
+        await session.delete(row)
+    await session.commit()
+    return True
