@@ -1,11 +1,13 @@
 """任務事件的保存與推送。
 
-- append：同一個交易內鎖定任務列、取得下一個 seq、寫入 job_events 並更新任務摘要；commit 後發布到 Redis。
+- append：同一個交易內鎖定任務列、取得下一個 seq、寫入 job_events 並更新任務摘要；commit 後發布到 Redis
+  （發布失敗只記錄警告，事件已在資料庫，串流會從資料庫補齊）。
 - stream：先訂閱 Redis，再從資料庫補送 seq 之後的事件，接著轉送即時事件（依 seq 去除重複、補齊漏掉的）。
 - 任務結束的 job.status（done／needs_review／cancelled／failed）一定是最後一則事件，串流看到就結束。
 """
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -17,6 +19,8 @@ from app.core.clock import iso, utc_now
 from app.db.models import JobEventRow, JobRow
 from app.db.session import Database
 from app.errors import NotFound
+
+logger = logging.getLogger(__name__)
 
 
 def channel(job_id: str) -> str:
@@ -61,7 +65,10 @@ class EventStore:
             _apply(row, event)
             s.add(JobEventRow(job_id=job_id, seq=seq, ts=ts, type=event.type, payload=event.to_json()))
             await s.commit()
-        await self.publish(job_id, message_json(event, seq, iso(ts)))
+        try:
+            await self.publish(job_id, message_json(event, seq, iso(ts)))
+        except Exception as error:  # noqa: BLE001 - 事件已寫入資料庫；發布失敗不能影響任務，訂閱端會從資料庫補齊
+            logger.warning('事件已寫入資料庫，但發布到 Redis 失敗（任務 %s，seq %d）：%r', job_id, seq, error)
         return seq
 
     async def publish(self, job_id: str, message: dict[str, Any]) -> None:

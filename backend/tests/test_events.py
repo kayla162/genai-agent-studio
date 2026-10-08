@@ -126,6 +126,28 @@ async def test_stream_ends_from_the_database_when_the_final_publish_is_lost(
     assert is_final(messages[-1])
 
 
+async def test_append_keeps_the_event_when_the_redis_publish_fails(
+    store: EventStore, db: Database, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert await store.append('job_e', JobAcceptedEvent(type='job.accepted', job_id='job_e')) == 1
+
+    async def down(job_id: str, message: dict[str, Any]) -> None:
+        raise ConnectionError('redis is down')
+
+    monkeypatch.setattr(store, 'publish', down)
+    with caplog.at_level('WARNING', logger='app.events'):
+        assert await store.append('job_e', status('done', 1)) == 2
+    assert 'job_e' in caplog.text
+    assert 'seq 2' in caplog.text
+    async with db.session() as s:
+        snap = await jobs.get_job(s, 'job_e')
+    assert snap is not None
+    assert [(m['seq'], m['type']) for m in snap.events] == [(1, 'job.accepted'), (2, 'job.status')]
+    assert (snap.summary.stage, snap.summary.finished) == ('done', True)
+    monkeypatch.undo()
+    assert [m['seq'] for m in await asyncio.wait_for(collect(store.stream('job_e')), 5)] == [1, 2]
+
+
 async def test_unknown_jobs_raise(store: EventStore) -> None:
     with pytest.raises(NotFound):
         await collect(store.stream('nope'))
