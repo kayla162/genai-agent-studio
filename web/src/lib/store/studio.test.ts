@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getApiClient } from '@/lib/api';
+import { useAppStore } from './app';
 import { DEMO_BRIEFS, useStudioStore } from './studio';
 
 const store = () => useStudioStore.getState();
@@ -10,12 +11,22 @@ beforeEach(() => {
   store().resetForBrand('selune');
   store().setForm({ productId: 'prod_selune_serum', templateIds: ['ig-post'] });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  useAppStore.setState({ options: null });
+});
 
 describe('studio store', () => {
   it('starts from the brand demo brief', () => {
     expect(store().brief).toBe(DEMO_BRIEFS.selune);
     expect(store().view).toBeNull();
+  });
+
+  it('takes the default models and engine from the available options', () => {
+    expect(store()).toMatchObject({ llm: 'Gemini 3.7 Flash', vlm: 'Gemini 3.7 Vision', engine: 'comfyui', variants: 4 });
+    useAppStore.setState({ options: { llm: ['Gemini 3 Flash'], vlm: ['Gemini 3 Flash'], engines: ['comfyui' as const] } });
+    store().resetForBrand('misty-isle');
+    expect(store()).toMatchObject({ llm: 'Gemini 3 Flash', vlm: 'Gemini 3 Flash', engine: 'comfyui' });
   });
 
   it('parses the brief and lets the user edit the parsed fields', async () => {

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { CircleCheck, Network, TriangleAlert } from 'lucide-react';
+import { CircleCheck, CircleX, Network, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -21,6 +21,7 @@ export function RunStatus({ view }: { view: JobView }) {
         <div className="flex flex-wrap items-center gap-2">
           {view.outcome === 'done' && <CircleCheck className="size-5 text-success" />}
           {view.outcome === 'needs_review' && <TriangleAlert className="size-5 text-warning" />}
+          {view.outcome === 'failed' && <CircleX className="size-5 text-destructive" />}
           <span className="font-semibold">{view.stage ? STAGE_LABEL[view.stage] : '排隊中'}</span>
           {view.round > 0 && <Badge variant="secondary">第 {view.round} 輪</Badge>}
           <span className="font-mono text-xs text-muted-foreground">{view.jobId}</span>
@@ -41,6 +42,7 @@ export function RunStatus({ view }: { view: JobView }) {
           <p className="text-sm text-warning">{view.needsReviewReason}。可以檢視候選後手動選用，匯出前請人工確認。</p>
         )}
         {view.outcome === 'cancelled' && <p className="text-sm text-muted-foreground">任務已取消。</p>}
+        {view.outcome === 'failed' && <p className="text-sm text-destructive">任務失敗：{view.failureReason}</p>}
       </CardContent>
     </Card>
   );

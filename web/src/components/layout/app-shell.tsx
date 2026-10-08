@@ -8,11 +8,12 @@ import { SideNav } from './side-nav';
 import { TopBar } from './top-bar';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const ready = useAppStore((s) => s.brands.length > 0);
+  const ready = useAppStore((s) => s.brands.length > 0 && s.options !== null);
 
   useEffect(() => {
     void useAppStore.persist.rehydrate();
     void useAppStore.getState().loadBrands();
+    void useAppStore.getState().loadOptions();
   }, []);
 
   return (

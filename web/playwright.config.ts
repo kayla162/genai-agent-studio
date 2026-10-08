@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = 3100;
 
 /**
- * E2E：先建置正式版，再在 3100 埠啟動（不佔用 next dev 的 3000 埠）。
+ * E2E：先建置靜態輸出（mock 模式），再用 scripts/serve-static.mjs 在 3100 埠提供（不佔用 next dev 的 3000 埠）。
  * 每個測試都是新的瀏覽器 context，IndexedDB 與 localStorage 從空的開始。
  */
 export default defineConfig({
@@ -22,7 +22,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: `npm run build && npm run start -- --port ${PORT}`,
+    command: `npm run build && node scripts/serve-static.mjs ${PORT}`,
     url: `http://localhost:${PORT}/studio`,
     reuseExistingServer: !process.env.CI,
     timeout: 240_000,

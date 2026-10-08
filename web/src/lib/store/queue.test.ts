@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getApiClient } from '@/lib/api';
+import { useAppStore } from './app';
 import { useQueueStore } from './queue';
 
 const q = () => useQueueStore.getState();
@@ -15,9 +16,20 @@ beforeEach(() => {
   getApiClient().demo?.set({ speed: 4, firstRoundFail: true, forceAllFail: false });
   useQueueStore.setState({ items: [], paused: false });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  useAppStore.setState({ options: null });
+});
 
 describe('queue store', () => {
+  it('creates jobs with the first available models and engine', async () => {
+    useAppStore.setState({ options: { llm: ['Gemini 3 Flash'], vlm: ['Gemini 3 Flash'], engines: ['comfyui' as const] } });
+    q().enqueue({ ...BATCH, products: [BATCH.products[0]] });
+    await vi.advanceTimersByTimeAsync(100);
+    const { summary } = await getApiClient().getJob(q().items[0].jobId!);
+    expect(summary.input).toMatchObject({ llm: 'Gemini 3 Flash', vlm: 'Gemini 3 Flash', engine: 'comfyui' });
+  });
+
   it('runs one item at a time, in order', async () => {
     q().enqueue(BATCH);
     await vi.advanceTimersByTimeAsync(100);

@@ -1,11 +1,10 @@
 import { create } from 'zustand';
 import type { Copy, Engine, JobInput, ParsedBrief, TemplateId, Tone } from '@/types/contract';
-import { getApiClient } from '@/lib/api';
+import { API_MODE, getApiClient } from '@/lib/api';
 import { MOCK_OPTIONS } from '@/lib/api/mock/options';
 import { defaultSelection, emptyJobView, reduceJob, type JobView } from '@/lib/jobs/view';
+import { useAppStore } from './app';
 
-export const LLM_OPTIONS = MOCK_OPTIONS.llm;
-export const VLM_OPTIONS = MOCK_OPTIONS.vlm;
 export const ENGINE_LABEL: Record<Engine, string> = { comfyui: 'ComfyUI（SDXL + ControlNet + IP-Adapter）', ideogram: 'Ideogram 4.0' };
 export const TONE_LABEL: Record<Tone, string> = { gentle: '溫柔療癒', science: '專業科研', playful: '活潑年輕', minimal: '簡約' };
 
@@ -58,10 +57,14 @@ interface StudioState extends StudioForm {
   saveSelection: () => Promise<number>;
 }
 
-const DEFAULT_FORM: Omit<StudioForm, 'brief'> = {
-  productId: null, parsed: null, templateIds: ['ecom-main', 'ig-post'], variants: 4,
-  llm: LLM_OPTIONS[0], engine: 'comfyui', vlm: VLM_OPTIONS[0], maxRetries: 2,
-};
+/** 表單預設值：模型與引擎取目前可用的第一個；live 模式真的會用到 GPU，預設每個模板 2 張 */
+function defaultForm(): Omit<StudioForm, 'brief'> {
+  const options = useAppStore.getState().options ?? MOCK_OPTIONS;
+  return {
+    productId: null, parsed: null, templateIds: ['ecom-main', 'ig-post'], variants: API_MODE === 'live' ? 2 : 4,
+    llm: options.llm[0], engine: options.engines[0], vlm: options.vlm[0], maxRetries: 2,
+  };
+}
 
 /** 事件訂閱放在 store 外：換頁再回來，生成仍在進行 */
 let stopListening: (() => void) | null = null;
@@ -73,7 +76,7 @@ const stop = () => {
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export const useStudioStore = create<StudioState>()((set, get) => ({
-  ...DEFAULT_FORM,
+  ...defaultForm(),
   brief: '',
   brandId: null,
   parsing: false,
@@ -98,7 +101,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
   resetForBrand: (brandId) => {
     stop();
     set({
-      ...DEFAULT_FORM, brandId, brief: DEMO_BRIEFS[brandId] ?? '', parsing: false, starting: false,
+      ...defaultForm(), brandId, brief: DEMO_BRIEFS[brandId] ?? '', parsing: false, starting: false,
       input: null, view: null, selection: {}, copy: null, saved: {}, error: null,
     });
   },

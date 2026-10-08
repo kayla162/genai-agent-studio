@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import type { TemplateId } from '@/types/contract';
 import { getApiClient } from '@/lib/api';
 import { emptyJobView, reduceJob, type JobView } from '@/lib/jobs/view';
-import { LLM_OPTIONS, VLM_OPTIONS } from './studio';
+import { MOCK_OPTIONS } from '@/lib/api/mock/options';
+import { useAppStore } from './app';
 
 /** pending 等待中、held 此筆暫停（輪到也不啟動） */
 export type QueueStatus = 'pending' | 'held' | 'running' | 'done' | 'needs_review' | 'cancelled' | 'error';
@@ -93,6 +94,7 @@ export const useQueueStore = create<QueueState>()((set, get) => {
       if (!next) return;
       update(next.id, { status: 'running', error: null });
       const api = getApiClient();
+      const options = useAppStore.getState().options ?? MOCK_OPTIONS;
       const fail = (err: unknown) => {
         update(next.id, { status: 'error', error: message(err) });
         void get().pump();
@@ -101,7 +103,7 @@ export const useQueueStore = create<QueueState>()((set, get) => {
         const parsedBrief = await api.parseBrief(next.brandId, next.brief, next.productId);
         const { jobId } = await api.createJob({
           brandId: next.brandId, productId: next.productId, brief: next.brief, parsedBrief, templateIds: next.templateIds,
-          variantsPerTemplate: next.variants, llm: LLM_OPTIONS[0], engine: 'comfyui', vlm: VLM_OPTIONS[0], maxRetries: 2,
+          variantsPerTemplate: next.variants, llm: options.llm[0], engine: options.engines[0], vlm: options.vlm[0], maxRetries: 2,
         });
         update(next.id, { jobId, view: emptyJobView(jobId) });
         let finished = false;

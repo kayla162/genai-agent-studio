@@ -12,9 +12,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { MOCK_OPTIONS } from '@/lib/api/mock/options';
 import { CHANNEL_TEMPLATES } from '@/lib/compose/templates';
+import { useAppStore } from '@/lib/store/app';
 import { useProductsStore } from '@/lib/store/products';
-import { DEMO_BRIEFS, ENGINE_LABEL, LLM_OPTIONS, TONE_LABEL, useStudioStore, VLM_OPTIONS } from '@/lib/store/studio';
+import { DEMO_BRIEFS, ENGINE_LABEL, TONE_LABEL, useStudioStore } from '@/lib/store/studio';
 
 const splitList = (s: string) => s.split(/[,，、]/).map((x) => x.trim()).filter(Boolean);
 
@@ -87,6 +89,7 @@ export function BriefPanel({ brand }: { brand: Brand }) {
     setForm: st.setForm, toggleTemplate: st.toggleTemplate, parse: st.parse, start: st.start, cancel: st.cancel,
   })));
   const products = useProductsStore((p) => p.products);
+  const options = useAppStore((a) => a.options) ?? MOCK_OPTIONS;
   const running = s.jobRunning || s.starting;
 
   const chooseProduct = (id: string) => {
@@ -173,7 +176,7 @@ export function BriefPanel({ brand }: { brand: Brand }) {
                 <Label>LLM（需求拆解、文案、Prompt）</Label>
                 <Select disabled={running} value={s.llm} onValueChange={(v) => s.setForm({ llm: v })}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>{LLM_OPTIONS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                  <SelectContent>{options.llm.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
@@ -181,7 +184,7 @@ export function BriefPanel({ brand }: { brand: Brand }) {
                 <Select disabled={running} value={s.engine} onValueChange={(v) => s.setForm({ engine: v as Engine })}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {(Object.keys(ENGINE_LABEL) as Engine[]).map((e) => <SelectItem key={e} value={e}>{ENGINE_LABEL[e]}</SelectItem>)}
+                    {options.engines.map((e) => <SelectItem key={e} value={e}>{ENGINE_LABEL[e]}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -189,7 +192,7 @@ export function BriefPanel({ brand }: { brand: Brand }) {
                 <Label>VLM（合規審查）</Label>
                 <Select disabled={running} value={s.vlm} onValueChange={(v) => s.setForm({ vlm: v })}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>{VLM_OPTIONS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                  <SelectContent>{options.vlm.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
