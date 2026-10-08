@@ -1,5 +1,6 @@
 import type {
-  CheckId, Fix, JobEvent, JobStage, LogLevel, LogSource, ParsedBrief, PromptSpec, RagHit, Render, RenderNode, TemplateId,
+  CheckId, Fix, JobEvent, JobStage, JobSummary, LogLevel, LogSource, ParsedBrief, PromptSpec, RagHit, Render, RenderNode,
+  TemplateId,
 } from '@/types/contract';
 
 export type JobOutcome = 'running' | 'done' | 'needs_review' | 'cancelled';
@@ -158,4 +159,11 @@ export function jobProgress(v: JobView): number {
     case 'saving': return 0.97;
     default: return 1;
   }
+}
+
+/** 任務列表是讀取當下的快照；正在檢視的任務改用事件串流的即時階段，其他任務不變 */
+export function withLiveStage(jobs: JobSummary[], v: JobView): JobSummary[] {
+  const { jobId, stage, round, outcome } = v;
+  if (!stage) return jobs;
+  return jobs.map((j) => (j.id === jobId ? { ...j, stage, round, finished: outcome !== 'running' } : j));
 }
