@@ -95,6 +95,12 @@ class EventStore:
             while True:
                 raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if raw is None:
+                    # 閒置時改從資料庫補齊：結束事件的發布可能遺失，之後不會再有訊息
+                    for missing in await self._stored(job_id, last):
+                        yield missing
+                        last = missing['seq']
+                        if is_final(missing):
+                            return
                     continue
                 message = json.loads(raw['data'])
                 if message['seq'] <= last:

@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 from app.contract import JobAcceptedEvent, JobStatusEvent, LogEvent
 from app.db.session import Database
 from app.errors import NotFound
-from app.events import EventStore
+from app.events import EventStore, is_final
 from app.repo import jobs
 from tests.test_jobs import job_input
 
@@ -103,6 +103,27 @@ async def test_stream_fills_gaps_from_the_database(store: EventStore, monkeypatc
     monkeypatch.setattr(store, 'publish', publish)
     await store.append('job_e', status('cancelled'))
     assert [m['seq'] for m in await asyncio.wait_for(task, 5)] == [1, 2, 3]
+
+
+async def test_stream_ends_from_the_database_when_the_final_publish_is_lost(
+    store: EventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publish = store.publish
+
+    async def drop_final(job_id: str, message: dict[str, Any]) -> None:
+        if not is_final(message):
+            await publish(job_id, message)
+
+    monkeypatch.setattr(store, 'publish', drop_final)
+    task = asyncio.create_task(collect(store.stream('job_e')))
+    await asyncio.sleep(0.2)
+    await store.append('job_e', JobAcceptedEvent(type='job.accepted', job_id='job_e'))
+    await store.append('job_e', status('queued'))
+    await store.append('job_e', status('done', 1))
+    async with asyncio.timeout(5):
+        messages = await task
+    assert [(m['seq'], m['type']) for m in messages] == [(1, 'job.accepted'), (2, 'job.status'), (3, 'job.status')]
+    assert is_final(messages[-1])
 
 
 async def test_unknown_jobs_raise(store: EventStore) -> None:
