@@ -72,7 +72,9 @@ async def summary(services: Services, job_id: str) -> Any:
     return snap.summary
 
 
-async def test_runs_queued_jobs_one_at_a_time(services: Services, queues: Queues) -> None:
+async def test_runs_queued_jobs_one_at_a_time(
+    services: Services, queues: Queues, caplog: pytest.LogCaptureFixture
+) -> None:
     await queued_job(services, 'job_w1')
     await queued_job(services, 'job_w2')
     await queues.enqueue_job('job_w1')
@@ -80,11 +82,14 @@ async def test_runs_queued_jobs_one_at_a_time(services: Services, queues: Queues
     await queues.enqueue_job('job_w1')
     # Lua 腳本快取是冷的時，worker 啟動的第一次 sweep 會晚於取工作；這裡重現那個情況
     await services.redis.script_flush()
-    async with running(services, queues):
-        for _ in range(150):
-            if (await summary(services, 'job_w2')).finished:
-                break
-            await asyncio.sleep(0.2)
+    with caplog.at_level('INFO', logger='saq'):
+        async with running(services, queues):
+            for _ in range(150):
+                if (await summary(services, 'job_w2')).finished:
+                    break
+                await asyncio.sleep(0.2)
+    # 啟動時的 sweep 不能把剛取出、還沒標記為執行中的任務當成中斷的任務
+    assert not [r.getMessage() for r in caplog.records if 'Sweeping job' in r.getMessage()]
     assert [(await summary(services, j)).stage for j in ('job_w1', 'job_w2')] == ['done', 'done']
 
 
