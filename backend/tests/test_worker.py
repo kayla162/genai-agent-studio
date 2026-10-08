@@ -78,6 +78,8 @@ async def test_runs_queued_jobs_one_at_a_time(services: Services, queues: Queues
     await queues.enqueue_job('job_w1')
     await queues.enqueue_job('job_w2')
     await queues.enqueue_job('job_w1')
+    # Lua 腳本快取是冷的時，worker 啟動的第一次 sweep 會晚於取工作；這裡重現那個情況
+    await services.redis.script_flush()
     async with running(services, queues):
         for _ in range(150):
             if (await summary(services, 'job_w2')).finished:

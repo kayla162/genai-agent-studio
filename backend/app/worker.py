@@ -149,11 +149,19 @@ def build_workers(services: Services, queues: Queues, **options: Any) -> tuple[W
     async def write_back_fn(ctx: Context, *, history_id: str) -> bool:
         return await write_back(services, history_id)
 
-    jobs = Worker(queues.jobs, [('run_job', run_job_fn)], concurrency=1, **options)
+    async def sweep_first(ctx: Context) -> None:
+        # SAQ 在開始取工作的同時執行第一次 sweep；Redis 的 Lua 腳本快取是冷的時，sweep 會晚於取工作，
+        # 把剛取出、還沒標記為執行中的任務當成中斷的任務中止並重排。
+        # 所以在開始取工作之前先 sweep 一次：清掉前一個 worker 當掉留下的殘局，
+        # 同時取得 sweep 鎖，之後 upkeep 的第一次 sweep 會直接略過。
+        await ctx['worker'].queue.sweep()
+
+    jobs = Worker(queues.jobs, [('run_job', run_job_fn)], concurrency=1, startup=[sweep_first], **options)
     tasks = Worker(
         queues.tasks,
         [('cutout', cutout_fn), ('ingest', ingest_fn), ('write_back', write_back_fn)],
         concurrency=2,
+        startup=[sweep_first],
         **options,
     )
     return jobs, tasks
