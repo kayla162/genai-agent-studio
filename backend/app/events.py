@@ -8,7 +8,7 @@
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from redis.asyncio import Redis
@@ -81,7 +81,7 @@ class EventStore:
                 query = query.where(JobEventRow.seq < before)
             return [_message(r) for r in await s.scalars(query.order_by(JobEventRow.seq))]
 
-    async def stream(self, job_id: str, after: int = 0) -> AsyncIterator[dict[str, Any]]:
+    async def stream(self, job_id: str, after: int = 0) -> AsyncGenerator[dict[str, Any]]:
         pubsub = self.redis.pubsub()
         await pubsub.subscribe(channel(job_id))
         try:

@@ -23,3 +23,10 @@ class Invalid(AppError):
 class Conflict(AppError):
     status = 409
     code = 'conflict'
+
+
+class Unavailable(AppError):
+    """依賴的服務（worker、composer）沒有回應或逾時。"""
+
+    status = 503
+    code = 'unavailable'

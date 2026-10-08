@@ -16,9 +16,9 @@ from app.contract import FilePhoto, JobAcceptedEvent, JobInput, JobStatusEvent, 
 from app.db.session import Database
 from app.events import EventStore
 from app.pipeline.sim import sim_ports
-from app.queues import Queues
+from app.queues import Queues, ingest_channel
 from app.repo import catalog, jobs
-from app.worker import RESTART_REASON, Services, build_workers, cutout, ingest, ingest_channel, recover
+from app.worker import RESTART_REASON, Services, build_workers, cutout, ingest, recover
 from tests.conftest import TEST_REDIS_URL
 from tests.fixtures import BRANDS_DIR, load_fixture
 

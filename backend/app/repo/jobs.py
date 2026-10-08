@@ -2,6 +2,7 @@
 
 import secrets
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,8 @@ from app.db.models import JobEventRow, JobRow
 
 #: 任務列表最多列出的筆數（新到舊）
 LIST_LIMIT = 100
+#: 成效儀表板最多統計的任務數（新到舊）
+STATS_LIMIT = 200
 
 
 def make_job_id(local_now: datetime, suffix: int | None = None) -> str:
@@ -34,6 +37,10 @@ def _summary(row: JobRow) -> JobSummary:
     )
 
 
+def _message(row: JobEventRow) -> dict[str, Any]:
+    return {**row.payload, 'seq': row.seq, 'ts': iso(row.ts)}
+
+
 async def create_job(session: AsyncSession, job_id: str, job_input: JobInput, now: datetime) -> None:
     session.add(
         JobRow(id=job_id, brand_id=job_input.brand_id, input=job_input.to_json(), created_at=now, stage='queued')
@@ -51,7 +58,27 @@ async def get_job(session: AsyncSession, job_id: str) -> JobSnapshot | None:
     if row is None:
         return None
     events = await session.scalars(select(JobEventRow).where(JobEventRow.job_id == job_id).order_by(JobEventRow.seq))
-    return JobSnapshot(summary=_summary(row), events=[{**e.payload, 'seq': e.seq, 'ts': iso(e.ts)} for e in events])
+    return JobSnapshot(summary=_summary(row), events=[_message(e) for e in events])
+
+
+async def get_summary(session: AsyncSession, job_id: str) -> JobSummary | None:
+    row = await session.get(JobRow, job_id)
+    return _summary(row) if row is not None else None
+
+
+async def finished_snapshots(session: AsyncSession, brand_id: str | None = None) -> list[JobSnapshot]:
+    """已完成或需人工審核的任務與全部事件（成效儀表板使用；取消與失敗的任務不列入統計）。"""
+    query = select(JobRow).where(JobRow.stage.in_(('done', 'needs_review')))
+    if brand_id is not None:
+        query = query.where(JobRow.brand_id == brand_id)
+    rows = (await session.scalars(query.order_by(JobRow.created_at.desc(), JobRow.id.desc()).limit(STATS_LIMIT))).all()
+    events: dict[str, list[dict[str, Any]]] = {r.id: [] for r in rows}
+    if events:
+        of_jobs = select(JobEventRow).where(JobEventRow.job_id.in_(list(events)))
+        stored = await session.scalars(of_jobs.order_by(JobEventRow.job_id, JobEventRow.seq))
+        for e in stored:
+            events[e.job_id].append(_message(e))
+    return [JobSnapshot(summary=_summary(r), events=events[r.id]) for r in rows]
 
 
 async def request_cancel(session: AsyncSession, job_id: str) -> bool:

@@ -1,0 +1,292 @@
+"""可用選項、系統狀態、品牌（含文件上傳）、通路模板、商品與商品照、本機資料夾。"""
+
+import asyncio
+import json
+import re
+import secrets
+from collections.abc import AsyncIterator, Awaitable
+from pathlib import Path
+from typing import Annotated
+from urllib.parse import quote
+
+from fastapi import APIRouter, Query, UploadFile
+from fastapi.responses import StreamingResponse
+from sqlalchemy import text
+
+from app.api.services import ApiServices, Services
+from app.contract import (
+    ApiOptions,
+    Brand,
+    BrandDocument,
+    ChannelTemplate,
+    ComponentStatus,
+    FilePhoto,
+    LocalPhoto,
+    Model,
+    Price,
+    Product,
+    ProductDraft,
+    SystemStatus,
+)
+from app.core.clock import utc_now
+from app.errors import Invalid, NotFound, Unavailable
+from app.pipeline.runner import failure_reason
+from app.queues import ingest_channel
+from app.repo import catalog
+from app.settings import Settings
+from app.templates import CHANNEL_TEMPLATES
+
+router = APIRouter(tags=['品牌與商品'])
+
+#: 外部服務目前都是模擬版（Plan 5–7 逐一換成真實版）
+SIMULATED = [
+    ComponentStatus(id='rag', label='向量庫（Chroma＋BGE）', status='sim', detail='模擬檢索：固定的召回與 Rerank 順序'),
+    ComponentStatus(id='gemini', label='Gemini（LLM／VLM）', status='sim', detail='模擬 Agent 與 VLM 審查'),
+    ComponentStatus(id='comfyui', label='ComfyUI', status='sim', detail='模擬生圖：程序化背景'),
+]
+#: 系統狀態每一項最多等待的秒數
+STATUS_TIMEOUT = 3
+#: 文件上傳最多等待的秒數（超過時回報錯誤，worker 仍會繼續處理）
+INGEST_TIMEOUT = 120
+#: 去背最多等待的秒數
+CUTOUT_WAIT = 30
+#: 上傳的商品照：MIME → 副檔名（與本機資料夾支援的格式相同）
+UPLOAD_TYPES = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+LOCAL_TYPES = frozenset({'.png', '.jpg', '.jpeg', '.webp'})
+
+
+def api_options(settings: Settings) -> ApiOptions:
+    return ApiOptions(llm=[settings.llm_model], vlm=[settings.vlm_model], engines=['comfyui'])
+
+
+@router.get('/api/health')
+async def health() -> dict[str, str]:
+    """容器的健康檢查：api 啟動完成（migration 與品牌匯入都已執行）。"""
+    return {'status': 'ok'}
+
+
+@router.get('/api/options')
+async def get_options(services: Services) -> ApiOptions:
+    return api_options(services.settings)
+
+
+async def _probe(id_: str, label: str, check: Awaitable[str]) -> ComponentStatus:
+    try:
+        detail = await asyncio.wait_for(check, STATUS_TIMEOUT)
+    except TimeoutError:
+        return ComponentStatus(id=id_, label=label, status='error', detail=f'{STATUS_TIMEOUT} 秒內沒有回應')
+    except Exception as error:  # noqa: BLE001 - 任何錯誤都顯示在系統狀態
+        return ComponentStatus(id=id_, label=label, status='error', detail=failure_reason(error))
+    return ComponentStatus(id=id_, label=label, status='ok', detail=detail)
+
+
+async def _db(services: ApiServices) -> str:
+    async with services.db.session() as s:
+        return f'PostgreSQL {await s.scalar(text("SHOW server_version"))}'
+
+
+async def _redis(services: ApiServices) -> str:
+    return f'Redis {(await services.redis.info("server"))["redis_version"]}'
+
+
+async def _workers(services: ApiServices) -> str:
+    info = await services.queues.jobs.info()
+    if not info['workers']:
+        raise Unavailable('沒有執行中的 worker：任務會停在排隊中')
+    return f'{len(info["workers"])} 個 worker；排隊 {info["queued"]}、執行中 {info["active"]}'
+
+
+async def _composer(services: ApiServices) -> str:
+    if not await services.composer.health():
+        raise Unavailable(f'連不上 composer（{services.composer.base_url}）')
+    return services.composer.base_url
+
+
+async def _brands(services: ApiServices) -> str:
+    async with services.db.session() as s:
+        count = len(await catalog.list_brands(s))
+    if services.brand_errors:
+        skipped = '；'.join(f'{e.file}：{e.message}' for e in services.brand_errors)
+        raise Invalid(f'已載入 {count} 個品牌；略過 {skipped}')
+    return f'已載入 {count} 個品牌'
+
+
+@router.get('/api/status')
+async def get_status(services: Services) -> SystemStatus:
+    probed = await asyncio.gather(
+        _probe('db', 'PostgreSQL', _db(services)),
+        _probe('redis', 'Redis（佇列與事件推送）', _redis(services)),
+        _probe('worker', 'worker（SAQ）', _workers(services)),
+        _probe('composer', 'composer（排版與模擬邏輯）', _composer(services)),
+        _probe('brands', '品牌設定檔', _brands(services)),
+    )
+    return SystemStatus(components=[*probed, *SIMULATED])
+
+
+@router.get('/api/brands')
+async def list_brands(services: Services) -> list[Brand]:
+    async with services.db.session() as s:
+        return await catalog.list_brands(s)
+
+
+async def _ingest_lines(services: ApiServices, task_id: str, brand_id: str, doc: BrandDocument) -> AsyncIterator[str]:
+    """先訂閱再放入佇列，才不會漏掉 worker 發布的訊息；收到 ingest.stored 或錯誤時結束。"""
+    pubsub = services.redis.pubsub()
+    await pubsub.subscribe(ingest_channel(task_id))
+    try:
+        await services.queues.enqueue_task('ingest', task_id=task_id, brand_id=brand_id, name=doc.name, text=doc.text)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + INGEST_TIMEOUT
+        while loop.time() < deadline:
+            raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if raw is None:
+                continue
+            yield raw['data'] + '\n'
+            message = json.loads(raw['data'])
+            if 'error' in message or message['type'] == 'ingest.stored':
+                return
+        timeout = {'code': 'unavailable', 'message': '文件處理逾時：請確認 worker 正在執行'}
+        yield json.dumps({'error': timeout}, ensure_ascii=False) + '\n'
+    finally:
+        await pubsub.unsubscribe()
+        await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+
+@router.post(
+    '/api/brands/{brand_id}/documents',
+    response_class=StreamingResponse,
+    responses={200: {'content': {'application/x-ndjson': {}}, 'description': '每行一則 IngestEvent，或 { error }'}},
+)
+async def ingest_document(brand_id: str, doc: BrandDocument, services: Services) -> StreamingResponse:
+    """上傳品牌文件：切塊 → 向量化 → 寫入知識庫，進度以 NDJSON 串流回報。"""
+    async with services.db.session() as s:
+        if await catalog.get_brand(s, brand_id) is None:
+            raise NotFound(f'找不到品牌：{brand_id}')
+    lines = _ingest_lines(services, secrets.token_hex(8), brand_id, doc)
+    return StreamingResponse(lines, media_type='application/x-ndjson')
+
+
+@router.get('/api/templates')
+async def list_templates() -> list[ChannelTemplate]:
+    return CHANNEL_TEMPLATES
+
+
+@router.get('/api/products')
+async def list_products(services: Services, brand_id: Annotated[str, Query(alias='brandId')]) -> list[Product]:
+    async with services.db.session() as s:
+        return await catalog.list_products(s, brand_id)
+
+
+async def _save(services: ApiServices, draft: ProductDraft) -> Product:
+    async with services.db.session() as s:
+        if await catalog.get_brand(s, draft.brand_id) is None:
+            raise Invalid(f'找不到品牌：{draft.brand_id}')
+        return await catalog.save_product(s, draft, utc_now())
+
+
+@router.post('/api/products', status_code=201)
+async def create_product(draft: ProductDraft, services: Services) -> Product:
+    if draft.id is not None:
+        raise Invalid('新增商品時不可指定 id；修改請用 PUT /api/products/{id}')
+    return await _save(services, draft)
+
+
+@router.put('/api/products/{product_id}')
+async def update_product(product_id: str, draft: ProductDraft, services: Services) -> Product:
+    """修改商品；id 不存在時以這個 id 新增（與 mock 的 saveProduct 相同）。"""
+    if draft.id not in (None, product_id):
+        raise Invalid('網址與內容的商品 id 不一致')
+    return await _save(services, draft.model_copy(update={'id': product_id}))
+
+
+@router.delete('/api/products/{product_id}', status_code=204)
+async def delete_product(product_id: str, services: Services) -> None:
+    async with services.db.session() as s:
+        if not await catalog.delete_product(s, product_id):
+            raise NotFound(f'找不到商品：{product_id}')
+
+
+@router.post('/api/products/photos', status_code=201)
+async def upload_photo(file: UploadFile, services: Services) -> FilePhoto:
+    """上傳商品照，存到 data/uploads/，回傳可放進 Product.photo 的參照。"""
+    content_type = file.content_type or ''
+    if not content_type.startswith('image/'):
+        raise Invalid('只能上傳圖片檔')
+    ext = UPLOAD_TYPES.get(content_type)
+    if ext is None:
+        raise Invalid('只支援 PNG、JPEG 與 WebP 圖片')
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise Invalid(f'圖片不可超過 {MAX_UPLOAD_BYTES // 1024 // 1024} MB')
+    name = f'{secrets.token_hex(8)}{ext}'
+    folder = services.settings.data_dir / 'uploads'
+    await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread((folder / name).write_bytes, data)
+    return FilePhoto(source='upload', url=f'/files/uploads/{name}')
+
+
+@router.post('/api/products/{product_id}/cutout')
+async def request_cutout(product_id: str, services: Services) -> Product:
+    async with services.db.session() as s:
+        product = await catalog.get_product(s, product_id)
+    if product is None:
+        raise NotFound(f'找不到商品：{product_id}')
+    if product.photo.source == 'sample':
+        raise Invalid('示範商品已是去背素材')
+    done = await services.queues.run_task('cutout', wait=CUTOUT_WAIT, product_id=product_id)
+    if not done.completed:
+        raise Unavailable('去背還沒完成：請確認 worker 正在執行，稍後再重新整理')
+    if 'error' in done.result:
+        raise Invalid(done.result['error'])
+    return Product.model_validate(done.result['product'])
+
+
+def local_photo_url(file: str) -> str:
+    return f'/files/local/{quote(file, safe="")}'
+
+
+def _local_name(file: str) -> str:
+    """檔名去掉副檔名，底線與連字號換成空白（當商品名稱）。"""
+    return re.sub(r'[_-]+', ' ', Path(file).stem).strip()
+
+
+def _local_photo(settings: Settings, file: str) -> Path | None:
+    """拒絕子目錄、隱藏檔與非圖片檔。"""
+    if not file or '/' in file or '\\' in file or file.startswith('.') or Path(file).suffix.lower() not in LOCAL_TYPES:
+        return None
+    path = settings.local_photos_dir / file
+    return path if path.is_file() else None
+
+
+@router.get('/api/local-photos')
+async def list_local_photos(services: Services) -> list[LocalPhoto]:
+    """assets/products/ 的照片（依檔名排序）；資料夾不存在時回傳空陣列。"""
+    folder = services.settings.local_photos_dir
+    if not folder.is_dir():
+        return []
+    return [
+        LocalPhoto(file=p.name, name=_local_name(p.name), url=local_photo_url(p.name), size=p.stat().st_size)
+        for p in sorted(folder.iterdir(), key=lambda p: p.name)
+        if _local_photo(services.settings, p.name) is not None
+    ]
+
+
+class ImportRequest(Model):
+    brand_id: str
+
+
+@router.post('/api/local-photos/{file}/import', status_code=201)
+async def import_local_photo(file: str, body: ImportRequest, services: Services) -> Product:
+    """把本機照片匯入成商品：檔名當商品名稱，價格與特徵之後在卡片上補。照片直接從唯讀的資料夾讀取。"""
+    if _local_photo(services.settings, file) is None:
+        raise NotFound(f'找不到本機照片：{file}')
+    draft = ProductDraft(
+        brand_id=body.brand_id,
+        name=_local_name(file),
+        features=[],
+        price=Price(sale=0, original=0),
+        photo=FilePhoto(source='local', url=local_photo_url(file)),
+        cutout=None,
+    )
+    return await _save(services, draft)

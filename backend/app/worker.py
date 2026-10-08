@@ -35,15 +35,11 @@ from app.events import EventStore
 from app.pipeline.ports import Ports
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
-from app.queues import Queues
+from app.queues import Queues, ingest_channel
 from app.repo import catalog, history
 from app.settings import settings
 
 RESTART_REASON = 'worker 重新啟動，任務中斷'
-
-
-def ingest_channel(task_id: str) -> str:
-    return f'ingest:{task_id}'
 
 
 @dataclass

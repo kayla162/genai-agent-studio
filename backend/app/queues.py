@@ -17,6 +17,11 @@ TASKS = 'tasks'
 TASK_TIMEOUT = 600
 
 
+def ingest_channel(task_id: str) -> str:
+    """品牌文件上傳的進度：worker 發布到這個 Redis 頻道，api 以 NDJSON 串流轉給前端。"""
+    return f'ingest:{task_id}'
+
+
 @dataclass(frozen=True)
 class TaskResult:
     #: 在等待時間內完成
@@ -41,12 +46,12 @@ class Queues:
         """生圖可能花上數十分鐘，不設逾時（流程內各步驟有自己的逾時）。"""
         await self.jobs.enqueue('run_job', key=job_id, timeout=0, job_id=job_id)
 
-    async def enqueue_task(self, name: str, **kwargs: Any) -> None:
-        await self.tasks.enqueue(name, timeout=TASK_TIMEOUT, **kwargs)
+    async def enqueue_task(self, function: str, /, **kwargs: Any) -> None:
+        await self.tasks.enqueue(function, timeout=TASK_TIMEOUT, **kwargs)
 
-    async def run_task(self, name: str, wait: float, **kwargs: Any) -> TaskResult:
+    async def run_task(self, function: str, /, wait: float, **kwargs: Any) -> TaskResult:
         """放入 tasks 佇列並最多等 wait 秒；沒等到時工作仍在背景繼續。失敗時丟出 RuntimeError。"""
-        job = await self.tasks.enqueue(name, timeout=TASK_TIMEOUT, **kwargs)
+        job = await self.tasks.enqueue(function, timeout=TASK_TIMEOUT, **kwargs)
         assert job is not None
         try:
             # until_complete=0 是一直等；SAQ 自己的逾時只算單一則通知的間隔，總等待時間改由 asyncio.timeout 控制
@@ -59,5 +64,5 @@ class Queues:
         if job.status == Status.COMPLETE:
             return TaskResult(True, job.result)
         if job.status in (Status.FAILED, Status.ABORTED):
-            raise RuntimeError(f'背景工作 {name} 失敗：{job.error}')
+            raise RuntimeError(f'背景工作 {function} 失敗：{job.error}')
         return TaskResult(False, None)

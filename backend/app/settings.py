@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     #: 使用者自己的商品照（唯讀）
     local_photos_dir: Path = REPO_ROOT / 'assets' / 'products'
     composer_url: str = 'http://127.0.0.1:3900'
+    #: 任務 id 使用的本地時間（與前端 mock 的 makeJobId 一樣顯示使用者所在地的日期時間）
+    timezone: str = 'Asia/Taipei'
+
+    #: 前端可選的模型（JobInput.llm、JobInput.vlm）；Plan 6 改為實際的 Gemini 模型
+    llm_model: str = 'Gemini 3.7 Flash'
+    vlm_model: str = 'Gemini 3.7 Vision'
 
     #: 模擬模式的播放速度（1 為 1× 時間軸，約 15 秒一個任務；0 為不等待）
     sim_speed: float = 1.0
