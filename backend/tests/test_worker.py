@@ -128,6 +128,15 @@ async def test_cutout_marks_uploaded_products_and_refuses_samples(services: Serv
     assert await cutout(services, 'prod_selune_serum') == {'error': '示範商品已是去背素材'}
 
 
+async def test_run_task_returns_unfinished_when_the_wait_runs_out(queues: Queues) -> None:
+    """沒有 worker 時，等不到結果要回傳 completed=False，不能丟出逾時例外。"""
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    done = await queues.run_task('cutout', wait=0.5, product_id='prod_x')
+    assert (done.completed, done.result) == (False, None)
+    assert loop.time() - started < 1.5
+
+
 async def collect_ingest(services: Services, task_id: str, name: str, text: str) -> list[dict[str, Any]]:
     pubsub = services.redis.pubsub()
     await pubsub.subscribe(ingest_channel(task_id))

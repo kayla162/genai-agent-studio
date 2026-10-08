@@ -4,6 +4,7 @@
 - tasks：去背、文件上傳、回寫歷史案例，最多同時兩個，不必等生圖任務。
 """
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,7 +48,14 @@ class Queues:
         """放入 tasks 佇列並最多等 wait 秒；沒等到時工作仍在背景繼續。失敗時丟出 RuntimeError。"""
         job = await self.tasks.enqueue(name, timeout=TASK_TIMEOUT, **kwargs)
         assert job is not None
-        await job.refresh(until_complete=wait)
+        try:
+            # until_complete=0 是一直等；SAQ 自己的逾時只算單一則通知的間隔，總等待時間改由 asyncio.timeout 控制
+            async with asyncio.timeout(wait):
+                await job.refresh(until_complete=0)
+        except TimeoutError:
+            # 等待時間到了不是錯誤（工作仍在背景繼續）；最後再讀一次狀態，
+            # 因為完成通知可能發生在讀取狀態與開始訂閱之間而漏掉
+            await job.refresh()
         if job.status == Status.COMPLETE:
             return TaskResult(True, job.result)
         if job.status in (Status.FAILED, Status.ABORTED):
