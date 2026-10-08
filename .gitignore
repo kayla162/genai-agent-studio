@@ -28,3 +28,13 @@ Thumbs.db
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Python（backend/）
+.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# 後端執行時資料（商品照、生成圖、審查用海報）
+/data/
