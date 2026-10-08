@@ -3,16 +3,20 @@
 每次測試開始時重建 genai_test 資料庫並跑 migration；每個測試結束後清空所有資料表。
 """
 
-from collections.abc import AsyncIterator
+import os
+import subprocess
+import time
+from collections.abc import AsyncIterator, Iterator
 
 import asyncpg
+import httpx
 import pytest
 from redis.asyncio import Redis
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import Database
-from app.settings import settings
+from app.settings import REPO_ROOT, settings
 
 TEST_DATABASE = 'genai_test'
 #: 測試使用 Redis 的第 15 個資料庫，開始時清空
@@ -42,6 +46,34 @@ async def redis() -> AsyncIterator[Redis]:
     await client.flushdb()
     yield client
     await client.aclose()
+
+
+@pytest.fixture(scope='session')
+def composer_url() -> Iterator[str]:
+    """在 3902 埠啟動 composer（需要 web/ 已 npm install）。"""
+    port = 3902
+    url = f'http://127.0.0.1:{port}'
+    proc = subprocess.Popen(
+        ['node', '--import', 'tsx', 'composer/server.ts'],
+        cwd=REPO_ROOT / 'web',
+        env={**os.environ, 'PORT': str(port)},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                if httpx.get(f'{url}/health').status_code == 200:
+                    break
+            except httpx.HTTPError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.2)
+        yield url
+    finally:
+        proc.terminate()
+        proc.wait(10)
 
 
 @pytest.fixture

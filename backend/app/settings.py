@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     data_dir: Path = REPO_ROOT / 'data'
     #: 使用者自己的商品照（唯讀）
     local_photos_dir: Path = REPO_ROOT / 'assets' / 'products'
+    composer_url: str = 'http://127.0.0.1:3900'
+
+    #: 模擬模式的播放速度（1 為 1× 時間軸，約 15 秒一個任務；0 為不等待）
+    sim_speed: float = 1.0
+    #: 模擬模式：第一輪刻意失誤（觸發 Query Rewriting）
+    sim_first_round_fail: bool = True
+    #: 模擬模式：每一輪都失誤（展示「需人工審核」）
+    sim_force_all_fail: bool = False
 
 
 settings = Settings()

@@ -16,6 +16,7 @@ from app.contract import (
     parse_event,
     parse_message,
 )
+from app.templates import CHANNEL_TEMPLATES
 from tests.fixtures import TIMELINES, load_fixture
 
 
@@ -61,3 +62,7 @@ def test_rerank_score_is_omitted_until_reranked() -> None:
     hit = RagHit(chunk_id='c', source='s', section='§', tag='law', text='t', vector_score=0.8)
     assert 'rerankScore' not in hit.to_json()
     assert hit.model_copy(update={'rerank_score': 0.9}).to_json()['rerankScore'] == 0.9
+
+
+def test_channel_templates_match_the_frontend() -> None:
+    assert [t.to_json() for t in CHANNEL_TEMPLATES] == load_fixture('brands.json')['templates']
