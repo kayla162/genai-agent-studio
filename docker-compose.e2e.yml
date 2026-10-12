@@ -1,0 +1,29 @@
+# live 模式 E2E 專用（web 的 npm run e2e:live 會自動啟動與移除）：
+#   docker compose -p genai-agent-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait
+# 獨立的專案名稱與 volume，不影響平常使用的資料庫、上傳檔與商品照；只開放 web（127.0.0.1:3200）。
+x-e2e-backend: &e2e-backend
+  environment:
+    SIM_SPEED: '1'
+    SIM_FIRST_ROUND_FAIL: 'true'
+    SIM_FORCE_ALL_FAIL: 'false'
+  volumes: !override
+    - ./brands:/app/brands:ro
+    - e2e-photos:/app/assets/products:ro
+    - e2e-data:/app/data
+
+services:
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  api:
+    <<: *e2e-backend
+    ports: !reset []
+  worker:
+    <<: *e2e-backend
+  web:
+    ports: !override ['127.0.0.1:3200:80']
+
+volumes:
+  e2e-data:
+  e2e-photos:

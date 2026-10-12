@@ -4,6 +4,9 @@ out
 coverage
 test-results
 playwright-report
+e2e
+e2e-live
+playwright*.config.ts
 *.tsbuildinfo
 .env
 .env.*
