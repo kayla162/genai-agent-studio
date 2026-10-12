@@ -65,11 +65,16 @@ npm run dev
 
 ## 開發 live 模式
 
+先停掉 Docker 的 web、api 與 worker，只留 postgres 與 redis：
+
 ```bash
+docker compose stop web api worker
 docker compose up -d postgres redis
 ```
 
-接著各開一個終端機（不要同時執行 Docker 的 api，兩者都使用 8000 埠）：
+不先停掉的話：Docker 的 web 與 api 佔用 3000 與 8000 埠，本機的前端與 api 起不來；Docker 的 worker 與本機的 worker 共用同一個 `jobs` 佇列，而且 Docker worker 啟動時的復原會把本機 worker 正在執行的任務標記為失敗。
+
+接著各開一個終端機：
 
 | 目錄 | 指令 | 服務 |
 |---|---|---|
@@ -77,6 +82,16 @@ docker compose up -d postgres redis
 | `backend/` | `uv run python -m app.worker` | worker |
 | `web/` | `npm run composer` | composer（3900 埠） |
 | `web/` | `NEXT_PUBLIC_API_MODE=live API_PROXY_URL=http://127.0.0.1:8000 npm run dev` | 前端（/api、/files、/ws 轉給 api） |
+
+Windows PowerShell 不能在指令前加環境變數，前端改用：
+
+```powershell
+$env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; npm run dev
+```
+
+`$env:` 只在該視窗有效；同一個視窗接著要跑 `npm run e2e` 或 `npm run build`（mock）的話，先執行 `Remove-Item Env:NEXT_PUBLIC_API_MODE, Env:API_PROXY_URL`。
+
+開啟 http://127.0.0.1:3000（前端）；API 文件在 http://127.0.0.1:8000/docs。開發結束後，停掉本機的服務，再 `docker compose up -d` 回到 Docker 版。
 
 ## 測試
 

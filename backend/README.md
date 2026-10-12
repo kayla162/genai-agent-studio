@@ -45,9 +45,12 @@ app/
 ├─ api/            FastAPI：main.py（入口與錯誤格式）、catalog、jobs、files、services
 ├─ pipeline/       任務流程（runner）、外部服務介面（ports）、模擬版（sim）
 ├─ adapters/       composer 用戶端
+├─ core/           時間（clock：一律 UTC）與偽隨機數（rng：與前端的 num.ts 相同，模擬的 seed 才會一致）
 ├─ db/             SQLAlchemy 模型與連線
 ├─ repo/           資料存取：品牌與商品（catalog）、任務（jobs）、歷史紀錄（history）
 ├─ contract.py     Pydantic 模型（對應 web/src/types/contract.ts）
+├─ errors.py       領域錯誤（AppError 與子類別）；api 轉成 { error: { code, message } }
+├─ templates.py    通路模板（與 web/src/lib/compose/templates.ts 相同）
 ├─ events.py       事件保存與推送、WebSocket 串流
 ├─ queues.py       SAQ 佇列
 ├─ worker.py       worker 的任務與啟動時復原

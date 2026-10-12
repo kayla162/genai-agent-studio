@@ -16,9 +16,21 @@ npm ci
 npm run dev
 ```
 
-開啟 http://localhost:3000（會導向「新任務」），預設為 mock 模式。
+開啟 http://127.0.0.1:3000（會導向「新任務」），預設為 mock 模式。
 
-live 模式：先啟動後端，再以 `NEXT_PUBLIC_API_MODE=live API_PROXY_URL=http://127.0.0.1:8000 npm run dev` 執行，開發伺服器會把 `/api`、`/files`、`/ws` 轉給後端；也可以把這兩個值寫進 `.env.local`（見 `.env.example`）。正式的 live 版由 Docker 的 nginx 提供靜態輸出。
+live 模式：先啟動後端（要先停掉 Docker 的 web、api 與 worker，見 [repo 根目錄的 README](../README.md#開發-live-模式)），再執行：
+
+```bash
+# bash／zsh
+NEXT_PUBLIC_API_MODE=live API_PROXY_URL=http://127.0.0.1:8000 npm run dev
+```
+
+```powershell
+# Windows PowerShell
+$env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; npm run dev
+```
+
+開發伺服器會把 `/api`、`/files`、`/ws` 轉給後端。也可以把這兩個值寫進 `.env.development.local`（見 `.env.example`）：它只在 `next dev` 生效；`.env.local` 在 `next build` 也會套用，之後的 `npm run e2e`（mock）就會建置出 live 版的前端。正式的 live 版由 Docker 的 nginx 提供靜態輸出。
 
 ## 指令
 
@@ -65,7 +77,7 @@ live 模式：先啟動後端，再以 `NEXT_PUBLIC_API_MODE=live API_PROXY_URL=
 ```
 src/
 ├─ app/                 路由
-├─ components/          ui（shadcn）、layout、studio、product、queue、history、brands、poster、agent、dashboard
+├─ components/          ui（shadcn）、common（EmptyState、PageHeader）、layout、studio、product、queue、history、brands、poster、agent、dashboard
 ├─ lib/
 │  ├─ api/              ApiClient 介面；mock/（MockApiClient、劇本、示範資料與示範任務、IndexedDB）；http/（HttpApiClient、WebSocket 重新連線）
 │  ├─ agent/            Prompt 構建、修正策略、版本差異、流程節點狀態、事件摘要、透視用的資料整理
@@ -74,6 +86,10 @@ src/
 │  ├─ jobs/             事件 → 畫面狀態（reducer）
 │  ├─ stats/            成效儀表板統計與成本估算
 │  ├─ export/           檔名、zip、下載
+│  ├─ core/             共用的基礎函式：round1／clamp 與可重現的亂數（num）、視覺寬度（text）、矩形運算（geometry）、deepFreeze（freeze）
+│  ├─ history/          歷史紀錄的篩選（品牌、通路、日期、收藏），最新的在前
+│  ├─ image/            上傳前把商品照縮到最長邊 1600 px（downscale）
+│  ├─ rag/              品牌文件的切塊、標籤與向量預覽（chunk；mock 與 composer 的文件上傳模擬共用）
 │  └─ store/            Zustand stores
 └─ types/contract.ts    前後端資料約定
 composer/               Node 服務：版型與模擬邏輯（/layout、/sim/*），由後端呼叫
