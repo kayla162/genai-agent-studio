@@ -52,10 +52,8 @@ export function openJobSocket(
       return;
     }
     socket = ws;
-    ws.onopen = () => {
-      delay = RECONNECT_DELAY.min;
-      connection.set('connected');
-    };
+    // 這裡不重設等待時間：伺服器先 accept 才訂閱 Redis，Redis 連不上時每次都會「連上」再以 1011 關閉
+    ws.onopen = () => connection.set('connected');
     ws.onmessage = (e: MessageEvent) => {
       if (stopped) return;
       let message: JobMessage;
@@ -65,6 +63,8 @@ export function openJobSocket(
         fail(new Error(`任務 ${jobId} 的事件格式錯誤`));
         return;
       }
+      // 收到事件才算連線正常，之後的中斷從最短的等待時間重新計算
+      delay = RECONNECT_DELAY.min;
       // 重新連線時伺服器從 lastSeq 之後補送；保險起見仍略過重複的事件
       if (message.seq <= lastSeq) return;
       lastSeq = message.seq;
