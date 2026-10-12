@@ -64,9 +64,11 @@ export async function preparePoster({ render, copy, product, brand }: PosterInpu
     : bg.url;
   const prod = product ? productImage(product, brand) : null;
   const fonts = fontStacks(brand);
-  const [background, productImg] = await Promise.all([
+  const [background, productImg, logoImg] = await Promise.all([
     loadImage(bgSrc),
     prod ? loadImage(prod.src).catch(() => null) : Promise.resolve(null),
+    // Logo 圖檔載入失敗時改畫標誌圖形與字標
+    brand.logo ? loadImage(brand.logo.url).catch(() => null) : Promise.resolve(null),
     ensureFonts(scene, fonts),
   ]);
   return {
@@ -76,6 +78,8 @@ export async function preparePoster({ render, copy, product, brand }: PosterInpu
       product: productImg && prod
         ? { image: productImg, width: productImg.naturalWidth || 500, height: productImg.naturalHeight || 800, blend: prod.blend }
         : null,
+      // 沒有固有尺寸的 SVG 以 3:1 計算
+      logo: logoImg ? { image: logoImg, width: logoImg.naturalWidth || 300, height: logoImg.naturalHeight || 100 } : null,
       fonts,
     },
   };

@@ -26,7 +26,7 @@ describe('reviewRender', () => {
   });
 
   it('fails a fully flawed spec on both rules and VLM', () => {
-    const r = reviewRender(applyFlaws(cleanSpec(), FLAWS), SELUNE, 0, 1);
+    const r = reviewRender(applyFlaws(cleanSpec(), FLAWS, SELUNE), SELUNE, 0, 1);
     expect(r.passed).toBe(false);
     expect(r.checks.filter((c) => c.status === 'fail').map((c) => c.id)).toEqual([
       'banned_words', 'color_delta', 'logo_clearance', 'vlm_exaggeration', 'vlm_occlusion',

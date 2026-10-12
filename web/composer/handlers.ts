@@ -30,7 +30,7 @@ const HANDLERS: Record<string, Handler> = {
     engine: Engine; seed: number; ragRefs: string[]; fixes: CheckId[]; flawed: boolean;
   }) => {
     const spec = buildPromptSpec({ ...b, template: getTemplate(b.templateId) });
-    return b.flawed ? applyFlaws(spec, FLAWS) : spec;
+    return b.flawed ? applyFlaws(spec, FLAWS, b.brand) : spec;
   },
 
   '/sim/review': ({ spec, brand, variant, seed }: { spec: PromptSpec; brand: Brand; variant: number; seed: number }) => {

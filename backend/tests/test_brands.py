@@ -64,8 +64,14 @@ def test_logo_and_style_images_resolve_inside_the_brands_folder(tmp_path: Path) 
     write(tmp_path / 'my-brand.yaml', text.replace('styleImages: []', 'styleImages: [assets/mood.jpg]'))
     escape = template.replace('id: my-brand', 'id: escape').replace('logo: null', 'logo: ../x.png')
     write(tmp_path / 'escape.yaml', escape)
+    (tmp_path / 'assets' / 'logo.gif').write_bytes(b'GIF89a')
+    gif_logo = template.replace('id: my-brand', 'id: gif-logo').replace('logo: null', 'logo: assets/logo.gif')
+    write(tmp_path / 'gif-logo.yaml', gif_logo)
     loaded, errors = load_brands(tmp_path)
-    assert [e.message for e in errors] == ['Logo 圖檔必須放在 brands/ 資料夾內：../x.png']
+    assert [e.message for e in errors] == [
+        'Logo 圖檔必須放在 brands/ 資料夾內：../x.png',
+        'Logo 圖檔只支援 PNG、JPEG、WebP 與 SVG：assets/logo.gif',
+    ]
     b = loaded[0]
     assert b.brand.logo is not None
     assert b.brand.logo.url == '/files/brands/assets/logo.png'

@@ -46,7 +46,8 @@ export interface BadgeOp {
   shadow: string;
   texts: TextOp[];
 }
-export interface LogoOp { kind: 'logo'; rect: Rect; mark: LogoMark; color: string; wordmark: TextOp | null }
+/** image：品牌的 Logo 圖檔；有圖時畫圖檔，沒有或載入失敗時畫標誌圖形與字標 */
+export interface LogoOp { kind: 'logo'; rect: Rect; mark: LogoMark; color: string; wordmark: TextOp | null; image: string | null }
 export interface ProductOp { kind: 'product'; rect: Rect; shadow: string }
 export type SceneOp = { kind: 'background' } | ProductOp | LogoOp | TextOp | PillOp | BadgeOp;
 
@@ -57,7 +58,7 @@ export interface SceneInput {
   layout: LayoutBox[];
   palette: Palette;
   copy: Copy;
-  brand: { id: string; name: string };
+  brand: { id: string; name: string; logo?: { url: string } | null };
 }
 
 const MARKS: Record<string, LogoMark> = { selune: 'crescent', 'misty-isle': 'isle' };
@@ -66,6 +67,14 @@ const MARKS: Record<string, LogoMark> = { selune: 'crescent', 'misty-isle': 'isl
 export function logoFor(brand: { id: string; name: string }): { mark: LogoMark; wordmark: string } {
   const latin = brand.name.match(/[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ&.' -]*[A-Za-zÀ-ÿ]/)?.[0];
   return { mark: MARKS[brand.id] ?? 'monogram', wordmark: latin ?? brand.name };
+}
+
+/** Logo 圖檔放進 Logo 框：等比例縮放、靠左、垂直置中 */
+export function fitLogoImage(box: Rect, width: number, height: number): Rect {
+  const scale = Math.min(box.w / width, box.h / height);
+  const w = width * scale;
+  const h = height * scale;
+  return { x: box.x, y: box.y + (box.h - h) / 2, w, h };
 }
 
 export const formatPrice = (n: number): string => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -98,7 +107,7 @@ export function composePoster({ canvas, layout, palette: P, copy: C, brand }: Sc
   const wordChars = [...logo.wordmark].length;
   const wordSize = Math.min(L.h * 0.62, wordW / (visLen(logo.wordmark) + 0.08 * Math.max(0, wordChars - 1)));
   ops.push({
-    kind: 'logo', rect: L, mark: logo.mark, color: P.accent,
+    kind: 'logo', rect: L, mark: logo.mark, color: P.accent, image: brand.logo?.url ?? null,
     wordmark: wordW > 0
       ? text({ el: 'logo', text: logo.wordmark, x: L.x + L.h * 1.12, y: L.y + L.h / 2, size: wordSize, weight: 700, role: 'headline', color: P.ink, letterSpacing: wordSize * 0.08 })
       : null,

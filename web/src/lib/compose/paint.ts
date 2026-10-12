@@ -1,12 +1,14 @@
 import type { Rect } from '@/lib/core/geometry';
 import type { BadgeOp, LogoOp, PillOp, PosterScene, ProductOp, TextOp } from './scene';
-import { textBounds } from './scene';
+import { fitLogoImage, textBounds } from './scene';
 
 /** 繪製海報需要的圖片與字型（由 render.ts 準備） */
 export interface PaintAssets {
   background: CanvasImageSource;
   /** blend = multiply：沒有真正去背的商品照，用色彩增值讓白底融入背景 */
   product: { image: CanvasImageSource; width: number; height: number; blend: 'normal' | 'multiply' } | null;
+  /** 品牌的 Logo 圖檔（品牌沒有 Logo 圖檔或載入失敗時為 null） */
+  logo: { image: CanvasImageSource; width: number; height: number } | null;
   /** CSS font-family 字串 */
   fonts: { headline: string; body: string };
 }
@@ -75,7 +77,13 @@ function drawBadge(ctx: Ctx, op: BadgeOp, fonts: PaintAssets['fonts']) {
   ctx.restore();
 }
 
-function drawLogo(ctx: Ctx, op: LogoOp, fonts: PaintAssets['fonts']) {
+function drawLogo(ctx: Ctx, op: LogoOp, assets: PaintAssets) {
+  if (op.image && assets.logo) {
+    const r = fitLogoImage(op.rect, assets.logo.width, assets.logo.height);
+    ctx.drawImage(assets.logo.image, r.x, r.y, r.w, r.h);
+    return;
+  }
+  const fonts = assets.fonts;
   const { x, y, h: s } = op.rect;
   ctx.save();
   ctx.fillStyle = op.color;
@@ -159,7 +167,7 @@ export function paintScene(ctx: Ctx, scene: PosterScene, assets: PaintAssets): v
         drawProduct(ctx, op, assets.product);
         break;
       case 'logo':
-        drawLogo(ctx, op, assets.fonts);
+        drawLogo(ctx, op, assets);
         break;
       case 'text':
         drawText(ctx, op, assets.fonts);

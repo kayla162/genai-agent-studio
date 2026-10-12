@@ -3,7 +3,8 @@ import type { Copy, LayoutElementId, PromptSpec } from '@/types/contract';
 import { CHANNEL_TEMPLATES } from './templates';
 import { boxMap } from './layout';
 import {
-  composePoster, formatPrice, logoFor, textBounds, type BadgeOp, type LogoOp, type PillOp, type SceneInput, type TextOp,
+  composePoster, fitLogoImage, formatPrice, logoFor, textBounds, type BadgeOp, type LogoOp, type PillOp, type SceneInput,
+  type TextOp,
 } from './scene';
 import { cleanSpec } from '@/test/fixtures';
 import { SELUNE } from '@/lib/api/mock/data';
@@ -85,6 +86,28 @@ describe('composePoster with edited copy', () => {
     const pills = composePoster(sceneInput(spec, { features: many })).ops.filter((o) => o.kind === 'pill' && o.el === 'features');
     expect(pills.length).toBeGreaterThan(0);
     expect(pills.length).toBeLessThan(many.length);
+  });
+});
+
+describe('brand logo image', () => {
+  const spec = cleanSpec();
+  const logoOf = (input: SceneInput) => composePoster(input).ops.find((o): o is LogoOp => o.kind === 'logo')!;
+
+  it('draws the vector mark when the brand has no logo image', () => {
+    expect(logoOf(sceneInput(spec)).image).toBeNull();
+  });
+
+  it('uses the logo image and keeps the wordmark as the fallback', () => {
+    const logo = logoOf({ ...sceneInput(spec), brand: { ...SELUNE, logo: { url: '/files/brands/assets/selune.png' } } });
+    expect(logo.image).toBe('/files/brands/assets/selune.png');
+    expect(logo.wordmark?.text).toBe('SÉLUNE');
+  });
+
+  it('fits the image inside the logo box: same aspect ratio, left aligned and vertically centred', () => {
+    const box = { x: 10, y: 20, w: 300, h: 60 };
+    expect(fitLogoImage(box, 400, 100)).toEqual({ x: 10, y: 20, w: 240, h: 60 });
+    expect(fitLogoImage(box, 1200, 100)).toEqual({ x: 10, y: 37.5, w: 300, h: 25 });
+    expect(fitLogoImage(box, 100, 200)).toEqual({ x: 10, y: 20, w: 30, h: 60 });
   });
 });
 

@@ -32,7 +32,7 @@ describe('recheckCopy', () => {
   });
 
   it('keeps the color result of an off-brand render', () => {
-    const r = renderOf(applyFlaws(cleanSpec(), ['offPalette']));
+    const r = renderOf(applyFlaws(cleanSpec(), ['offPalette'], SELUNE));
     expect(recheckCopy(r, SELUNE, r.spec.copy).find((c) => c.id === 'color_delta')!.status).toBe('fail');
   });
 });

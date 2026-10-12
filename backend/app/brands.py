@@ -33,6 +33,8 @@ from app.contract import (
 )
 
 TONES: tuple[Tone, ...] = ('gentle', 'science', 'playful', 'minimal')
+#: Logo 圖檔支援的格式（與 app/api/files.py 提供的圖片格式相同）
+LOGO_TYPES = frozenset({'.png', '.jpg', '.jpeg', '.webp', '.svg'})
 
 
 class GuidelineConfig(Model):
@@ -140,6 +142,8 @@ def _load_file(directory: Path, path: Path) -> LoadedBrand:
         raise BrandFileError(f'檔名必須與 id 相同（id 為 {cfg.id}）')
 
     logo_path = _inside(directory, cfg.logo, 'Logo 圖檔') if cfg.logo else None
+    if logo_path is not None and logo_path.suffix.lower() not in LOGO_TYPES:
+        raise BrandFileError(f'Logo 圖檔只支援 PNG、JPEG、WebP 與 SVG：{cfg.logo}')
     style_images = [_inside(directory, p, '參考圖') for p in cfg.style_images]
     alt = _alt_guideline(cfg, path.name)
     guidelines = [*cfg.guidelines, *([alt] if alt else [])]

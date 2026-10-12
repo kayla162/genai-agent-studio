@@ -114,7 +114,7 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
         jobId, round, brand, product, brief: input.parsedBrief, template, engine: input.engine,
         seed: 100_000_000 + Math.floor(rng() * 900_000_000), ragRefs, fixes: fixesForNext,
       });
-      return flawed ? applyFlaws(spec, FLAWS) : spec;
+      return flawed ? applyFlaws(spec, FLAWS, brand) : spec;
     });
     specs.forEach((spec, i) =>
       emit(t + ((i + 1) * PHASE_MS.prompt) / specs.length, { type: 'prompt.generated', round, templateId: spec.templateId, spec }),
