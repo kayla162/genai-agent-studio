@@ -15,7 +15,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   use: {
-    baseURL: `http://localhost:${PORT}`,
+    baseURL: `http://127.0.0.1:${PORT}`,
     locale: 'zh-TW',
     timezoneId: 'Asia/Taipei',
     trace: 'retain-on-failure',
@@ -23,7 +23,7 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     command: `npm run build && node scripts/serve-static.mjs ${PORT}`,
-    url: `http://localhost:${PORT}/studio`,
+    url: `http://127.0.0.1:${PORT}/studio`,
     reuseExistingServer: !process.env.CI,
     timeout: 240_000,
   },

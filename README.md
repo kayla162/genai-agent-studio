@@ -65,10 +65,10 @@ npm run dev
 
 ## 開發 live 模式
 
-先停掉 Docker 的 web、api 與 worker，只留 postgres 與 redis：
+先停掉 Docker 的 web、api、worker 與 composer，只留 postgres 與 redis：
 
 ```bash
-docker compose stop web api worker
+docker compose stop web api worker composer
 docker compose up -d postgres redis
 ```
 

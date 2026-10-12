@@ -64,6 +64,52 @@
 
 執行時若結果與 Expected 不同，先檢查是否漏了步驟，不要修改測試來配合。
 
+## 執行後的修正（與本文程式碼不同之處）
+
+本文的程式碼取自驗證過的初版。依本計畫實作時，每個 Task 完成後都經過審查，最後再整體審查一次，並修正了下列問題。所以 `plan4-backend-streaming` 分支有幾處與本文不同，測試也比 Expected 多。照本文重建時，請一併套用這些修正（以分支上的程式碼為準）。
+
+- **Task 7 `backend/app/events.py`：`stream` 在 Redis 沒有新訊息時改從資料庫補讀**
+  - 最後一則 `job.status` 即使沒有送到 Redis（例如發布失敗），串流仍會從資料庫讀到它並結束。
+  - 規格 4.2 要求伺服器在最後一則事件後關閉串流。
+- **Task 9 `backend/app/events.py`：`append` 發布到 Redis 失敗時只記警告**
+  - 事件以資料庫為準，所以 Redis 短暫斷線不會讓任務失敗。
+  - 串流靠上一項的資料庫補讀接續。
+- **Task 10 `backend/app/worker.py`：兩個 worker 開始取工作前先 sweep 一次**
+  - SAQ 0.26.4 的第一次 sweep 可能晚於取工作，把剛取出、還沒標記為執行中的任務中止並重排。
+- **Task 10 `backend/app/queues.py`：`run_task` 等待逾時時回傳 `completed=False`，不丟出 `TimeoutError`**
+  - 去背逾時時 API 回 503；回寫逾時時回 `writtenToRag: false`，不再是 500。
+- **Task 13 `web/src/lib/store/studio.ts`**：
+  - 重新整理時若後端連不上（網路錯誤或 5xx），保留記住的任務並顯示錯誤。只有任務不存在時才忘掉它。
+  - 取消失敗時顯示錯誤，不再是未處理的 rejection。
+  - 讀取任務期間使用者已開始新任務時，不覆蓋表單。
+- **整體審查後的修正**：
+  - **worker**
+    - 兩個 SAQ worker 共用一個 SIGTERM／SIGINT 處理。SAQ 的每個 worker 各自註冊時會互相取代：Docker 停止時只有一個 worker 停下，整個容器最後被強制終止（exit 137）。
+    - 啟動時把前一個 worker 留下的 ACTIVE 佇列紀錄標為中止。否則系統狀態會一直算它「執行中」，排隊中的任務也會因為 key 重複而不再執行。
+    - 設定 logging；任務與文件上傳失敗時記錄 traceback。
+  - **API**：任務排不進佇列時，記錄錯誤、把任務標記為失敗並回 503，不會一直停在排隊中。若佇列其實已收到（只是回應遺失）而 worker 已取走任務，則照常回 201。
+  - **前端**
+    - WebSocket 收到第一則訊息後才把重新連線的等待時間重設為 1 秒。Redis 斷線時，伺服器接受連線後立刻以 1011 關閉；原本這會變成每秒重連一次。
+    - 品牌或選項載入失敗時顯示錯誤與「重試」，連線恢復時自動重試，不再一直轉圈。
+  - **composer**：收到 SIGTERM／SIGINT 時關閉伺服器並結束，所以 `docker compose stop` 的回傳值是 0。
+  - **nginx**
+    - HTML 與 RSC 檔每次重新驗證（`Cache-Control: no-cache`）。
+    - `/_next/static/` 只送一個 `Cache-Control`。
+    - `/api/` 的讀取逾時改為 150 秒，大於文件上傳的 120 秒。
+  - **其他**
+    - `backend/.dockerignore` 排除 `.env`。
+    - `web/scripts/serve-static.mjs` 與 `web/playwright.config.ts` 一律使用 127.0.0.1。
+    - `next dev` 允許從 127.0.0.1 開啟（`allowedDevOrigins`）。
+  - **README**
+    - PowerShell 的指令寫法。
+    - live 模式的設定改放在 `.env.development.local`。
+    - 開發前先停掉 Docker 的 web、api、worker 與 composer。
+    - 補齊目錄說明。
+- **最後的測試數量**：
+  - 後端 72 個（本文 63 個）。
+  - 前端 41 個測試檔、324 個測試（本文 314 個）。
+  - E2E 不變：mock 5 個、live 6 個。
+
 ## Global Constraints
 
 - 指令在哪裡執行：
@@ -2722,7 +2768,7 @@ for (const [file, data] of Object.entries(goldenFixtures())) {
 - [ ] **Step 6: 產生 fixtures**
 
 Run: `npm run fixtures`
-Expected: 輸出 6 行 `wrote contracts/fixtures/...`（`brands.json`、`rng.json`、三個 `timelines/*.json`、`stats.json`）。檔案不縮排以縮小大小；`stats.json` 只保留 6 個示範任務。
+Expected: 輸出 6 行 `wrote contracts/fixtures/...`（`brands.json`、`rng.json`、三個 `timelines/*.json`、`stats.json`）。檔案不縮排以縮小大小；`stats.json` 存 8 個任務快照：6 個示範任務，加上取消與失敗的任務各一；儀表板統計的任務數為 6。
 
 - [ ] **Step 7: 執行測試確認通過**
 
