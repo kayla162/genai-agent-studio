@@ -125,6 +125,7 @@ async def test_recovery_requeues_a_queued_job_whose_queue_record_was_left_active
     # 舊紀錄不能擋住重新排入
     record = await queues.jobs.job('job_orphan')
     assert record is not None and record.status == Status.QUEUED
+    assert await queues.jobs.count('active') == 0
     async with running(services, queues):
         for _ in range(150):
             if (await summary(services, 'job_orphan')).finished:
@@ -133,19 +134,42 @@ async def test_recovery_requeues_a_queued_job_whose_queue_record_was_left_active
     assert (await summary(services, 'job_orphan')).stage == 'done'
 
 
-async def test_recovery_aborts_the_queue_record_of_a_running_job(services: Services, queues: Queues) -> None:
+async def test_recovery_aborts_the_queue_record_of_a_running_job(
+    services: Services, queues: Queues, caplog: pytest.LogCaptureFixture
+) -> None:
     await queued_job(services, 'job_dead')
     await services.store.append('job_dead', JobStatusEvent(type='job.status', stage='rendering', round=1))
     await orphan(queues, 'job_dead')
     await queued_job(services, 'job_idle')
     await queues.enqueue_job('job_idle')
-    await recover(services, queues)
+    with caplog.at_level('WARNING', logger='app.worker'):
+        await recover(services, queues)
     record = await queues.jobs.job('job_dead')
     assert record is not None and (record.status, record.error) == (Status.ABORTED, RESTART_REASON)
+    # 紀錄要真的從 active 清單移除（只改狀態的話，系統狀態仍會算它執行中）
+    assert await queues.jobs.count('active') == 0
+    # worker 上次是當掉的：每放掉一筆紀錄記一則警告
+    assert [r.getMessage() for r in caplog.records if r.name == 'app.worker'] == [
+        '釋放前一個 worker 留下的佇列紀錄：job_id=job_dead'
+    ]
     assert (await summary(services, 'job_dead')).stage == 'failed'
     # 其他狀態的紀錄不動
     waiting = await queues.jobs.job('job_idle')
     assert waiting is not None and waiting.status == Status.QUEUED
+
+
+async def test_recovery_releases_the_queue_record_of_a_job_that_already_finished(
+    services: Services, queues: Queues
+) -> None:
+    """worker 在任務的最後一個事件寫入之後、佇列標記完成之前當掉：資料庫裡的任務已結束，recover 不會逐筆看到它。"""
+    await queued_job(services, 'job_finished')
+    await services.store.append('job_finished', JobStatusEvent(type='job.status', stage='done', round=2))
+    await orphan(queues, 'job_finished')
+    await recover(services, queues)
+    record = await queues.jobs.job('job_finished')
+    assert record is not None and (record.status, record.error) == (Status.ABORTED, RESTART_REASON)
+    assert await queues.jobs.count('active') == 0
+    assert (await summary(services, 'job_finished')).stage == 'done'
 
 
 async def test_cutout_marks_uploaded_products_and_refuses_samples(services: Services, queues: Queues) -> None:

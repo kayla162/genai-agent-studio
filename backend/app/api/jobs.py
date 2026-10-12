@@ -19,11 +19,13 @@ from app.contract import (
     DashboardStats,
     HistoryEntry,
     JobAcceptedEvent,
+    JobEvent,
     JobFailedEvent,
     JobInput,
     JobSnapshot,
     JobStatusEvent,
     JobSummary,
+    LogEvent,
     Model,
     ParsedBrief,
 )
@@ -123,19 +125,30 @@ async def create_job(job_input: JobInput, services: Services) -> JobCreated:
         await services.queues.enqueue_job(job_id)
     except Exception as error:  # noqa: BLE001 - 佇列的任何錯誤都要讓任務結束，不能留在排隊中
         logger.exception('任務無法排入佇列：job_id=%s', job_id)
-        await _fail_unqueued(services, job_id)
-        raise Unavailable('目前無法排入任務（佇列服務沒有回應），請稍後再試') from error
+        if not await _fail_unless_taken(services, job_id):
+            raise Unavailable('目前無法排入任務（佇列服務沒有回應），請稍後再試') from error
+        # 排入其實成功了（只是回應遺失），worker 已經取走任務：照常回傳
     return JobCreated(job_id=job_id)
 
 
-async def _fail_unqueued(services: ApiServices, job_id: str) -> None:
-    """任務已寫入資料庫卻排不進佇列：標記失敗，否則它會停在排隊中，等 worker 重新啟動時意外執行。"""
+async def _fail_unless_taken(services: ApiServices, job_id: str) -> bool:
+    """任務已寫入資料庫卻排不進佇列：標記失敗，否則它會停在排隊中，等 worker 重新啟動時意外執行。
+    任務已不在排隊中（worker 已經取走）時不動它並回傳 True；其餘情況回傳 False，包含失敗事件也寫不進去。"""
     reason = '無法排入佇列：佇列服務沒有回應'
+    # 每一則事件都要求任務還在排隊中，worker 取走任務之後就不再寫入
+    events: list[JobEvent] = [
+        LogEvent(type='log', source='api', level='error', message=reason),
+        JobFailedEvent(type='job.failed', job_id=job_id, reason=reason),
+        JobStatusEvent(type='job.status', stage='failed', round=0),
+    ]
     try:
-        await services.store.append(job_id, JobFailedEvent(type='job.failed', job_id=job_id, reason=reason))
-        await services.store.append(job_id, JobStatusEvent(type='job.status', stage='failed', round=0))
+        for event in events:
+            if await services.store.append(job_id, event, expect_stage='queued') is None:
+                logger.warning('任務已被 worker 取走，不標記為失敗：job_id=%s', job_id)
+                return True
     except Exception:  # noqa: BLE001 - 連失敗事件都寫不進去時，仍要回 503
         logger.exception('無法把任務標記為失敗：job_id=%s', job_id)
+    return False
 
 
 @router.get('/api/jobs')

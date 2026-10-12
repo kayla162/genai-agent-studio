@@ -10,6 +10,7 @@ from saq.job import Status
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedError
 
+from app.contract import JobStatusEvent
 from tests.conftest import LiveApi
 from tests.fixtures import load_fixture
 
@@ -71,11 +72,14 @@ async def test_create_job_fails_the_job_when_it_cannot_be_queued(
     assert stages(events) == [
         ('job.accepted', None),
         ('job.status', 'queued'),
+        ('log', None),
         ('job.failed', None),
         ('job.status', 'failed'),
     ]
-    assert events[2]['reason'] == '無法排入佇列：佇列服務沒有回應'
-    assert events[3]['round'] == 0
+    reason = '無法排入佇列：佇列服務沒有回應'
+    assert (events[2]['source'], events[2]['level'], events[2]['message']) == ('api', 'error', reason)
+    assert events[3]['reason'] == reason
+    assert events[4]['round'] == 0
 
 
 async def test_create_job_still_answers_503_when_the_failure_events_cannot_be_written(
@@ -95,6 +99,22 @@ async def test_create_job_still_answers_503_when_the_failure_events_cannot_be_wr
     monkeypatch.setattr(api.services.store, 'append', append_unless_failed)
     res = await api.http.post('/api/jobs', json=job_input())
     assert (res.status_code, res.json()['error']['code']) == (503, 'unavailable')
+
+
+async def test_create_job_keeps_a_job_the_worker_already_took_when_the_enqueue_reply_is_lost(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def lost_reply(job_id: str) -> None:
+        # 排入其實成功了，worker 已經取走任務，只是回應遺失
+        await api.services.store.append(job_id, JobStatusEvent(type='job.status', stage='parsing', round=0))
+        raise ConnectionError('redis 沒有回應')
+
+    monkeypatch.setattr(api.services.queues, 'enqueue_job', lost_reply)
+    res = await api.http.post('/api/jobs', json=job_input())
+    assert res.status_code == 201
+    job_id = res.json()['jobId']
+    events = (await api.http.get(f'/api/jobs/{job_id}')).json()['events']
+    assert stages(events) == [('job.accepted', None), ('job.status', 'queued'), ('job.status', 'parsing')]
 
 
 async def test_job_streams_every_event_and_replays_after_seq(api: LiveApi) -> None:

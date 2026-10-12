@@ -127,12 +127,13 @@ async def write_back(services: Services, history_id: str) -> bool:
 
 
 async def recover(services: Services, queues: Queues) -> None:
+    # 前一個 worker 被強制終止時，佇列紀錄會停在執行中：不放掉的話，系統狀態永遠算它執行中，
+    # 排隊中的任務也會因為 key 相同被當成重複而不再執行。任務在資料庫裡可能已經結束，所以不依資料庫的任務逐筆處理
+    for job_id in await queues.release_orphans(RESTART_REASON):
+        logger.warning('釋放前一個 worker 留下的佇列紀錄：job_id=%s', job_id)
     async with services.db.session() as s:
         rows = (await s.scalars(select(JobRow).where(JobRow.finished.is_(False)).order_by(JobRow.created_at))).all()
     for row in rows:
-        # 前一個 worker 被強制終止時，佇列紀錄會停在執行中：不放掉的話，系統狀態永遠算它執行中，
-        # 排隊中的任務也會因為 key 相同被當成重複而不再執行
-        await queues.release_orphan(row.id, RESTART_REASON)
         if row.stage == 'queued':
             await queues.enqueue_job(row.id)
             continue
@@ -193,6 +194,8 @@ def stop_on_signals(workers: tuple[Worker[Context], ...]) -> None:
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+    # 每次呼叫 composer 都會記一行 INFO，沒有用處
+    logging.getLogger('httpx').setLevel(logging.WARNING)
     services = build_services()
     queues = Queues(settings.redis_url)
     await queues.connect()
