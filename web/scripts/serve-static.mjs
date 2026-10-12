@@ -45,4 +45,4 @@ createServer(async (req, res) => {
   const target = file ?? path.join(ROOT, '404.html');
   res.writeHead(file ? 200 : 404, { 'Content-Type': TYPES[path.extname(target)] ?? 'application/octet-stream' });
   createReadStream(target).pipe(res);
-}).listen(PORT, () => console.log(`serving ${ROOT} on http://localhost:${PORT}`));
+}).listen(PORT, '127.0.0.1', () => console.log(`serving ${ROOT} on http://127.0.0.1:${PORT}`));

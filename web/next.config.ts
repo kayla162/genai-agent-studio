@@ -9,15 +9,18 @@ import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 export default function nextConfig(phase: string): NextConfig {
   const proxy = process.env.API_PROXY_URL;
   if (phase === PHASE_DEVELOPMENT_SERVER) {
+    // 本機服務一律用 127.0.0.1 開啟（localhost 會先試 IPv6）；next dev 預設只放行 localhost，不加的話 HMR 連不上
+    const dev: NextConfig = { allowedDevOrigins: ['127.0.0.1'] };
     return proxy
       ? {
+          ...dev,
           rewrites: async () => [
             { source: '/api/:path*', destination: `${proxy}/api/:path*` },
             { source: '/files/:path*', destination: `${proxy}/files/:path*` },
             { source: '/ws/:path*', destination: `${proxy}/ws/:path*` },
           ],
         }
-      : {};
+      : dev;
   }
   return { output: 'export', images: { unoptimized: true } };
 }
