@@ -1,0 +1,4 @@
+# 會放進 Linux 容器的檔案一律使用 LF（Windows 的 core.autocrlf 取出時會改成 CRLF，shell script 會因此無法執行）
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf

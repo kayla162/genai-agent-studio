@@ -1,6 +1,28 @@
 # 虛實整合 GenAI Agent：本機執行（所有連接埠只綁定 127.0.0.1）。ComfyUI 在 Windows 另外啟動。
 # 映像檔取自 AWS 的 Docker 官方映像鏡像（public.ecr.aws/docker/library），不需要登入 Docker Hub。
+#
+#   docker compose up -d --build     整套服務：瀏覽器開 http://127.0.0.1:3000
+#   docker compose up -d postgres redis   只開資料庫與佇列（在本機用 uv、npm 開發與測試）
 name: genai-agent
+
+# api 與 worker 共用：同一個映像檔，設定來自 .env（可省略）；容器之間的位址與容器內的路徑固定在這裡
+x-backend: &backend
+  build: ./backend
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+asyncpg://genai:genai@postgres:5432/genai
+    REDIS_URL: redis://redis:6379/0
+    COMPOSER_URL: http://composer:3900
+    BRANDS_DIR: /app/brands
+    DATA_DIR: /app/data
+    LOCAL_PHOTOS_DIR: /app/assets/products
+  volumes:
+    - ./brands:/app/brands:ro
+    - ./assets/products:/app/assets/products:ro
+    - ./data:/app/data
+  restart: unless-stopped
 
 services:
   postgres:
@@ -17,6 +39,7 @@ services:
       interval: 3s
       timeout: 3s
       retries: 30
+    restart: unless-stopped
 
   redis:
     image: public.ecr.aws/docker/library/redis:8-alpine
@@ -28,6 +51,52 @@ services:
       interval: 3s
       timeout: 3s
       retries: 30
+    restart: unless-stopped
+
+  # 版型與模擬邏輯（直接執行 web/src/lib 的 TypeScript）；只給 api 與 worker 使用，不對外開放
+  composer:
+    build:
+      context: ./web
+      target: composer
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3900/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # REST、WebSocket 與檔案；啟動時執行 migration 並匯入品牌設定檔
+  api:
+    <<: *backend
+    command: ['uvicorn', 'app.api.main:app', '--host', '0.0.0.0', '--port', '8000']
+    # 8000：API 文件（/docs），以及 next dev 以 API_PROXY_URL 連線
+    ports: ['127.0.0.1:8000:8000']
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      composer: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # 生圖任務、文件上傳、去背與回寫；等 api 完成 migration 後才啟動
+  worker:
+    <<: *backend
+    command: ['python', '-m', 'app.worker']
+    depends_on:
+      api: { condition: service_healthy }
+
+  # live 版前端：nginx 提供靜態輸出，/api、/files、/ws、/docs 轉給 api
+  web:
+    build:
+      context: ./web
+      target: web
+    ports: ['127.0.0.1:3000:80']
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
 
 volumes:
   postgres:

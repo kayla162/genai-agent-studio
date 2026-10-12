@@ -164,7 +164,8 @@ async def ingest_document(brand_id: str, doc: BrandDocument, services: Services)
         if await catalog.get_brand(s, brand_id) is None:
             raise NotFound(f'找不到品牌：{brand_id}')
     lines = _ingest_lines(services, secrets.token_hex(8), brand_id, doc)
-    return StreamingResponse(lines, media_type='application/x-ndjson')
+    # nginx 預設會先緩衝回應；關掉才能一行一行送到前端
+    return StreamingResponse(lines, media_type='application/x-ndjson', headers={'X-Accel-Buffering': 'no'})
 
 
 @router.get('/api/templates')
