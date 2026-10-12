@@ -5,10 +5,12 @@ import { ImagePlus, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Brand } from '@/types/contract';
 import { Button } from '@/components/ui/button';
-import { getApiClient } from '@/lib/api';
+import { API_MODE, getApiClient } from '@/lib/api';
 import { downscaleImage, nameFromFile } from '@/lib/image/downscale';
 import { useProductsStore } from '@/lib/store/products';
 import { cn } from '@/lib/utils';
+
+const STORED_AT = API_MODE === 'live' ? '照片已上傳到後端（data/uploads/）。' : '照片存在這台電腦的瀏覽器（IndexedDB）。';
 
 /** 上傳／拖放商品照：縮圖後交給 ApiClient 保存，再建立商品（價格與特徵之後再補） */
 export function UploadZone({ brand }: { brand: Brand }) {
@@ -30,7 +32,7 @@ export function UploadZone({ brand }: { brand: Brand }) {
         const photo = await api.uploadProductPhoto(await downscaleImage(file));
         await save({ brandId: brand.id, name: nameFromFile(file.name), features: [], price: { sale: 0, original: 0 }, photo, cutout: null });
       }
-      toast.success(`已新增 ${images.length} 個商品`, { description: '照片存在這台電腦的瀏覽器（IndexedDB）。請補上價格與特徵。' });
+      toast.success(`已新增 ${images.length} 個商品`, { description: `${STORED_AT}請補上價格與特徵。` });
     } catch (err) {
       toast.error('上傳失敗', { description: err instanceof Error ? err.message : String(err) });
     } finally {

@@ -46,6 +46,8 @@ interface StudioState extends StudioForm {
   toggleTemplate: (id: TemplateId) => void;
   /** 切換品牌：清掉表單與結果 */
   resetForBrand: (brandId: string) => void;
+  /** 頁面載入後第一次進入：重設表單；這個分頁剛才有這個品牌的任務時接續顯示（執行中的繼續接收事件） */
+  restore: (brandId: string) => Promise<void>;
   /** 歷史紀錄「以相同設定重做」 */
   prefill: (input: JobInput) => void;
   parse: () => Promise<void>;
@@ -66,6 +68,37 @@ function defaultForm(): Omit<StudioForm, 'brief'> {
   };
 }
 
+function formOf(input: JobInput): StudioForm {
+  return {
+    brief: input.brief, productId: input.productId, parsed: structuredClone(input.parsedBrief), templateIds: [...input.templateIds],
+    variants: input.variantsPerTemplate, llm: input.llm, engine: input.engine, vlm: input.vlm, maxRetries: input.maxRetries,
+  };
+}
+
+/** 這個分頁目前的任務（sessionStorage，重新整理後仍在）；沒有 sessionStorage 時（測試）記在模組內 */
+interface CurrentJob { jobId: string; brandId: string }
+const CURRENT_JOB_KEY = 'genai-agent:studio-job';
+let currentJobFallback: CurrentJob | null = null;
+
+function rememberJob(job: CurrentJob | null) {
+  currentJobFallback = job;
+  try {
+    if (job) sessionStorage.setItem(CURRENT_JOB_KEY, JSON.stringify(job));
+    else sessionStorage.removeItem(CURRENT_JOB_KEY);
+  } catch {
+    // 沒有 sessionStorage（測試環境、或瀏覽器停用儲存）
+  }
+}
+
+function rememberedJob(): CurrentJob | null {
+  try {
+    const raw = sessionStorage.getItem(CURRENT_JOB_KEY);
+    return raw ? (JSON.parse(raw) as CurrentJob) : null;
+  } catch {
+    return currentJobFallback;
+  }
+}
+
 /** 事件訂閱放在 store 外：換頁再回來，生成仍在進行 */
 let stopListening: (() => void) | null = null;
 const stop = () => {
@@ -75,115 +108,139 @@ const stop = () => {
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-export const useStudioStore = create<StudioState>()((set, get) => ({
-  ...defaultForm(),
-  brief: '',
-  brandId: null,
-  parsing: false,
-  starting: false,
-  input: null,
-  view: null,
-  selection: {},
-  copy: null,
-  saved: {},
-  error: null,
+export const useStudioStore = create<StudioState>()((set, get) => {
+  /** 接收任務事件（伺服器先重播已發生的事件）；任務結束時預設選最佳候選，文案編輯器帶入它的文案 */
+  const follow = (jobId: string) => {
+    stopListening = getApiClient().subscribe(
+      jobId,
+      (e) =>
+        set((st) => {
+          if (!st.view || st.view.jobId !== jobId) return {};
+          const view = reduceJob(st.view, e);
+          if (st.view.outcome === 'running' && (view.outcome === 'done' || view.outcome === 'needs_review')) {
+            const selection = defaultSelection(view);
+            const first = Object.values(selection)[0];
+            return { view, selection, copy: first ? structuredClone(view.renders[first].spec.copy) : null };
+          }
+          return { view };
+        }),
+      (err) => set({ error: message(err) }),
+    );
+  };
 
-  setForm: (patch) => set(patch),
-  patchParsed: (patch) => {
-    const parsed = get().parsed;
-    if (parsed) set({ parsed: { ...parsed, ...patch } });
-  },
-  toggleTemplate: (id) => {
-    const ids = get().templateIds;
-    set({ templateIds: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id] });
-  },
+  return {
+    ...defaultForm(),
+    brief: '',
+    brandId: null,
+    parsing: false,
+    starting: false,
+    input: null,
+    view: null,
+    selection: {},
+    copy: null,
+    saved: {},
+    error: null,
 
-  resetForBrand: (brandId) => {
-    stop();
-    set({
-      ...defaultForm(), brandId, brief: DEMO_BRIEFS[brandId] ?? '', parsing: false, starting: false,
-      input: null, view: null, selection: {}, copy: null, saved: {}, error: null,
-    });
-  },
+    setForm: (patch) => set(patch),
+    patchParsed: (patch) => {
+      const parsed = get().parsed;
+      if (parsed) set({ parsed: { ...parsed, ...patch } });
+    },
+    toggleTemplate: (id) => {
+      const ids = get().templateIds;
+      set({ templateIds: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id] });
+    },
 
-  prefill: (input) => {
-    stop();
-    set({
-      brandId: input.brandId, brief: input.brief, productId: input.productId, parsed: structuredClone(input.parsedBrief),
-      templateIds: [...input.templateIds], variants: input.variantsPerTemplate, llm: input.llm, engine: input.engine,
-      vlm: input.vlm, maxRetries: input.maxRetries, input: null, view: null, selection: {}, copy: null, saved: {}, error: null,
-    });
-  },
-
-  parse: async () => {
-    const { brandId, brief, productId } = get();
-    if (!brandId || !brief.trim()) return;
-    set({ parsing: true, error: null });
-    try {
-      set({ parsed: await getApiClient().parseBrief(brandId, brief, productId) });
-    } catch (err) {
-      set({ error: message(err) });
-    } finally {
-      set({ parsing: false });
-    }
-  },
-
-  start: async () => {
-    const s = get();
-    if (!s.brandId) return;
-    if (!s.brief.trim()) return set({ error: '請先輸入一句話需求' });
-    if (!s.productId) return set({ error: '請先選擇商品' });
-    if (!s.templateIds.length) return set({ error: '至少要選一個通路模板' });
-    set({ starting: true, error: null });
-    const api = getApiClient();
-    try {
-      const parsed = s.parsed ?? (await api.parseBrief(s.brandId, s.brief, s.productId));
-      const input: JobInput = {
-        brandId: s.brandId, productId: s.productId, brief: s.brief, parsedBrief: parsed, templateIds: [...s.templateIds],
-        variantsPerTemplate: s.variants, llm: s.llm, engine: s.engine, vlm: s.vlm, maxRetries: s.maxRetries,
-      };
-      const { jobId } = await api.createJob(input);
+    resetForBrand: (brandId) => {
       stop();
-      set({ parsed, input, view: emptyJobView(jobId), selection: {}, copy: null, saved: {} });
-      stopListening = api.subscribe(
-        jobId,
-        (e) =>
-          set((st) => {
-            if (!st.view || st.view.jobId !== jobId) return {};
-            const view = reduceJob(st.view, e);
-            // 任務結束（完成或需人工審核）時：預設選最佳候選，文案編輯器帶入它的文案
-            if (st.view.outcome === 'running' && (view.outcome === 'done' || view.outcome === 'needs_review')) {
-              const selection = defaultSelection(view);
-              const first = Object.values(selection)[0];
-              return { view, selection, copy: first ? structuredClone(view.renders[first].spec.copy) : null };
-            }
-            return { view };
-          }),
-        (err) => set({ error: message(err) }),
-      );
-    } catch (err) {
-      set({ error: message(err) });
-    } finally {
-      set({ starting: false });
-    }
-  },
+      set({
+        ...defaultForm(), brandId, brief: DEMO_BRIEFS[brandId] ?? '', parsing: false, starting: false,
+        input: null, view: null, selection: {}, copy: null, saved: {}, error: null,
+      });
+    },
 
-  cancel: async () => {
-    const jobId = get().view?.jobId;
-    if (jobId) await getApiClient().cancelJob(jobId);
-  },
+    restore: async (brandId) => {
+      get().resetForBrand(brandId);
+      const current = rememberedJob();
+      if (current?.brandId !== brandId) return;
+      let input: JobInput;
+      try {
+        input = (await getApiClient().getJob(current.jobId)).summary.input;
+      } catch {
+        // 任務已不存在（例如 mock 模式重新整理後，執行中的任務不會保留）
+        rememberJob(null);
+        return;
+      }
+      // 讀取期間使用者已切換品牌或開始新任務
+      if (get().brandId !== brandId || get().view) return;
+      set({ ...formOf(input), input, view: emptyJobView(current.jobId), selection: {}, copy: null, saved: {}, error: null });
+      follow(current.jobId);
+    },
 
-  select: (templateId, renderId) => set({ selection: { ...get().selection, [templateId]: renderId } }),
-  setCopy: (copy) => set({ copy }),
+    prefill: (input) => {
+      stop();
+      rememberJob(null);
+      set({
+        ...formOf(input), brandId: input.brandId, input: null, view: null, selection: {}, copy: null, saved: {}, error: null,
+      });
+    },
 
-  saveSelection: async () => {
-    const { view, selection, copy, saved } = get();
-    if (!view?.jobId || !copy) return 0;
-    const key = JSON.stringify(copy);
-    const todo = Object.values(selection).filter((id): id is string => id !== undefined && saved[id] !== key);
-    const api = getApiClient();
-    for (const id of todo) await api.selectRender(view.jobId, id, copy);
-    set({ saved: { ...get().saved, ...Object.fromEntries(todo.map((id) => [id, key])) } });
-    return todo.length;
-  },
-}));
+    parse: async () => {
+      const { brandId, brief, productId } = get();
+      if (!brandId || !brief.trim()) return;
+      set({ parsing: true, error: null });
+      try {
+        set({ parsed: await getApiClient().parseBrief(brandId, brief, productId) });
+      } catch (err) {
+        set({ error: message(err) });
+      } finally {
+        set({ parsing: false });
+      }
+    },
+
+    start: async () => {
+      const s = get();
+      if (!s.brandId) return;
+      if (!s.brief.trim()) return set({ error: '請先輸入一句話需求' });
+      if (!s.productId) return set({ error: '請先選擇商品' });
+      if (!s.templateIds.length) return set({ error: '至少要選一個通路模板' });
+      set({ starting: true, error: null });
+      const api = getApiClient();
+      try {
+        const parsed = s.parsed ?? (await api.parseBrief(s.brandId, s.brief, s.productId));
+        const input: JobInput = {
+          brandId: s.brandId, productId: s.productId, brief: s.brief, parsedBrief: parsed, templateIds: [...s.templateIds],
+          variantsPerTemplate: s.variants, llm: s.llm, engine: s.engine, vlm: s.vlm, maxRetries: s.maxRetries,
+        };
+        const { jobId } = await api.createJob(input);
+        stop();
+        rememberJob({ jobId, brandId: input.brandId });
+        set({ parsed, input, view: emptyJobView(jobId), selection: {}, copy: null, saved: {} });
+        follow(jobId);
+      } catch (err) {
+        set({ error: message(err) });
+      } finally {
+        set({ starting: false });
+      }
+    },
+
+    cancel: async () => {
+      const jobId = get().view?.jobId;
+      if (jobId) await getApiClient().cancelJob(jobId);
+    },
+
+    select: (templateId, renderId) => set({ selection: { ...get().selection, [templateId]: renderId } }),
+    setCopy: (copy) => set({ copy }),
+
+    saveSelection: async () => {
+      const { view, selection, copy, saved } = get();
+      if (!view?.jobId || !copy) return 0;
+      const key = JSON.stringify(copy);
+      const todo = Object.values(selection).filter((id): id is string => id !== undefined && saved[id] !== key);
+      const api = getApiClient();
+      for (const id of todo) await api.selectRender(view.jobId, id, copy);
+      set({ saved: { ...get().saved, ...Object.fromEntries(todo.map((id) => [id, key])) } });
+      return todo.length;
+    },
+  };
+});

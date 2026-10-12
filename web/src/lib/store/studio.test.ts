@@ -84,6 +84,37 @@ describe('studio store', () => {
     expect(store().brief).toBe(DEMO_BRIEFS['misty-isle']);
   });
 
+  it('picks up the current job again after the page reloads', async () => {
+    await store().start();
+    await vi.advanceTimersByTimeAsync(3_000);
+    const jobId = store().view!.jobId;
+    // 重新整理：store 回到初始狀態，任務仍在執行
+    useStudioStore.setState({ brandId: null, view: null, input: null, templateIds: ['ecom-main'] });
+    await store().restore('selune');
+    expect(store()).toMatchObject({ brandId: 'selune', templateIds: ['ig-post'], input: { templateIds: ['ig-post'] } });
+    expect(store().view!.jobId).toBe(jobId);
+    await vi.advanceTimersByTimeAsync(14_500);
+    expect(store().view!.outcome).toBe('done');
+    expect(store().selection['ig-post']).toBe(store().view!.bestRenderIds['ig-post']);
+  });
+
+  it('starts empty after a reload when the job belongs to another brand or no longer exists', async () => {
+    await store().start();
+    useStudioStore.setState({ brandId: null, view: null });
+    await store().restore('misty-isle');
+    expect(store()).toMatchObject({ brandId: 'misty-isle', view: null });
+
+    const getJob = vi.spyOn(getApiClient(), 'getJob').mockRejectedValueOnce(new Error('Unknown job'));
+    useStudioStore.setState({ brandId: null, view: null });
+    await store().restore('selune');
+    expect(store().view).toBeNull();
+    // 找不到的任務不再記住
+    useStudioStore.setState({ brandId: null, view: null });
+    await store().restore('selune');
+    expect(getJob).toHaveBeenCalledTimes(1);
+    getJob.mockRestore();
+  });
+
   it('prefills the form from a previous job input', async () => {
     await store().parse();
     const input = {

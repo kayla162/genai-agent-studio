@@ -40,15 +40,18 @@ export default function StudioPage() {
   const studioBrandId = useStudioStore((s) => s.brandId);
   const productId = useStudioStore((s) => s.productId);
   const resetForBrand = useStudioStore((s) => s.resetForBrand);
+  const restore = useStudioStore((s) => s.restore);
   const setForm = useStudioStore((s) => s.setForm);
 
   useEffect(() => {
     void loadProducts(brand.id);
   }, [brand.id, loadProducts]);
 
+  // 頁面載入後第一次進入時接續這個分頁的任務；之後切換品牌則清掉表單與結果
   useEffect(() => {
-    if (studioBrandId !== brand.id) resetForBrand(brand.id);
-  }, [brand.id, studioBrandId, resetForBrand]);
+    if (studioBrandId === null) void restore(brand.id);
+    else if (studioBrandId !== brand.id) resetForBrand(brand.id);
+  }, [brand.id, studioBrandId, resetForBrand, restore]);
 
   // 預設選第一個商品
   useEffect(() => {
