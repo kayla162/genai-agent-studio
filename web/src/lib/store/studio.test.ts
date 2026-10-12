@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getApiClient } from '@/lib/api';
+import { ApiError } from '@/lib/api/http/client';
 import { useAppStore } from './app';
 import { DEMO_BRIEFS, useStudioStore } from './studio';
 
@@ -76,6 +77,14 @@ describe('studio store', () => {
     expect(store().view!.outcome).toBe('cancelled');
   });
 
+  it('reports a failed cancel instead of throwing', async () => {
+    await store().start();
+    const cancelJob = vi.spyOn(getApiClient(), 'cancelJob').mockRejectedValueOnce(new Error('後端沒有回應'));
+    await expect(store().cancel()).resolves.toBeUndefined();
+    expect(store().error).toBe('後端沒有回應');
+    cancelJob.mockRestore();
+  });
+
   it('stops listening to the old job when the brand changes', async () => {
     await store().start();
     store().resetForBrand('misty-isle');
@@ -124,5 +133,72 @@ describe('studio store', () => {
     };
     store().prefill(input);
     expect(store()).toMatchObject({ brief: '再做一次', templateIds: ['story'], variants: 2, engine: 'ideogram', maxRetries: 1, view: null });
+  });
+});
+
+describe('studio store restore when reading the job fails', () => {
+  const KEY = 'genai-agent:studio-job';
+  let storage: Map<string, string>;
+
+  /** 重新整理：store 回到初始狀態；sessionStorage（測試中以記憶體模擬）保留這個分頁的任務 */
+  async function startAndReload() {
+    await store().start();
+    const jobId = store().view!.jobId!;
+    useStudioStore.setState({ brandId: null, view: null, input: null });
+    return jobId;
+  }
+
+  beforeEach(() => {
+    storage = new Map();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+      removeItem: (key: string) => void storage.delete(key),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    ['the backend cannot be reached', new ApiError('network', '無法連線到後端，請確認服務已啟動', 0)],
+    ['the backend fails', new ApiError('http_error', '後端回應 HTTP 503', 503)],
+  ])('keeps the remembered job and reports the error when %s', async (_name, failure) => {
+    const jobId = await startAndReload();
+    const getJob = vi.spyOn(getApiClient(), 'getJob').mockRejectedValueOnce(failure);
+    await store().restore('selune');
+    expect(store().view).toBeNull();
+    expect(store().error).toBe('無法讀取進行中的任務，請確認後端已啟動後重新整理頁面');
+    expect(JSON.parse(storage.get(KEY)!)).toEqual({ jobId, brandId: 'selune' });
+
+    // 後端恢復後重新整理，仍接續同一個任務
+    useStudioStore.setState({ brandId: null, view: null, input: null });
+    await store().restore('selune');
+    expect(store().view!.jobId).toBe(jobId);
+    expect(store().error).toBeNull();
+    getJob.mockRestore();
+  });
+
+  it('forgets the remembered job when the backend says it does not exist', async () => {
+    await startAndReload();
+    const getJob = vi.spyOn(getApiClient(), 'getJob').mockRejectedValueOnce(new ApiError('not_found', '找不到任務', 404));
+    await store().restore('selune');
+    expect(store()).toMatchObject({ view: null, error: null });
+    expect(storage.has(KEY)).toBe(false);
+    getJob.mockRestore();
+  });
+
+  it('does not overwrite the form when the user started a job while the old one was loading', async () => {
+    const jobId = await startAndReload();
+    const snapshot = await getApiClient().getJob(jobId);
+    let release!: () => void;
+    const getJob = vi.spyOn(getApiClient(), 'getJob').mockImplementationOnce(
+      () => new Promise((resolve) => (release = () => resolve(snapshot))),
+    );
+    const restoring = store().restore('selune');
+    store().setForm({ brief: '剛輸入的新需求' });
+    useStudioStore.setState({ starting: true });
+    release();
+    await restoring;
+    expect(store()).toMatchObject({ brief: '剛輸入的新需求', view: null, starting: true });
+    getJob.mockRestore();
   });
 });

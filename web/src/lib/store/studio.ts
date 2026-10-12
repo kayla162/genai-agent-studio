@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Copy, Engine, JobInput, ParsedBrief, TemplateId, Tone } from '@/types/contract';
 import { API_MODE, getApiClient } from '@/lib/api';
+import { ApiError } from '@/lib/api/http/client';
 import { MOCK_OPTIONS } from '@/lib/api/mock/options';
 import { defaultSelection, emptyJobView, reduceJob, type JobView } from '@/lib/jobs/view';
 import { useAppStore } from './app';
@@ -163,16 +164,22 @@ export const useStudioStore = create<StudioState>()((set, get) => {
       get().resetForBrand(brandId);
       const current = rememberedJob();
       if (current?.brandId !== brandId) return;
+      // 讀取期間使用者已切換品牌或開始新任務
+      const superseded = () => get().brandId !== brandId || get().view !== null || get().starting;
       let input: JobInput;
       try {
         input = (await getApiClient().getJob(current.jobId)).summary.input;
-      } catch {
-        // 任務已不存在（例如 mock 模式重新整理後，執行中的任務不會保留）
+      } catch (err) {
+        // 後端連不上或出錯（ApiError 的 status 為 0 或 5xx）：任務可能還在執行，保留記錄，後端恢復後重新整理即可接續
+        if (err instanceof ApiError && (err.status === 0 || err.status >= 500)) {
+          if (!superseded()) set({ error: '無法讀取進行中的任務，請確認後端已啟動後重新整理頁面' });
+          return;
+        }
+        // 任務已不存在（後端回 404，或 mock 模式重新整理後，執行中的任務不會保留）：不再記住
         rememberJob(null);
         return;
       }
-      // 讀取期間使用者已切換品牌或開始新任務
-      if (get().brandId !== brandId || get().view) return;
+      if (superseded()) return;
       set({ ...formOf(input), input, view: emptyJobView(current.jobId), selection: {}, copy: null, saved: {}, error: null });
       follow(current.jobId);
     },
@@ -226,7 +233,12 @@ export const useStudioStore = create<StudioState>()((set, get) => {
 
     cancel: async () => {
       const jobId = get().view?.jobId;
-      if (jobId) await getApiClient().cancelJob(jobId);
+      if (!jobId) return;
+      try {
+        await getApiClient().cancelJob(jobId);
+      } catch (err) {
+        set({ error: message(err) });
+      }
     },
 
     select: (templateId, renderId) => set({ selection: { ...get().selection, [templateId]: renderId } }),
