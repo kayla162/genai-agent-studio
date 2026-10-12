@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from redis.asyncio import Redis
+from saq.job import Status
 
 from app.adapters.composer import ComposerClient
 from app.brands import load_brands
@@ -105,6 +106,46 @@ async def test_recovery_fails_running_jobs_and_requeues_queued_ones(services: Se
     assert snap is not None
     assert snap.events[-2]['reason'] == RESTART_REASON
     assert await queues.jobs.job('job_waiting') is not None
+
+
+async def orphan(queues: Queues, job_id: str) -> None:
+    """模擬 worker 在執行 run_job 時被強制終止：佇列紀錄停在 ACTIVE，也還留在 active 清單裡。"""
+    await queues.enqueue_job(job_id)
+    taken = await queues.jobs.dequeue(timeout=1)
+    assert taken is not None and taken.key == job_id
+    await taken.update(status=Status.ACTIVE)
+
+
+async def test_recovery_requeues_a_queued_job_whose_queue_record_was_left_active(
+    services: Services, queues: Queues
+) -> None:
+    await queued_job(services, 'job_orphan')
+    await orphan(queues, 'job_orphan')
+    await recover(services, queues)
+    # 舊紀錄不能擋住重新排入
+    record = await queues.jobs.job('job_orphan')
+    assert record is not None and record.status == Status.QUEUED
+    async with running(services, queues):
+        for _ in range(150):
+            if (await summary(services, 'job_orphan')).finished:
+                break
+            await asyncio.sleep(0.2)
+    assert (await summary(services, 'job_orphan')).stage == 'done'
+
+
+async def test_recovery_aborts_the_queue_record_of_a_running_job(services: Services, queues: Queues) -> None:
+    await queued_job(services, 'job_dead')
+    await services.store.append('job_dead', JobStatusEvent(type='job.status', stage='rendering', round=1))
+    await orphan(queues, 'job_dead')
+    await queued_job(services, 'job_idle')
+    await queues.enqueue_job('job_idle')
+    await recover(services, queues)
+    record = await queues.jobs.job('job_dead')
+    assert record is not None and (record.status, record.error) == (Status.ABORTED, RESTART_REASON)
+    assert (await summary(services, 'job_dead')).stage == 'failed'
+    # 其他狀態的紀錄不動
+    waiting = await queues.jobs.job('job_idle')
+    assert waiting is not None and waiting.status == Status.QUEUED
 
 
 async def test_cutout_marks_uploaded_products_and_refuses_samples(services: Services, queues: Queues) -> None:

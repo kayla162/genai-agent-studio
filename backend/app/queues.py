@@ -46,6 +46,16 @@ class Queues:
         """生圖可能花上數十分鐘，不設逾時（流程內各步驟有自己的逾時）。"""
         await self.jobs.enqueue('run_job', key=job_id, timeout=0, job_id=job_id)
 
+    async def release_orphan(self, job_id: str, reason: str) -> bool:
+        """放掉前一個 worker 留下的 ACTIVE 紀錄：worker 被強制終止時紀錄會永遠停在執行中，
+        系統狀態一直算它執行中，同一個任務也無法重新排入（key 相同會被當成重複）。
+        只在 worker 啟動前呼叫（只有一個 worker 行程，這時候 ACTIVE 的紀錄一定屬於已經結束的行程）。"""
+        record = await self.jobs.job(job_id)
+        if record is None or record.status != Status.ACTIVE:
+            return False
+        await self.jobs.finish(record, Status.ABORTED, error=reason)
+        return True
+
     async def enqueue_task(self, function: str, /, **kwargs: Any) -> None:
         await self.tasks.enqueue(function, timeout=TASK_TIMEOUT, **kwargs)
 

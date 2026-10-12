@@ -7,6 +7,9 @@
 
 import asyncio
 import json
+import logging
+import os
+import signal
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +41,8 @@ from app.pipeline.sim import sim_ports
 from app.queues import Queues, ingest_channel
 from app.repo import catalog, history
 from app.settings import settings
+
+logger = logging.getLogger(__name__)
 
 RESTART_REASON = 'worker 重新啟動，任務中斷'
 
@@ -111,6 +116,7 @@ async def ingest(services: Services, task_id: str, brand_id: str, name: str, tex
         await services.pace(300)
         await send(IngestStoredEvent(type='ingest.stored', collection=f'{brand_id}_ci', count=len(chunks)).to_json())
     except Exception as error:  # noqa: BLE001 - 錯誤一律轉給前端
+        logger.exception('品牌文件上傳失敗：task_id=%s', task_id)
         await send({'error': {'code': 'invalid', 'message': failure_reason(error)}})
 
 
@@ -124,6 +130,9 @@ async def recover(services: Services, queues: Queues) -> None:
     async with services.db.session() as s:
         rows = (await s.scalars(select(JobRow).where(JobRow.finished.is_(False)).order_by(JobRow.created_at))).all()
     for row in rows:
+        # 前一個 worker 被強制終止時，佇列紀錄會停在執行中：不放掉的話，系統狀態永遠算它執行中，
+        # 排隊中的任務也會因為 key 相同被當成重複而不再執行
+        await queues.release_orphan(row.id, RESTART_REASON)
         if row.stage == 'queued':
             await queues.enqueue_job(row.id)
             continue
@@ -160,15 +169,36 @@ def build_workers(services: Services, queues: Queues, **options: Any) -> tuple[W
         startup=[sweep_first],
         **options,
     )
+    # 兩個 worker 在同一個 event loop：每個 worker 自己註冊的 SIGINT/SIGTERM 處理會互相取代，
+    # 只有最後啟動的那個會停下來，另一個繼續跑到被 Docker 強制終止。所以關掉，改由 main 統一處理。
+    jobs.SIGNALS = []
+    tasks.SIGNALS = []
     return jobs, tasks
 
 
+def stop_on_signals(workers: tuple[Worker[Context], ...]) -> None:
+    """收到 SIGINT／SIGTERM 時讓所有 worker 一起停下來。Windows 不支援這個方式：Ctrl+C 會直接取消 asyncio.run。"""
+    if os.name == 'nt':
+        return
+
+    def stop() -> None:
+        # Worker.start() 會建立新的 event，所以要等訊號來了才去取
+        for worker in workers:
+            worker.event.set()
+
+    loop = asyncio.get_running_loop()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(signum, stop)
+
+
 async def main() -> None:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
     services = build_services()
     queues = Queues(settings.redis_url)
     await queues.connect()
     await recover(services, queues)
     jobs, tasks = build_workers(services, queues)
+    stop_on_signals((jobs, tasks))
     try:
         await asyncio.gather(jobs.start(), tasks.start())
     finally:
