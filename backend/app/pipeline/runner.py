@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -45,6 +46,8 @@ from app.events import EventStore
 from app.pipeline.ports import Ports, ReviewResult, SpecRequest
 from app.repo import catalog, jobs
 from app.templates import get_template
+
+logger = logging.getLogger(__name__)
 
 #: 1× 速度下各階段的時間（毫秒），與 mock 的 PHASE_MS 相同
 PHASE_MS = {
@@ -146,6 +149,7 @@ async def run_job(job_id: str, db: Database, store: EventStore, ports: Ports, *,
     except JobCancelled:
         await store.append(job_id, JobStatusEvent(type='job.status', stage='cancelled', round=run.round))
     except Exception as error:  # noqa: BLE001 - 任何錯誤都要讓任務結束並回報原因
+        logger.exception('任務執行失敗：job_id=%s', job_id)
         reason = failure_reason(error)
         await store.append(job_id, LogEvent(type='log', source='api', level='error', message=reason))
         await store.append(job_id, JobFailedEvent(type='job.failed', job_id=job_id, reason=reason))

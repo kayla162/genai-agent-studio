@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import secrets
 from contextlib import aclosing
 from typing import Annotated
@@ -18,6 +19,7 @@ from app.contract import (
     DashboardStats,
     HistoryEntry,
     JobAcceptedEvent,
+    JobFailedEvent,
     JobInput,
     JobSnapshot,
     JobStatusEvent,
@@ -26,9 +28,11 @@ from app.contract import (
     ParsedBrief,
 )
 from app.core.clock import iso, utc_now
-from app.errors import Invalid, NotFound
+from app.errors import Invalid, NotFound, Unavailable
 from app.repo import catalog, history, jobs
 from app.stats import dashboard_stats
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=['任務'])
 
@@ -115,8 +119,23 @@ async def create_job(job_input: JobInput, services: Services) -> JobCreated:
                 raise
     await services.store.append(job_id, JobAcceptedEvent(type='job.accepted', job_id=job_id))
     await services.store.append(job_id, JobStatusEvent(type='job.status', stage='queued', round=0))
-    await services.queues.enqueue_job(job_id)
+    try:
+        await services.queues.enqueue_job(job_id)
+    except Exception as error:  # noqa: BLE001 - 佇列的任何錯誤都要讓任務結束，不能留在排隊中
+        logger.exception('任務無法排入佇列：job_id=%s', job_id)
+        await _fail_unqueued(services, job_id)
+        raise Unavailable('目前無法排入任務（佇列服務沒有回應），請稍後再試') from error
     return JobCreated(job_id=job_id)
+
+
+async def _fail_unqueued(services: ApiServices, job_id: str) -> None:
+    """任務已寫入資料庫卻排不進佇列：標記失敗，否則它會停在排隊中，等 worker 重新啟動時意外執行。"""
+    reason = '無法排入佇列：佇列服務沒有回應'
+    try:
+        await services.store.append(job_id, JobFailedEvent(type='job.failed', job_id=job_id, reason=reason))
+        await services.store.append(job_id, JobStatusEvent(type='job.status', stage='failed', round=0))
+    except Exception:  # noqa: BLE001 - 連失敗事件都寫不進去時，仍要回 503
+        logger.exception('無法把任務標記為失敗：job_id=%s', job_id)
 
 
 @router.get('/api/jobs')

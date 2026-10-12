@@ -53,6 +53,50 @@ async def test_create_job_rejects_invalid_input(api: LiveApi) -> None:
     assert (await api.http.get('/api/jobs')).json() == []
 
 
+async def test_create_job_fails_the_job_when_it_cannot_be_queued(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def down(job_id: str) -> None:
+        raise ConnectionError('redis 沒有回應')
+
+    monkeypatch.setattr(api.services.queues, 'enqueue_job', down)
+    res = await api.http.post('/api/jobs', json=job_input())
+    assert (res.status_code, res.json()['error']['code']) == (503, 'unavailable')
+    assert res.json()['error']['message'] == '目前無法排入任務（佇列服務沒有回應），請稍後再試'
+    assert 'redis 沒有回應' in caplog.text
+    # 任務不能留在排隊中：之後 worker 重新啟動時會意外執行它
+    [listed] = (await api.http.get('/api/jobs')).json()
+    assert (listed['stage'], listed['finished']) == ('failed', True)
+    events = (await api.http.get(f'/api/jobs/{listed["id"]}')).json()['events']
+    assert stages(events) == [
+        ('job.accepted', None),
+        ('job.status', 'queued'),
+        ('job.failed', None),
+        ('job.status', 'failed'),
+    ]
+    assert events[2]['reason'] == '無法排入佇列：佇列服務沒有回應'
+    assert events[3]['round'] == 0
+
+
+async def test_create_job_still_answers_503_when_the_failure_events_cannot_be_written(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def down(job_id: str) -> None:
+        raise ConnectionError('redis 沒有回應')
+
+    append = api.services.store.append
+
+    async def append_unless_failed(job_id: str, event: Any, **kwargs: Any) -> int | None:
+        if event.type == 'job.failed':
+            raise ConnectionError('資料庫沒有回應')
+        return await append(job_id, event, **kwargs)
+
+    monkeypatch.setattr(api.services.queues, 'enqueue_job', down)
+    monkeypatch.setattr(api.services.store, 'append', append_unless_failed)
+    res = await api.http.post('/api/jobs', json=job_input())
+    assert (res.status_code, res.json()['error']['code']) == (503, 'unavailable')
+
+
 async def test_job_streams_every_event_and_replays_after_seq(api: LiveApi) -> None:
     async with api.worker():
         res = await api.http.post('/api/jobs', json=job_input())
