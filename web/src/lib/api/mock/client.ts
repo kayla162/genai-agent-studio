@@ -203,7 +203,7 @@ export class MockApiClient implements ApiClient {
     const product = await this.findProduct(productId);
     if (product.photo.source === 'sample') throw new Error('示範商品已是去背素材');
     await this.sleep(1200);
-    return this.saveProduct({ ...product, cutout: { model: 'BiRefNet-general', url: null } });
+    return this.saveProduct({ ...product, cutout: { model: 'BiRefNet-general', status: 'done', url: null, error: null } });
   }
 
   async ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {

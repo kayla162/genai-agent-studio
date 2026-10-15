@@ -1,10 +1,16 @@
+import json
 from datetime import UTC, datetime
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brands import LoadedBrand, load_brands
 from app.contract import FilePhoto, Price, ProductDraft, RagChunk
+from app.db.session import Database
 from app.repo import catalog
+from app.settings import BACKEND_DIR
 from tests.fixtures import BRANDS_DIR, load_fixture
 
 T0 = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
@@ -89,3 +95,66 @@ async def test_lists_samples_first_and_keeps_deleted_samples_out(session: AsyncS
     assert await catalog.list_products(session, 'selune') == []
     assert await catalog.get_product(session, 'prod_selune_serum') is None
     assert [p.id for p in await catalog.list_products(session, 'misty-isle')] == ['prod_misty_coldbrew']
+
+
+async def alembic(db: Database, action: str, revision: str) -> None:
+    """在測試資料庫上執行 alembic upgrade／downgrade。"""
+
+    def run(connection: Connection) -> None:
+        config = Config(str(BACKEND_DIR / 'alembic.ini'))
+        config.attributes['connection'] = connection
+        getattr(command, action)(config, revision)
+
+    async with db.engine.begin() as connection:
+        await connection.run_sync(run)
+
+
+async def cutouts(session: AsyncSession) -> dict[str, object]:
+    rows = await session.execute(text("SELECT id, data->'cutout' FROM products ORDER BY id"))
+    return {product_id: cutout for product_id, cutout in rows.all()}
+
+
+async def test_migration_0002_queues_photo_products_for_a_real_cutout(db: Database, session: AsyncSession) -> None:
+    await catalog.sync_brands(session, demo_brands(), T0)
+    await alembic(db, 'downgrade', '0001')
+    try:
+        # 0001 時代的商品：模擬去背過的上傳照、還沒去背的本機照片
+        for product_id, source, cutout in [
+            ('prod_old_upload', 'upload', {'model': 'BiRefNet-general', 'url': None}),
+            ('prod_old_local', 'local', None),
+        ]:
+            data: dict[str, object] = {
+                'id': product_id,
+                'brandId': 'selune',
+                'name': product_id,
+                'features': [],
+                'price': {'sale': 0, 'original': 0},
+                'photo': {'source': source, 'url': f'/files/{product_id}.png'},
+                'cutout': cutout,
+                'createdAt': '2026-10-07T01:00:00.000Z',
+            }
+            await session.execute(
+                text(
+                    'INSERT INTO products (id, brand_id, data, sample, deleted, created_at) '
+                    "VALUES (:id, 'selune', CAST(:data AS jsonb), false, false, :now)"
+                ),
+                {'id': product_id, 'data': json.dumps(data), 'now': T0},
+            )
+        await session.commit()
+    finally:
+        await alembic(db, 'upgrade', 'head')
+
+    pending = {'model': 'BiRefNet-general', 'status': 'pending', 'url': None, 'error': None}
+    assert await cutouts(session) == {
+        'prod_misty_coldbrew': None,
+        'prod_old_local': pending,
+        'prod_old_upload': pending,
+        'prod_selune_serum': None,
+    }
+    assert (await catalog.get_product(session, 'prod_old_upload')) is not None
+
+    await alembic(db, 'downgrade', '0001')
+    try:
+        assert (await cutouts(session))['prod_old_upload'] == {'model': 'BiRefNet-general', 'url': None}
+    finally:
+        await alembic(db, 'upgrade', 'head')

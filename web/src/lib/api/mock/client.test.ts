@@ -72,7 +72,7 @@ describe('product photos and cutout', () => {
     expect(done).toBe(false);
     await vi.advanceTimersByTimeAsync(100);
     const product = await pending;
-    expect(product.cutout).toEqual({ model: 'BiRefNet-general', url: null });
+    expect(product.cutout).toEqual({ model: 'BiRefNet-general', status: 'done', url: null, error: null });
     expect(product.createdAt).toBe(saved.createdAt);
     expect((await api.listProducts('selune')).find((p) => p.id === saved.id)?.cutout).not.toBeNull();
     await expect(api.requestCutout('prod_selune_serum')).rejects.toThrow('示範商品已是去背素材');

@@ -11,6 +11,7 @@ from app.contract import (
     JobStatusEvent,
     JobSummary,
     Product,
+    ProductCutout,
     RagHit,
     message_json,
     parse_event,
@@ -66,3 +67,10 @@ def test_rerank_score_is_omitted_until_reranked() -> None:
 
 def test_channel_templates_match_the_frontend() -> None:
     assert [t.to_json() for t in CHANNEL_TEMPLATES] == load_fixture('brands.json')['templates']
+
+
+def test_product_cutout_carries_status_and_error() -> None:
+    raw = {'model': 'birefnet-general', 'status': 'failed', 'url': None, 'error': '照片無法讀取'}
+    assert ProductCutout.model_validate(raw).to_json() == raw
+    with pytest.raises(ValueError):
+        ProductCutout.model_validate({'model': 'BiRefNet-general', 'url': None})

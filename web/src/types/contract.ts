@@ -65,7 +65,9 @@ export type ProductPhoto =
   | { source: 'upload' | 'local'; url: string };
 
 /** 去背結果。url 為 null 代表示意：mock 不真的去背，合成時以「色彩增值」讓白底融入背景 */
-export interface ProductCutout { model: string; url: string | null }
+/** 去背結果：pending 去背中、done 完成（url 為透明 PNG；mock 的示意為 null）、failed 失敗（error 為原因） */
+export type CutoutStatus = 'pending' | 'done' | 'failed';
+export interface ProductCutout { model: string; status: CutoutStatus; url: string | null; error: string | null }
 
 export interface Product {
   id: string;

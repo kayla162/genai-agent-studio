@@ -82,7 +82,7 @@ async def cutout(services: Services, product_id: str) -> dict[str, Any]:
         return {'error': '示範商品已是去背素材'}
     await services.pace(1200)
     fields = {k: v for k, v in product.to_json().items() if k != 'createdAt'}
-    cut = ProductCutout(model='BiRefNet-general', url=None)
+    cut = ProductCutout(model='BiRefNet-general', status='done', url=None, error=None)
     draft = ProductDraft.model_validate({**fields, 'cutout': cut.to_json()})
     async with services.db.session() as s:
         saved = await catalog.save_product(s, draft, utc_now())

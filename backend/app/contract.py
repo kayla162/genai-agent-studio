@@ -151,9 +151,16 @@ class FilePhoto(Model):
 ProductPhoto = Annotated[SamplePhoto | FilePhoto, Field(discriminator='source')]
 
 
+CutoutStatus = Literal['pending', 'done', 'failed']
+
+
 class ProductCutout(Model):
+    """去背結果：pending 去背中、done 完成（url 為透明 PNG；mock 的示意為 null）、failed 失敗（error 為原因）。"""
+
     model: str
+    status: CutoutStatus
     url: str | None
+    error: str | None
 
 
 class Price(Model):

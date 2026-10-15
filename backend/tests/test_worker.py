@@ -189,7 +189,8 @@ async def test_cutout_marks_uploaded_products_and_refuses_samples(services: Serv
     async with running(services, queues):
         done = await queues.run_task('cutout', wait=10, product_id=product.id)
     assert done.completed
-    assert done.result['product']['cutout'] == {'model': 'BiRefNet-general', 'url': None}
+    cut = done.result['product']['cutout']
+    assert cut == {'model': 'BiRefNet-general', 'status': 'done', 'url': None, 'error': None}
     assert await cutout(services, 'prod_selune_serum') == {'error': '示範商品已是去背素材'}
 
 

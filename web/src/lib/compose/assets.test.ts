@@ -17,8 +17,8 @@ describe('productImage', () => {
 
   it('multiplies an uploaded photo until a real cutout exists', () => {
     expect(productImage(upload, SELUNE)).toEqual({ src: 'data:image/png;base64,AQID', blend: 'multiply' });
-    expect(productImage({ ...upload, cutout: { model: 'BiRefNet-general', url: null } }, SELUNE).blend).toBe('multiply');
-    expect(productImage({ ...upload, cutout: { model: 'BiRefNet-general', url: '/cutout.png' } }, SELUNE))
+    expect(productImage({ ...upload, cutout: { model: 'BiRefNet-general', status: 'done', url: null, error: null } }, SELUNE).blend).toBe('multiply');
+    expect(productImage({ ...upload, cutout: { model: 'BiRefNet-general', status: 'done', url: '/cutout.png', error: null } }, SELUNE))
       .toEqual({ src: '/cutout.png', blend: 'normal' });
   });
 });

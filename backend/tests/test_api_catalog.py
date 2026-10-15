@@ -138,9 +138,9 @@ async def test_cutout_runs_on_the_worker(api: LiveApi) -> None:
     product = (await api.http.post('/api/products', json=DRAFT)).json()
     async with api.worker():
         res = await api.http.post(f'/api/products/{product["id"]}/cutout')
-    assert res.json()['cutout'] == {'model': 'BiRefNet-general', 'url': None}
+    assert res.json()['cutout'] == {'model': 'BiRefNet-general', 'status': 'done', 'url': None, 'error': None}
     listed = (await api.http.get('/api/products', params={'brandId': 'selune'})).json()
-    assert listed[-1]['cutout'] == {'model': 'BiRefNet-general', 'url': None}
+    assert listed[-1]['cutout'] == {'model': 'BiRefNet-general', 'status': 'done', 'url': None, 'error': None}
     sample = await api.http.post('/api/products/prod_selune_serum/cutout')
     assert sample.json() == {'error': {'code': 'invalid', 'message': '示範商品已是去背素材'}}
 
