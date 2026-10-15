@@ -18,7 +18,8 @@
 | PostgreSQL | 品牌、商品、任務、事件、用量、歷史紀錄 |
 | Chroma＋BGE-M3＋bge-reranker-v2-m3 | 品牌規範與歷史案例的檢索、重新排序 |
 | Gemini API | 需求拆解、文案／版面／提示詞、Query Rewriting、VLM 審查 |
-| ComfyUI（SDXL＋ControlNet＋IP-Adapter＋IC-Light） | 去背、背景生成、打光融合、放大 |
+| ONNX Runtime＋BiRefNet | 商品照去背（worker 執行，見 `2026-10-15-product-cutout-design.md`） |
+| ComfyUI（SDXL＋ControlNet＋IP-Adapter＋IC-Light） | 背景生成、打光融合、放大 |
 | composer（Node，沿用前端 TypeScript） | 伺服器端版型、海報繪製、量主色、規則審查與計分 |
 | Docker Compose | 一鍵啟動（ComfyUI 除外） |
 | Cloudflare Pages＋Access | 只給名單內的人觀看的作品集 Demo（mock 模式） |
@@ -123,6 +124,7 @@ GenAI Agent/
 | Windows＋瀏覽器 | 約 4 GB |
 | Docker（7 個容器＋WSL2） | 約 3–4 GB，以 `.wslconfig` 設上限 5 GB |
 | ComfyUI（SDXL 部分卸載到系統記憶體） | 約 6–8 GB |
+| 去背（BiRefNet，worker） | 平常約 1.1 GB，去背時約 6.5 GB |
 
 合計偏緊。BGE 模型使用 ONNX int8，用到才載入；建議筆電升級到 32 GB。實際數字在 Plan 7 實測並記錄。
 
@@ -210,7 +212,7 @@ GenAI Agent/
 ### 5.5 生圖（ComfyUI）
 
 - **workflow**（`comfyui/workflows/`，API 格式）：
-  - `cutout_v1`：BiRefNet 去背，輸出透明 PNG。每張商品照只做一次（商品庫按「去背」或第一次用到時），結果存在 `data/` 重複使用。
+  - 去背不在 ComfyUI 中執行：新增商品時由 worker 以 ONNX Runtime 執行 BiRefNet，結果存在 `data/products/{id}/`（見 `2026-10-15-product-cutout-design.md`）。下面的 workflow 直接讀取 `cutout.url` 的透明 PNG。
   - `product_scene_v1`：
     1. 依版面的商品 BBox，把去背商品放到畫布上（底圖＋遮罩）
     2. SDXL 生成背景：ControlNet 依商品輪廓維持構圖，IP-Adapter 參考品牌風格圖或歷史案例
@@ -275,7 +277,7 @@ GenAI Agent/
 
 ### 6.2 檔案
 
-- `data/products/{id}/`：原圖、去背圖；`data/jobs/{jobId}/`：生成圖、審查用海報。
+- `data/products/{id}/`：去背圖（見 `2026-10-15-product-cutout-design.md`）；`data/jobs/{jobId}/`：生成圖、審查用海報。
 - api 以 `/files/...` 提供唯讀存取，並驗證路徑不超出 `data/`。
 - `assets/products/` 以唯讀掛載；本機資料夾的列出與匯入改由後端處理（複製到 `data/products/`），Docker 的正式版也能使用。
 
@@ -382,7 +384,7 @@ GenAI Agent/
 | Plan 4：後端骨架與即時串流 | 目錄與 Docker Compose、PostgreSQL 與 Alembic、品牌 YAML（示範品牌轉檔與範本）、全部 REST 端點、WebSocket 補送、SAQ worker、composer 的 `/layout` 與 `/sim/*`、所有轉接器的模擬版、合約變更、`HttpApiClient` 與 live 模式調整、靜態輸出與 nginx、golden fixtures 機制 | live 模式以模擬資料跑完整流程 |
 | Plan 5：RAG | Chroma、BGE-M3 與 Reranker、切塊移植、文件上傳串流、檢索與 Rerank、Query Rewriting 的重新檢索、歷史回寫、儀表板統計移植與實際用量成本 | 檢索與知識庫是真的 |
 | Plan 6：Gemini Agent、伺服器端排版與 VLM 審查 | composer 的 `/render`、`/review`、`measurePrimary`、`ocrDiffs` 與字型；需求拆解、Prompt 構建（結構化輸出與程式護欄）、Query Rewriting、VLM 審查、用量紀錄 | 文字與審查是真的，圖仍是程序化背景 |
-| Plan 7：ComfyUI 生圖 | 筆電實測與模型組合、workflow 與參數對照表、ComfyUI 連線程式（上傳、進度、輸出、取消）、去背快取、`includesProduct` 繪製、雲端切換、安裝與模型授權文件 | 全部流程都是真的 |
+| Plan 7：ComfyUI 生圖 | 筆電實測與模型組合、workflow 與參數對照表、ComfyUI 連線程式（上傳、進度、輸出、取消）、讀取已去背的商品圖、`includesProduct` 繪製、雲端切換、安裝與模型授權文件 | 全部流程都是真的 |
 | Plan 8：作品集 Demo | Cloudflare Pages 部署、Access 名單設定步驟、README 架構圖與操作說明、展示影片腳本 | 名單內的人可以觀看 Demo |
 
 ## 14. 待決事項（不阻擋開始）
