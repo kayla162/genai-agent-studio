@@ -166,7 +166,10 @@ export class HttpApiClient implements ApiClient {
   }
 
   saveProduct(draft: ProductDraft): Promise<Product> {
-    return draft.id ? this.request('PUT', `/api/products/${q(draft.id)}`, draft) : this.request('POST', '/api/products', draft);
+    // 只送 ProductDraft 的欄位：呼叫端常傳入整個商品（含 createdAt），後端會拒絕多餘欄位
+    const { id, brandId, name, features, price, photo, cutout } = draft;
+    const body: ProductDraft = { brandId, name, features, price, photo, cutout };
+    return id ? this.request('PUT', `/api/products/${q(id)}`, { ...body, id }) : this.request('POST', '/api/products', body);
   }
 
   deleteProduct(id: string): Promise<void> {

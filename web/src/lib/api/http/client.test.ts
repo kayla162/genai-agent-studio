@@ -63,6 +63,14 @@ describe('HttpApiClient REST', () => {
     expect(call(7).body).toEqual({ renderId: 'r1', copy: { headline: ['a', 'b'] } });
   });
 
+  it('sends only the draft fields when a whole product is saved', async () => {
+    // 編輯商品時傳入的是整個商品（含 createdAt）；後端的 ProductDraft 拒絕多餘欄位
+    const { api, call } = setup(() => Response.json(PRODUCT));
+    await api.saveProduct(PRODUCT);
+    expect(call(0).method).toBe('PUT');
+    expect(call(0).body).toEqual({ ...DRAFT, id: 'prod_1' });
+  });
+
   it('uploads product photos as multipart form data', async () => {
     const { api, call } = setup(() => Response.json({ source: 'upload', url: '/files/uploads/a.png' }, { status: 201 }));
     const photo = await api.uploadProductPhoto(new File([new Uint8Array([1, 2, 3])], 'serum.png', { type: 'image/png' }));

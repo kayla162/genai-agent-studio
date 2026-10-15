@@ -36,6 +36,8 @@ function EditForm({ product, onDone }: { product: Product; onDone: () => void })
       });
       toast.success('已儲存商品');
       onDone();
+    } catch (err) {
+      toast.error('儲存失敗', { description: err instanceof Error ? err.message : String(err) });
     } finally {
       setSaving(false);
     }
