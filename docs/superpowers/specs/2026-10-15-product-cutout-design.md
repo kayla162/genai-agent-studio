@@ -108,7 +108,7 @@ birefnet-general 的記憶體用量：
 3. **修改商品**：`PUT` 忽略請求中的 `cutout`。照片網址改變時，視同重新去背；沒有改變時保留原本的 `cutout`。
 4. **worker 的 `cutout` 任務**（參數：商品 id、照片網址）：
    1. 讀取商品。商品不存在，或照片網址已經不同（表示已有較新的任務），就結束。
-   2. 讀取照片檔：`upload` 從 `data/`，`local` 從本機資料夾，經 `resolve_file` 驗證路徑。
+   2. 讀取照片檔：`upload` 從 `data/`，`local` 從本機資料夾，經 `app/files.py` 的 `photo_path`（內部使用 `resolve_file`）驗證路徑。
    3. 等待模型準備好。
    4. 推論以 `asyncio.to_thread` 執行，不阻擋 event loop。
    5. 寫入 `data/products/{id}/cutout-{PNG 內容的 SHA-256 前 12 碼}.png`。
@@ -147,13 +147,14 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 
 ### 4.7 系統狀態
 
-- worker 把模型狀態寫入 Redis key `cutout:model`：`{ model, state: 'downloading' | 'ready' | 'failed' | 'sim', error }`。
+- worker 把模型狀態寫入 Redis key `cutout:model`：`{ model, state: 'downloading' | 'loading' | 'ready' | 'failed' | 'sim', error }`。key 與型別放在 `app/cutout/state.py`，api 讀取時不必匯入 onnxruntime。
 - `GET /api/status` 讀取這個 key，新增一個元件 `{ id: 'cutout', label: '去背模型（BiRefNet）' }`：
 
 | key 的內容 | `status` | `detail` |
 |---|---|---|
 | `ready` | `ok` | 例如「birefnet-general 已載入」 |
 | `downloading` | `off` | 「第一次使用，正在下載模型（約 1 GB）」 |
+| `loading` | `off` | 例如「正在載入 birefnet-general」（模型檔已在，載入約 15 秒） |
 | `failed` | `error` | 失敗原因 |
 | `sim` | `sim` | 「模擬去背」 |
 | 沒有這個 key | `error` | 「worker 尚未回報」 |
