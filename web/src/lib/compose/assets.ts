@@ -6,12 +6,13 @@ import { logoFor } from './scene';
 
 export interface ProductImageSource { src: string; blend: 'normal' | 'multiply' }
 
-/** 示範商品用 SVG 素材；上傳照片優先用去背圖，沒有就以色彩增值（multiply）合成 */
+/** 示範商品用 SVG 素材；上傳照片在去背完成後用透明 PNG，去背中、失敗或示意（url 為 null）時以色彩增值（multiply）合成 */
 export function productImage(product: Product, brand: Brand): ProductImageSource {
   if (product.photo.source === 'sample') {
     return { src: svgDataUrl(productArtSvg(product.photo.art, brand.palette, product.name, logoFor(brand).wordmark)), blend: 'normal' };
   }
-  return product.cutout?.url ? { src: product.cutout.url, blend: 'normal' } : { src: product.photo.url, blend: 'multiply' };
+  const cut = product.cutout;
+  return cut?.status === 'done' && cut.url ? { src: cut.url, blend: 'normal' } : { src: product.photo.url, blend: 'multiply' };
 }
 
 /** 品牌字型（@fontsource-variable 註冊的名稱帶 Variable），找不到時退回系統字型 */

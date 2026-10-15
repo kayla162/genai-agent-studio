@@ -14,35 +14,70 @@ interface ProductsState {
   cutout: (id: string) => Promise<Product>;
 }
 
+/** 有商品在去背中時，每隔這麼久重新讀取一次商品清單（毫秒） */
+export const CUTOUT_POLL_MS = 2_000;
+
 /** 目前品牌的商品清單（商品庫、新任務、批次佇列、歷史紀錄共用） */
-export const useProductsStore = create<ProductsState>()((set, get) => ({
-  brandId: null,
-  products: [],
-  loading: false,
-  cutting: [],
-  load: async (brandId) => {
-    set({ brandId, loading: true });
-    const products = await getApiClient().listProducts(brandId);
-    // 載入期間切換了品牌就丟棄舊結果
-    if (get().brandId === brandId) set({ products, loading: false });
-  },
-  save: async (draft) => {
-    const saved = await getApiClient().saveProduct(draft);
-    if (get().brandId) await get().load(get().brandId!);
-    return saved;
-  },
-  remove: async (id) => {
-    await getApiClient().deleteProduct(id);
-    set({ products: get().products.filter((p) => p.id !== id) });
-  },
-  cutout: async (id) => {
-    set({ cutting: [...get().cutting, id] });
-    try {
-      const updated = await getApiClient().requestCutout(id);
-      set({ products: get().products.map((p) => (p.id === id ? updated : p)) });
-      return updated;
-    } finally {
-      set({ cutting: get().cutting.filter((x) => x !== id) });
-    }
-  },
-}));
+export const useProductsStore = create<ProductsState>()((set, get) => {
+  let poll: ReturnType<typeof setTimeout> | null = null;
+
+  /** 有去背中的商品就排下一次讀取（同一時間只有一個計時器）；全部完成或失敗、或切換品牌後停止 */
+  const schedulePoll = (brandId: string) => {
+    if (poll) clearTimeout(poll);
+    poll = null;
+    if (!get().products.some((p) => p.cutout?.status === 'pending')) return;
+    poll = setTimeout(() => {
+      poll = null;
+      if (get().brandId !== brandId) return;
+      getApiClient().listProducts(brandId).then(
+        (products) => {
+          if (get().brandId !== brandId) return;
+          set({ products });
+          schedulePoll(brandId);
+        },
+        // 讀取失敗（例如後端重新啟動）：下一輪再試
+        () => {
+          if (get().brandId === brandId) schedulePoll(brandId);
+        },
+      );
+    }, CUTOUT_POLL_MS);
+  };
+
+  return {
+    brandId: null,
+    products: [],
+    loading: false,
+    cutting: [],
+    load: async (brandId) => {
+      if (poll) clearTimeout(poll);
+      poll = null;
+      set({ brandId, loading: true });
+      const products = await getApiClient().listProducts(brandId);
+      // 載入期間切換了品牌就丟棄舊結果
+      if (get().brandId !== brandId) return;
+      set({ products, loading: false });
+      schedulePoll(brandId);
+    },
+    save: async (draft) => {
+      const saved = await getApiClient().saveProduct(draft);
+      if (get().brandId) await get().load(get().brandId!);
+      return saved;
+    },
+    remove: async (id) => {
+      await getApiClient().deleteProduct(id);
+      set({ products: get().products.filter((p) => p.id !== id) });
+    },
+    cutout: async (id) => {
+      set({ cutting: [...get().cutting, id] });
+      try {
+        const updated = await getApiClient().requestCutout(id);
+        set({ products: get().products.map((p) => (p.id === id ? updated : p)) });
+        const brandId = get().brandId;
+        if (brandId) schedulePoll(brandId);
+        return updated;
+      } finally {
+        set({ cutting: get().cutting.filter((x) => x !== id) });
+      }
+    },
+  };
+});

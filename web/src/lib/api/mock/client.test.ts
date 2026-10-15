@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { JobEvent, JobInput, JobMessage } from '@/types/contract';
-import type { ApiClient } from '../client';
+import type { JobEvent, JobInput, JobMessage, ProductCutout } from '@/types/contract';
+import type { ApiClient, ProductDraft } from '../client';
 import { getApiClient } from '../index';
 import { MAX_STORED_JOBS, MockApiClient, makeJobId } from './client';
 import { MemoryStore } from './store';
@@ -60,22 +60,45 @@ describe('product photos and cutout', () => {
     await expect(api.uploadProductPhoto(new Blob(['x'], { type: 'text/plain' }))).rejects.toThrow('只能上傳圖片檔');
   });
 
-  it('simulates a cutout after 1.2 seconds and keeps it on the product', async () => {
+  const PENDING: ProductCutout = { model: 'BiRefNet-general', status: 'pending', url: null, error: null };
+  const DONE: ProductCutout = { model: 'BiRefNet-general', status: 'done', url: null, error: null };
+  const DRAFT: ProductDraft = {
+    brandId: 'selune', name: '晚安面膜', features: [], price: { sale: 680, original: 880 },
+    photo: { source: 'upload', url: 'data:image/png;base64,AQID' }, cutout: null,
+  };
+  const cutoutOf = async (api: MockApiClient, id: string) => (await api.listProducts('selune')).find((p) => p.id === id)?.cutout;
+
+  it('simulates the cutout of a new photo product in the background, like the backend', async () => {
     const api = new MockApiClient();
-    const saved = await api.saveProduct({
-      brandId: 'selune', name: '晚安面膜', features: [], price: { sale: 680, original: 880 },
-      photo: { source: 'upload', url: 'data:image/png;base64,AQID' }, cutout: null,
-    });
-    let done = false;
-    const pending = api.requestCutout(saved.id).then((p) => { done = true; return p; });
+    const saved = await api.saveProduct({ ...DRAFT, cutout: DONE });
+    // 去背狀態由「伺服器」管理：送來的 cutout 一律忽略
+    expect(saved.cutout).toEqual(PENDING);
     await vi.advanceTimersByTimeAsync(1_100);
-    expect(done).toBe(false);
+    expect(await cutoutOf(api, saved.id)).toEqual(PENDING);
     await vi.advanceTimersByTimeAsync(100);
-    const product = await pending;
-    expect(product.cutout).toEqual({ model: 'BiRefNet-general', status: 'done', url: null, error: null });
-    expect(product.createdAt).toBe(saved.createdAt);
-    expect((await api.listProducts('selune')).find((p) => p.id === saved.id)?.cutout).not.toBeNull();
+    expect(await cutoutOf(api, saved.id)).toEqual(DONE);
+    // 只改名稱：沿用原本的去背結果
+    const renamed = await api.saveProduct({ ...DRAFT, id: saved.id, name: '晚安修護面膜' });
+    expect(renamed.cutout).toEqual(DONE);
+    // 示範商品不需要去背
+    const sample = (await api.listProducts('selune'))[0];
+    expect((await api.saveProduct({ ...sample, name: '改名' })).cutout).toBeNull();
+  });
+
+  it('re-runs a cutout on request and finishes cutouts left pending by a reload', async () => {
+    const store = new MemoryStore();
+    const api = new MockApiClient(store);
+    const saved = await api.saveProduct(DRAFT);
+    await vi.advanceTimersByTimeAsync(1_200);
+    const again = await api.requestCutout(saved.id);
+    expect(again.cutout).toEqual(PENDING);
+    expect(again.createdAt).toBe(saved.createdAt);
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect(await cutoutOf(api, saved.id)).toEqual(DONE);
     await expect(api.requestCutout('prod_selune_serum')).rejects.toThrow('示範商品已是去背素材');
+    // 重新整理頁面：排程不在了，下一次讀取時直接完成
+    await api.requestCutout(saved.id);
+    expect(await cutoutOf(new MockApiClient(store), saved.id)).toEqual(DONE);
   });
 });
 

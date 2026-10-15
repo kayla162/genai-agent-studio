@@ -20,6 +20,11 @@ describe('productImage', () => {
     expect(productImage({ ...upload, cutout: { model: 'BiRefNet-general', status: 'done', url: null, error: null } }, SELUNE).blend).toBe('multiply');
     expect(productImage({ ...upload, cutout: { model: 'BiRefNet-general', status: 'done', url: '/cutout.png', error: null } }, SELUNE))
       .toEqual({ src: '/cutout.png', blend: 'normal' });
+    // 去背中或失敗：沿用色彩增值
+    for (const status of ['pending', 'failed'] as const) {
+      expect(productImage({ ...upload, cutout: { model: 'birefnet-general', status, url: '/old.png', error: null } }, SELUNE).blend)
+        .toBe('multiply');
+    }
   });
 });
 

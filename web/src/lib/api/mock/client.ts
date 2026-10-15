@@ -1,6 +1,7 @@
 import type {
   ApiOptions, BrandDocument, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent, JobEvent,
-  JobInput, JobMessage, JobStage, JobSummary, LocalPhoto, Product, ProductPhoto, RagChunk, Render, SystemStatus, TemplateId,
+  JobInput, JobMessage, JobStage, JobSummary, LocalPhoto, Product, ProductCutout, ProductPhoto, RagChunk, Render, SystemStatus,
+  TemplateId,
 } from '@/types/contract';
 import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDraft } from '../client';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
@@ -93,6 +94,11 @@ export function makeJobId(now: Date, rand: () => number = Math.random): string {
   return `job_${date}_${time}_${Math.floor(rand() * 0xffff).toString(16).padStart(4, '0')}`;
 }
 
+/** mock 的去背（示意）：約 1.2 秒後完成，url 為 null（合成時以色彩增值示意） */
+const CUTOUT_MS = 1200;
+const PENDING_CUTOUT: ProductCutout = { model: 'BiRefNet-general', status: 'pending', url: null, error: null };
+const DONE_CUTOUT: ProductCutout = { ...PENDING_CUTOUT, status: 'done' };
+
 const makeId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 export class MockApiClient implements ApiClient {
@@ -100,6 +106,8 @@ export class MockApiClient implements ApiClient {
   readonly connection: ConnectionChannel = { get: () => MOCK_CONNECTION, subscribe: () => () => {} };
   private options: DemoOptions = { speed: 1, firstRoundFail: true, forceAllFail: false };
   private readonly jobs = new Map<string, JobRecord>();
+  /** 去背中的商品 → 完成的計時器（只在記憶體；重新整理後由 listProducts 直接完成） */
+  private readonly cutoutTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private tail: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -157,6 +165,7 @@ export class MockApiClient implements ApiClient {
   }
 
   async listProducts(brandId: string): Promise<Product[]> {
+    await this.finishOrphanCutouts();
     const custom = await this.customProducts();
     const deleted = new Set((await this.store.get<string[]>(KEYS.deleted)) ?? []);
     const customIds = new Set(custom.map((p) => p.id));
@@ -164,6 +173,7 @@ export class MockApiClient implements ApiClient {
     return [...samples, ...custom].filter((p) => p.brandId === brandId);
   }
 
+  /** 與後端相同：去背狀態由這裡管理，送來的 cutout 一律忽略；新的商品照（新增或換照片）設為去背中 */
   saveProduct(draft: ProductDraft): Promise<Product> {
     return this.serial(async () => {
       getBrandById(draft.brandId);
@@ -171,10 +181,42 @@ export class MockApiClient implements ApiClient {
       const existing = draft.id
         ? (custom.find((p) => p.id === draft.id) ?? SAMPLE_PRODUCTS.find((p) => p.id === draft.id))
         : undefined;
-      const product: Product = { ...draft, id: draft.id ?? makeId('prod'), createdAt: existing?.createdAt ?? this.now().toISOString() };
+      const newPhoto = draft.photo.source !== 'sample' && JSON.stringify(existing?.photo) !== JSON.stringify(draft.photo);
+      const product: Product = {
+        id: draft.id ?? makeId('prod'), brandId: draft.brandId, name: draft.name, features: draft.features, price: draft.price,
+        photo: draft.photo, cutout: newPhoto ? PENDING_CUTOUT : (existing?.cutout ?? null),
+        createdAt: existing?.createdAt ?? this.now().toISOString(),
+      };
       await this.store.set(KEYS.products, [...custom.filter((p) => p.id !== product.id), product]);
+      if (newPhoto) this.scheduleCutout(product.id);
       return product;
     });
+  }
+
+  private scheduleCutout(id: string): void {
+    clearTimeout(this.cutoutTimers.get(id));
+    this.cutoutTimers.set(id, setTimeout(() => void this.finishCutouts([id]), CUTOUT_MS / this.options.speed));
+  }
+
+  /** 把仍在去背中的商品改為完成 */
+  private finishCutouts(ids: string[]): Promise<void> {
+    return this.serial(async () => {
+      for (const id of ids) {
+        clearTimeout(this.cutoutTimers.get(id));
+        this.cutoutTimers.delete(id);
+      }
+      const custom = await this.customProducts();
+      const done = (p: Product) => ids.includes(p.id) && p.cutout?.status === 'pending';
+      if (custom.some(done)) await this.store.set(KEYS.products, custom.map((p) => (done(p) ? { ...p, cutout: DONE_CUTOUT } : p)));
+    });
+  }
+
+  /** 沒有計時器的去背中商品（例如重新整理頁面後）直接完成 */
+  private async finishOrphanCutouts(): Promise<void> {
+    const orphans = (await this.customProducts())
+      .filter((p) => p.cutout?.status === 'pending' && !this.cutoutTimers.has(p.id))
+      .map((p) => p.id);
+    if (orphans.length) await this.finishCutouts(orphans);
   }
 
   deleteProduct(id: string): Promise<void> {
@@ -199,11 +241,17 @@ export class MockApiClient implements ApiClient {
     return { source: 'upload', url: await toDataUrl(file) };
   }
 
+  /** 重新去背：設為去背中並立即回傳，約 1.2 秒後完成 */
   async requestCutout(productId: string): Promise<Product> {
     const product = await this.findProduct(productId);
     if (product.photo.source === 'sample') throw new Error('示範商品已是去背素材');
-    await this.sleep(1200);
-    return this.saveProduct({ ...product, cutout: { model: 'BiRefNet-general', status: 'done', url: null, error: null } });
+    return this.serial(async () => {
+      const pending = { ...product, cutout: PENDING_CUTOUT };
+      const custom = await this.customProducts();
+      await this.store.set(KEYS.products, custom.map((p) => (p.id === productId ? pending : p)));
+      this.scheduleCutout(productId);
+      return pending;
+    });
   }
 
   async ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
