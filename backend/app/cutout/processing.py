@@ -30,7 +30,9 @@ def load_photo(data: bytes) -> Image.Image:
         with Image.open(io.BytesIO(data)) as img:
             upright = ImageOps.exif_transpose(img)
             return upright.convert('RGB')
-    except (UnidentifiedImageError, OSError) as error:
+    except Image.DecompressionBombError as error:
+        raise CutoutError('照片尺寸過大，請縮小後再試') from error
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, TypeError) as error:
         raise CutoutError('照片無法讀取') from error
 
 

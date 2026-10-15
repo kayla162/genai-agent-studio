@@ -2,6 +2,8 @@
 
 import io
 import math
+import struct
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -113,3 +115,47 @@ def test_onnx_segmenter_runs_the_model_without_a_memory_arena(tmp_path: Path) ->
     px = np.asarray(out)
     assert px[16, 8, 3] == 0
     assert px[16, 56].tolist() == [255, 255, 255, 255]
+
+
+def png_chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+
+
+def test_oversized_photos_raise_a_size_error() -> None:
+    # 檔頭宣告 20000×20000（4 億像素，超過 Pillow 的上限），沒有像素資料；Image.open 就會拒絕
+    ihdr = struct.pack('>IIBBBBB', 20000, 20000, 8, 2, 0, 0, 0)
+    data = b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', ihdr) + png_chunk(b'IEND', b'')
+    with pytest.raises(CutoutError, match='照片尺寸過大'):
+        load_photo(data)
+
+
+def test_corrupt_exif_raises_a_readable_error() -> None:
+    # dpi 讓 Pillow 在 open 時不預讀 EXIF，損毀的 EXIF 才會在 exif_transpose 時丟出 SyntaxError
+    buf = io.BytesIO()
+    Image.new('RGB', (20, 10), (200, 10, 10)).save(buf, 'JPEG', dpi=(72, 72))
+    jpeg = buf.getvalue()
+    app1 = b'Exif\x00\x00' + b'not a tiff header'
+    corrupt = jpeg[:2] + b'\xff\xe1' + struct.pack('>H', len(app1) + 2) + app1 + jpeg[2:]
+    with pytest.raises(CutoutError, match='照片無法讀取'):
+        load_photo(corrupt)
+
+
+def test_input_is_scaled_by_the_photos_own_max() -> None:
+    # 很暗的照片也以自己的最大值為 1 來縮放（與 rembg 相同）
+    x = to_input(Image.new('RGB', (40, 20), (100, 50, 25)))
+    assert x[0, 0, 0, 0] == pytest.approx((1 - MEAN[0]) / STD[0], rel=1e-5)
+    assert x[0, 1, 0, 0] == pytest.approx((0.5 - MEAN[1]) / STD[1], rel=1e-5)
+
+
+def test_snapping_boundaries_are_pinned() -> None:
+    # 遮罩值 241、242、13、14（取各值的中間點，避免浮點誤差）→ 241、255、0、14
+    values = [241, 242, 13, 14]
+    bands = [-50.0] + [logit((value + 0.5) / 255) for value in values] + [50.0]
+    output = np.zeros((1, 1, INPUT_SIZE, INPUT_SIZE), dtype=np.float32)
+    width = INPUT_SIZE // len(bands)
+    for i, value in enumerate(bands):
+        output[0, 0, :, i * width : (i + 1) * width] = value
+    output[0, 0, :, len(bands) * width :] = bands[-1]
+    mask = np.asarray(to_mask(output, (INPUT_SIZE, INPUT_SIZE)))
+    centers = [int(mask[INPUT_SIZE // 2, i * width + width // 2]) for i in range(len(bands))]
+    assert centers[1:5] == [241, 255, 0, 14]
