@@ -11,6 +11,8 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from app.errors import AppError
+
 INPUT_SIZE = 1024
 MEAN = (0.485, 0.456, 0.406)
 STD = (0.229, 0.224, 0.225)
@@ -20,7 +22,7 @@ OPAQUE_FROM = 242
 CLEAR_UNTIL = 13
 
 
-class CutoutError(Exception):
+class CutoutError(AppError):
     """去背失敗；訊息為繁體中文，直接顯示在商品卡上。"""
 
 

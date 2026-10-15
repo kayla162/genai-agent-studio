@@ -1,24 +1,41 @@
 """worker：任務經過佇列執行、啟動時復原、去背、品牌文件上傳、回寫。需要 composer。"""
 
 import asyncio
+import io
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
+import numpy as np
 import pytest
+from PIL import Image
 from redis.asyncio import Redis
 from saq.job import Status
 
 from app.adapters.composer import ComposerClient
 from app.brands import load_brands
-from app.contract import FilePhoto, JobAcceptedEvent, JobInput, JobStatusEvent, Price, ProductDraft
+from app.contract import (
+    FilePhoto,
+    JobAcceptedEvent,
+    JobInput,
+    JobStatusEvent,
+    Price,
+    Product,
+    ProductCutout,
+    ProductDraft,
+)
+from app.cutout.engine import CutoutEngine
+from app.cutout.segmenter import Segmenter, SimSegmenter
 from app.db.session import Database
 from app.events import EventStore
 from app.pipeline.sim import sim_ports
-from app.queues import Queues, ingest_channel
+from app.queues import Queues, cutout_key, ingest_channel
 from app.repo import catalog, jobs
+from app.settings import Settings
 from app.worker import RESTART_REASON, Services, build_workers, cutout, ingest, recover
 from tests.conftest import TEST_REDIS_URL
 from tests.fixtures import BRANDS_DIR, load_fixture
@@ -27,12 +44,14 @@ NOW = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
 
 
 @pytest.fixture
-async def services(db: Database, redis: Redis, composer_url: str) -> AsyncIterator[Services]:
+async def services(db: Database, redis: Redis, composer_url: str, tmp_path: Path) -> AsyncIterator[Services]:
     composer = ComposerClient(composer_url)
     ports = sim_ports(composer, first_round_fail=True, force_all_fail=False)
     async with db.session() as s:
         await catalog.sync_brands(s, load_brands(BRANDS_DIR)[0], NOW)
-    yield Services(db, redis, EventStore(db, redis), composer, ports, speed=0)
+    settings = Settings(data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local')
+    cutouts = CutoutEngine('sim', tmp_path / 'models', redis)
+    yield Services(db, redis, EventStore(db, redis), composer, ports, speed=0, settings=settings, cutouts=cutouts)
     await composer.aclose()
     await db.truncate_all()
 
@@ -150,7 +169,7 @@ async def test_recovery_aborts_the_queue_record_of_a_running_job(
     assert await queues.jobs.count('active') == 0
     # worker 上次是當掉的：每放掉一筆紀錄記一則警告
     assert [r.getMessage() for r in caplog.records if r.name == 'app.worker'] == [
-        '釋放前一個 worker 留下的佇列紀錄：job_id=job_dead'
+        '釋放前一個 worker 留下的佇列紀錄：job_dead'
     ]
     assert (await summary(services, 'job_dead')).stage == 'failed'
     # 其他狀態的紀錄不動
@@ -172,26 +191,131 @@ async def test_recovery_releases_the_queue_record_of_a_job_that_already_finished
     assert (await summary(services, 'job_finished')).stage == 'done'
 
 
-async def test_cutout_marks_uploaded_products_and_refuses_samples(services: Services, queues: Queues) -> None:
+PENDING = ProductCutout(model='BiRefNet-general', status='pending', url=None, error=None)
+
+
+def photo_bytes(size: tuple[int, int] = (40, 60)) -> bytes:
+    buf = io.BytesIO()
+    Image.new('RGB', size, (120, 80, 160)).save(buf, 'JPEG')
+    return buf.getvalue()
+
+
+async def photo_product(services: Services, url: str, source: str = 'upload') -> Product:
+    """去背中的商品；照片檔由呼叫端寫入 data/ 或本機資料夾。"""
     async with services.db.session() as s:
-        product = await catalog.save_product(
+        return await catalog.save_product(
             s,
             ProductDraft(
                 brand_id='selune',
                 name='晚安面膜',
                 features=[],
                 price=Price(sale=0, original=0),
-                photo=FilePhoto(source='upload', url='/files/products/x.png'),
-                cutout=None,
+                photo=FilePhoto.model_validate({'source': source, 'url': url}),
+                cutout=PENDING,
             ),
             NOW,
         )
+
+
+async def current(services: Services, product_id: str) -> Product:
+    async with services.db.session() as s:
+        product = await catalog.get_product(s, product_id)
+    assert product is not None
+    return product
+
+
+def write_upload(services: Services, name: str, data: bytes) -> str:
+    folder = services.settings.data_dir / 'uploads'
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_bytes(data)
+    return f'/files/uploads/{name}'
+
+
+async def test_cutout_runs_on_its_own_queue_and_writes_a_transparent_png(services: Services, queues: Queues) -> None:
+    product = await photo_product(services, write_upload(services, 'mask.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    await queues.enqueue_cutout(product.id, product.photo.url)
+    await queues.enqueue_cutout(product.id, product.photo.url)
+    assert await queues.cutouts.count('queued') == 1
     async with running(services, queues):
-        done = await queues.run_task('cutout', wait=10, product_id=product.id)
-    assert done.completed
-    cut = done.result['product']['cutout']
-    assert cut == {'model': 'BiRefNet-general', 'status': 'done', 'url': None, 'error': None}
-    assert await cutout(services, 'prod_selune_serum') == {'error': '示範商品已是去背素材'}
+        for _ in range(50):
+            if (await current(services, product.id)).cutout != PENDING:
+                break
+            await asyncio.sleep(0.1)
+    cut = (await current(services, product.id)).cutout
+    assert cut is not None and (cut.model, cut.status, cut.error) == ('sim', 'done', None)
+    assert cut.url is not None and cut.url.startswith(f'/files/products/{product.id}/cutout-')
+    alpha = np.asarray(Image.open(services.settings.data_dir / cut.url.removeprefix('/files/')))[:, :, 3]
+    assert (alpha[0, 0], alpha[30, 20]) == (0, 255)
+    assert [w.concurrency for w in build_workers(services, queues)] == [1, 2, 1]
+
+
+async def test_cutout_reports_missing_and_unreadable_photos(services: Services) -> None:
+    missing = await photo_product(services, '/files/uploads/gone.jpg')
+    broken = await photo_product(services, write_upload(services, 'broken.jpg', b'not an image'))
+    for product in (missing, broken):
+        assert isinstance(product.photo, FilePhoto)
+        await cutout(services, product.id, product.photo.url)
+    assert (await current(services, missing.id)).cutout == ProductCutout(
+        model='sim', status='failed', url=None, error='找不到商品照：/files/uploads/gone.jpg'
+    )
+    assert (await current(services, broken.id)).cutout == ProductCutout(
+        model='sim', status='failed', url=None, error='照片無法讀取'
+    )
+
+
+async def test_cutout_reads_local_photos_by_their_quoted_url(services: Services) -> None:
+    folder = services.settings.local_photos_dir
+    folder.mkdir(parents=True)
+    (folder / '精華液 30ml.jpg').write_bytes(photo_bytes())
+    product = await photo_product(services, f'/files/local/{quote("精華液 30ml.jpg", safe="")}', source='local')
+    assert isinstance(product.photo, FilePhoto)
+    await cutout(services, product.id, product.photo.url)
+    cut = (await current(services, product.id)).cutout
+    assert cut is not None and cut.status == 'done'
+
+
+async def test_cutout_discards_its_result_when_the_photo_changed_meanwhile(services: Services) -> None:
+    old_url = write_upload(services, 'old.jpg', photo_bytes())
+    product = await photo_product(services, old_url)
+    newer = ProductCutout(model='sim', status='done', url='/files/products/x/cutout-newer.png', error=None)
+
+    class PhotoChangedWhileWaiting(CutoutEngine):
+        async def segmenter(self) -> Segmenter:
+            # 等模型時，使用者換了照片，新照片的去背也已經完成
+            fields = {k: v for k, v in product.to_json().items() if k != 'createdAt'}
+            changed = {**fields, 'photo': {'source': 'upload', 'url': '/files/uploads/new.jpg'}}
+            async with services.db.session() as s:
+                await catalog.save_product(s, ProductDraft.model_validate({**changed, 'cutout': newer.to_json()}), NOW)
+            return SimSegmenter()
+
+    services.cutouts = PhotoChangedWhileWaiting('sim', services.settings.data_dir, services.redis)
+    folder = services.settings.data_dir / 'products' / product.id
+    folder.mkdir(parents=True)
+    (folder / 'cutout-newer.png').write_bytes(b'newer')
+    await cutout(services, product.id, old_url)
+    assert (await current(services, product.id)).cutout == newer
+    # 舊照片的結果丟掉，新照片的檔案留著
+    assert [f.name for f in folder.iterdir()] == ['cutout-newer.png']
+    # 照片早已換掉的任務直接結束
+    await cutout(services, product.id, old_url)
+    assert (await current(services, product.id)).cutout == newer
+
+
+async def test_recovery_releases_cutout_orphans_and_requeues_pending_cutouts(
+    services: Services, queues: Queues
+) -> None:
+    product = await photo_product(services, write_upload(services, 'a.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    key = cutout_key(product.id, product.photo.url)
+    await queues.enqueue_cutout(product.id, product.photo.url)
+    taken = await queues.cutouts.dequeue(timeout=1)
+    assert taken is not None and taken.key == key
+    await taken.update(status=Status.ACTIVE)
+    await recover(services, queues)
+    record = await queues.cutouts.job(key)
+    assert record is not None and record.status == Status.QUEUED
+    assert await queues.cutouts.count('active') == 0
 
 
 async def test_run_task_returns_unfinished_when_the_wait_runs_out(queues: Queues) -> None:

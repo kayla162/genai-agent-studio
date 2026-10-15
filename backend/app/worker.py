@@ -1,16 +1,19 @@
 """SAQ worker：uv run python -m app.worker
 
 - jobs 佇列：run_job（生圖任務，一次一個）
-- tasks 佇列：cutout（去背）、ingest（品牌文件上傳）、write_back（選定海報回寫成歷史案例），最多同時兩個
-- 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務重新放回佇列
+- tasks 佇列：ingest（品牌文件上傳）、write_back（選定海報回寫成歷史案例），最多同時兩個
+- cutouts 佇列：cutout（商品照去背，一次一個）
+- 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務與去背中的商品重新放回佇列
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import signal
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from redis.asyncio import Redis
@@ -21,6 +24,7 @@ from sqlalchemy import select
 from app.adapters.composer import ComposerClient
 from app.contract import (
     BrandDocument,
+    FilePhoto,
     IngestChunkedEvent,
     IngestEmbeddedEvent,
     IngestStoredEvent,
@@ -28,19 +32,20 @@ from app.contract import (
     JobStatusEvent,
     LogEvent,
     ProductCutout,
-    ProductDraft,
 )
 from app.core.clock import utc_now
+from app.cutout.engine import CutoutEngine
 from app.db.models import JobRow
 from app.db.session import Database
 from app.errors import AppError, NotFound
 from app.events import EventStore
+from app.files import photo_path
 from app.pipeline.ports import Ports
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
 from app.queues import Queues, ingest_channel
 from app.repo import catalog, history
-from app.settings import settings
+from app.settings import Settings, settings
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,8 @@ class Services:
     ports: Ports
     #: 模擬模式的播放速度（0 為不等待）
     speed: float
+    settings: Settings
+    cutouts: CutoutEngine
 
     async def pace(self, ms: float) -> None:
         if self.speed > 0:
@@ -69,24 +76,44 @@ def build_services() -> Services:
     ports = sim_ports(
         composer, first_round_fail=settings.sim_first_round_fail, force_all_fail=settings.sim_force_all_fail
     )
-    return Services(db, redis, EventStore(db, redis), composer, ports, settings.sim_speed)
+    cutouts = CutoutEngine(settings.cutout_model, settings.models_dir, redis)
+    return Services(db, redis, EventStore(db, redis), composer, ports, settings.sim_speed, settings, cutouts)
 
 
-async def cutout(services: Services, product_id: str) -> dict[str, Any]:
-    """去背（模擬：約 1.2 秒，不產生圖檔，合成時以色彩增值讓白底融入背景）。"""
+async def cutout(services: Services, product_id: str, photo_url: str) -> None:
+    """去背：讀照片 → 等模型 → 推論（另一條執行緒，不阻擋其他任務）→ 寫入 PNG → 確認商品沒變才寫入結果。"""
     async with services.db.session() as s:
         product = await catalog.get_product(s, product_id)
-    if product is None:
-        return {'error': f'找不到商品：{product_id}'}
-    if product.photo.source == 'sample':
-        return {'error': '示範商品已是去背素材'}
-    await services.pace(1200)
-    fields = {k: v for k, v in product.to_json().items() if k != 'createdAt'}
-    cut = ProductCutout(model='BiRefNet-general', status='done', url=None, error=None)
-    draft = ProductDraft.model_validate({**fields, 'cutout': cut.to_json()})
+    # 商品已刪除，或照片已經換掉（較新的任務會處理新照片）
+    if product is None or not isinstance(product.photo, FilePhoto) or product.photo.url != photo_url:
+        return
+    folder = services.settings.data_dir / 'products' / product_id
+    written: Path | None = None
+    try:
+        photo = await asyncio.to_thread(photo_path(services.settings, photo_url).read_bytes)
+        segmenter = await services.cutouts.segmenter()
+        png = await asyncio.to_thread(segmenter.cut, photo)
+        name = f'cutout-{hashlib.sha256(png).hexdigest()[:12]}.png'
+        await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+        written = folder / name
+        await asyncio.to_thread(written.write_bytes, png)
+        result = ProductCutout(
+            model=segmenter.name, status='done', url=f'/files/products/{product_id}/{name}', error=None
+        )
+    except Exception as error:  # noqa: BLE001 - 任何錯誤都顯示在商品卡上
+        logger.exception('去背失敗：product_id=%s', product_id)
+        result = ProductCutout(model=services.cutouts.model, status='failed', url=None, error=failure_reason(error))
     async with services.db.session() as s:
-        saved = await catalog.save_product(s, draft, utc_now())
-    return {'product': saved.to_json()}
+        saved = await catalog.set_cutout(s, product_id, photo_url, result)
+    if written is not None:
+        await asyncio.to_thread(_remove_cutouts, folder, keep=written if saved is not None else None, only=written)
+
+
+def _remove_cutouts(folder: Path, *, keep: Path | None, only: Path) -> None:
+    """寫入成功時刪掉同一商品的舊去背圖；沒寫入（商品已刪除或換了照片）時只刪掉這次寫的檔案。"""
+    targets = [only] if keep is None else [f for f in folder.glob('cutout-*.png') if f != keep]
+    for f in targets:
+        f.unlink(missing_ok=True)
 
 
 async def ingest(services: Services, task_id: str, brand_id: str, name: str, text: str) -> None:
@@ -129,8 +156,8 @@ async def write_back(services: Services, history_id: str) -> bool:
 async def recover(services: Services, queues: Queues) -> None:
     # 前一個 worker 被強制終止時，佇列紀錄會停在執行中：不放掉的話，系統狀態永遠算它執行中，
     # 排隊中的任務也會因為 key 相同被當成重複而不再執行。任務在資料庫裡可能已經結束，所以不依資料庫的任務逐筆處理
-    for job_id in await queues.release_orphans(RESTART_REASON):
-        logger.warning('釋放前一個 worker 留下的佇列紀錄：job_id=%s', job_id)
+    for key in await queues.release_orphans(RESTART_REASON):
+        logger.warning('釋放前一個 worker 留下的佇列紀錄：%s', key)
     async with services.db.session() as s:
         rows = (await s.scalars(select(JobRow).where(JobRow.finished.is_(False)).order_by(JobRow.created_at))).all()
     for row in rows:
@@ -140,14 +167,20 @@ async def recover(services: Services, queues: Queues) -> None:
         await services.store.append(row.id, LogEvent(type='log', source='api', level='error', message=RESTART_REASON))
         await services.store.append(row.id, JobFailedEvent(type='job.failed', job_id=row.id, reason=RESTART_REASON))
         await services.store.append(row.id, JobStatusEvent(type='job.status', stage='failed', round=row.round))
+    # 去背中斷的商品重新排入
+    async with services.db.session() as s:
+        pending = await catalog.pending_cutouts(s)
+    for product in pending:
+        if isinstance(product.photo, FilePhoto):
+            await queues.enqueue_cutout(product.id, product.photo.url)
 
 
-def build_workers(services: Services, queues: Queues, **options: Any) -> tuple[Worker[Context], Worker[Context]]:
+def build_workers(services: Services, queues: Queues, **options: Any) -> tuple[Worker[Context], ...]:
     async def run_job_fn(ctx: Context, *, job_id: str) -> None:
         await run_job(job_id, services.db, services.store, services.ports, speed=services.speed)
 
-    async def cutout_fn(ctx: Context, *, product_id: str) -> dict[str, Any]:
-        return await cutout(services, product_id)
+    async def cutout_fn(ctx: Context, *, product_id: str, photo_url: str) -> None:
+        await cutout(services, product_id, photo_url)
 
     async def ingest_fn(ctx: Context, *, task_id: str, brand_id: str, name: str, text: str) -> None:
         await ingest(services, task_id, brand_id, name, text)
@@ -165,16 +198,18 @@ def build_workers(services: Services, queues: Queues, **options: Any) -> tuple[W
     jobs = Worker(queues.jobs, [('run_job', run_job_fn)], concurrency=1, startup=[sweep_first], **options)
     tasks = Worker(
         queues.tasks,
-        [('cutout', cutout_fn), ('ingest', ingest_fn), ('write_back', write_back_fn)],
+        [('ingest', ingest_fn), ('write_back', write_back_fn)],
         concurrency=2,
         startup=[sweep_first],
         **options,
     )
-    # 兩個 worker 在同一個 event loop：每個 worker 自己註冊的 SIGINT/SIGTERM 處理會互相取代，
-    # 只有最後啟動的那個會停下來，另一個繼續跑到被 Docker 強制終止。所以關掉，改由 main 統一處理。
-    jobs.SIGNALS = []
-    tasks.SIGNALS = []
-    return jobs, tasks
+    cutouts = Worker(queues.cutouts, [('cutout', cutout_fn)], concurrency=1, startup=[sweep_first], **options)
+    workers = (jobs, tasks, cutouts)
+    # 多個 worker 在同一個 event loop：每個 worker 自己註冊的 SIGINT/SIGTERM 處理會互相取代，
+    # 只有最後啟動的那個會停下來，其他的繼續跑到被 Docker 強制終止。所以關掉，改由 main 統一處理。
+    for worker in workers:
+        worker.SIGNALS = []
+    return workers
 
 
 def stop_on_signals(workers: tuple[Worker[Context], ...]) -> None:
@@ -200,11 +235,14 @@ async def main() -> None:
     queues = Queues(settings.redis_url)
     await queues.connect()
     await recover(services, queues)
-    jobs, tasks = build_workers(services, queues)
-    stop_on_signals((jobs, tasks))
+    # 第一次啟動時下載模型（約 1 GB）；在背景進行，不擋住生圖與文件上傳
+    warming = asyncio.create_task(services.cutouts.warm_up())
+    workers = build_workers(services, queues)
+    stop_on_signals(workers)
     try:
-        await asyncio.gather(jobs.start(), tasks.start())
+        await asyncio.gather(*(w.start() for w in workers))
     finally:
+        warming.cancel()
         await queues.disconnect()
         await services.composer.aclose()
         await services.db.dispose()

@@ -1,10 +1,12 @@
 """SAQ 佇列：api 放入工作，worker 執行。
 
 - jobs：生圖任務，一次只執行一個（只有一張 GPU）；key 為任務 id，同一個任務不會重複排入。
-- tasks：去背、文件上傳、回寫歷史案例，最多同時兩個，不必等生圖任務。
+- tasks：文件上傳、回寫歷史案例，最多同時兩個，不必等生圖任務。
+- cutouts：商品照去背，一次一個（推論時約 6.5 GB 記憶體）；大量新增商品時不會擋住文件上傳。
 """
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,13 +15,21 @@ from saq.job import Status
 
 JOBS = 'jobs'
 TASKS = 'tasks'
+CUTOUTS = 'cutouts'
 #: tasks 佇列裡單一工作最長的執行時間（秒）
 TASK_TIMEOUT = 600
+#: 單張去背最長的時間（秒）：含第一次下載模型（約 1 GB）與推論
+CUTOUT_TIMEOUT = 600
 
 
 def ingest_channel(task_id: str) -> str:
     """品牌文件上傳的進度：worker 發布到這個 Redis 頻道，api 以 NDJSON 串流轉給前端。"""
     return f'ingest:{task_id}'
+
+
+def cutout_key(product_id: str, photo_url: str) -> str:
+    """同一張照片的去背還在排隊或執行時不會重複排入；換了照片 key 就不同，一定會排入。"""
+    return f'cutout:{product_id}:{hashlib.sha256(photo_url.encode()).hexdigest()[:8]}'
 
 
 @dataclass(frozen=True)
@@ -33,31 +43,44 @@ class Queues:
     def __init__(self, redis_url: str) -> None:
         self.jobs = Queue.from_url(redis_url, name=JOBS)
         self.tasks = Queue.from_url(redis_url, name=TASKS)
+        self.cutouts = Queue.from_url(redis_url, name=CUTOUTS)
 
     async def connect(self) -> None:
-        await self.jobs.connect()
-        await self.tasks.connect()
+        for queue in (self.jobs, self.tasks, self.cutouts):
+            await queue.connect()
 
     async def disconnect(self) -> None:
-        await self.jobs.disconnect()
-        await self.tasks.disconnect()
+        for queue in (self.jobs, self.tasks, self.cutouts):
+            await queue.disconnect()
 
     async def enqueue_job(self, job_id: str) -> None:
         """生圖可能花上數十分鐘，不設逾時（流程內各步驟有自己的逾時）。"""
         await self.jobs.enqueue('run_job', key=job_id, timeout=0, job_id=job_id)
 
+    async def enqueue_cutout(self, product_id: str, photo_url: str) -> None:
+        await self.cutouts.enqueue(
+            'cutout',
+            key=cutout_key(product_id, photo_url),
+            timeout=CUTOUT_TIMEOUT,
+            product_id=product_id,
+            photo_url=photo_url,
+        )
+
     async def release_orphans(self, reason: str) -> list[str]:
-        """放掉前一個 worker 留下的 ACTIVE 紀錄，回傳被放掉的 key（任務 id）。
+        """放掉前一個 worker 留下的 ACTIVE 紀錄（生圖與去背），回傳被放掉的 key。
 
         worker 被強制終止時，紀錄會永遠停在執行中：系統狀態一直算它執行中，
         同一個任務也無法重新排入（key 相同會被當成重複）。
         只在 worker 啟動前呼叫：只有一個 worker 行程，這時候 ACTIVE 的紀錄一定屬於已經結束的行程。
         """
-        # 先收集再放掉：放掉會改寫紀錄，不要一邊掃描一邊改
-        orphans = [job async for job in self.jobs.iter_jobs(statuses=[Status.ACTIVE])]
-        for job in orphans:
-            await self.jobs.finish(job, Status.ABORTED, error=reason)
-        return [job.key for job in orphans]
+        released: list[str] = []
+        for queue in (self.jobs, self.cutouts):
+            # 先收集再放掉：放掉會改寫紀錄，不要一邊掃描一邊改
+            orphans = [job async for job in queue.iter_jobs(statuses=[Status.ACTIVE])]
+            for job in orphans:
+                await queue.finish(job, Status.ABORTED, error=reason)
+            released += [job.key for job in orphans]
+        return released
 
     async def enqueue_task(self, function: str, /, **kwargs: Any) -> None:
         await self.tasks.enqueue(function, timeout=TASK_TIMEOUT, **kwargs)

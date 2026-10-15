@@ -1,13 +1,16 @@
 """api：選項、系統狀態、品牌與文件上傳、商品與商品照、本機資料夾、檔案。需要 composer。"""
 
 import asyncio
+import io
 import json
 import re
 from pathlib import Path
 from typing import Any
 
-from app.api.files import resolve_file
+from PIL import Image
+
 from app.brands import BrandLoadError
+from app.files import resolve_file
 from app.settings import Settings
 from tests.conftest import LiveApi
 from tests.fixtures import load_fixture
@@ -134,13 +137,32 @@ async def test_upload_photo_and_read_it_back(api: LiveApi) -> None:
         assert (rejected.status_code, rejected.json()['error']['message']) == (400, message)
 
 
-async def test_cutout_runs_on_the_worker(api: LiveApi) -> None:
-    product = (await api.http.post('/api/products', json=DRAFT)).json()
+def real_png() -> bytes:
+    buf = io.BytesIO()
+    Image.new('RGB', (40, 60), (120, 80, 160)).save(buf, 'PNG')
+    return buf.getvalue()
+
+
+async def products(api: LiveApi) -> list[dict[str, Any]]:
+    listed: list[dict[str, Any]] = (await api.http.get('/api/products', params={'brandId': 'selune'})).json()
+    return listed
+
+
+async def test_cutout_is_queued_and_finished_by_the_worker(api: LiveApi) -> None:
+    photo = (await api.http.post('/api/products/photos', files={'file': ('a.png', real_png(), 'image/png')})).json()
+    product = (await api.http.post('/api/products', json={**DRAFT, 'photo': photo})).json()
+    res = await api.http.post(f'/api/products/{product["id"]}/cutout')
+    assert res.status_code == 202
+    assert res.json()['cutout'] == {'model': 'birefnet-general', 'status': 'pending', 'url': None, 'error': None}
     async with api.worker():
-        res = await api.http.post(f'/api/products/{product["id"]}/cutout')
-    assert res.json()['cutout'] == {'model': 'BiRefNet-general', 'status': 'done', 'url': None, 'error': None}
-    listed = (await api.http.get('/api/products', params={'brandId': 'selune'})).json()
-    assert listed[-1]['cutout'] == {'model': 'BiRefNet-general', 'status': 'done', 'url': None, 'error': None}
+        for _ in range(50):
+            if (await products(api))[-1]['cutout']['status'] != 'pending':
+                break
+            await asyncio.sleep(0.1)
+    cut = (await products(api))[-1]['cutout']
+    assert (cut['model'], cut['status'], cut['error']) == ('sim', 'done', None)
+    served = await api.http.get(cut['url'])
+    assert (served.status_code, served.headers['content-type']) == (200, 'image/png')
     sample = await api.http.post('/api/products/prod_selune_serum/cutout')
     assert sample.json() == {'error': {'code': 'invalid', 'message': '示範商品已是去背素材'}}
 

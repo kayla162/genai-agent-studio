@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.composer import ComposerClient
 from app.api.main import create_app
 from app.api.services import ApiServices
+from app.cutout.engine import CutoutEngine
 from app.db.session import Database
 from app.events import EventStore
 from app.pipeline.sim import SimAgent, sim_ports
@@ -110,7 +111,9 @@ class LiveApi:
         s = self.services
         composer = ComposerClient(self.composer_url)
         ports = sim_ports(composer, first_round_fail=True, force_all_fail=False)
-        workers = build_workers(WorkerServices(s.db, s.redis, s.store, composer, ports, speed), s.queues)
+        cutouts = CutoutEngine('sim', s.settings.data_dir / 'models', s.redis)
+        worker_services = WorkerServices(s.db, s.redis, s.store, composer, ports, speed, s.settings, cutouts)
+        workers = build_workers(worker_services, s.queues)
         started = [asyncio.create_task(w.start()) for w in workers]
         try:
             yield

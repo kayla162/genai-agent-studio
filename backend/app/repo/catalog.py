@@ -8,7 +8,7 @@ from sqlalchemy import case, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brands import LoadedBrand
-from app.contract import Brand, Product, ProductDraft, RagChunk
+from app.contract import Brand, FilePhoto, Product, ProductCutout, ProductDraft, RagChunk
 from app.core.clock import iso, parse_iso
 from app.db.models import BrandChunkRow, BrandRow, ProductRow
 
@@ -150,6 +150,27 @@ async def save_product(session: AsyncSession, draft: ProductDraft, now: datetime
     row.brand_id, row.data, row.deleted = draft.brand_id, product.to_json(), False
     await session.commit()
     return product
+
+
+async def set_cutout(session: AsyncSession, product_id: str, photo_url: str, cutout: ProductCutout) -> Product | None:
+    """鎖定商品列，確認商品仍在、照片沒換才寫入去背狀態；否則不寫入並回傳 None。"""
+    row = await session.get(ProductRow, product_id, with_for_update=True)
+    product = Product.model_validate(row.data) if row and not row.deleted else None
+    if row is None or product is None or not isinstance(product.photo, FilePhoto) or product.photo.url != photo_url:
+        await session.rollback()
+        return None
+    updated = product.model_copy(update={'cutout': cutout})
+    row.data = updated.to_json()
+    await session.commit()
+    return updated
+
+
+async def pending_cutouts(session: AsyncSession) -> list[Product]:
+    """還在去背中的商品（worker 啟動時重新排入）。"""
+    rows = await session.scalars(
+        select(ProductRow).where(ProductRow.deleted.is_(False), ProductRow.data['cutout']['status'].astext == 'pending')
+    )
+    return [Product.model_validate(r.data) for r in rows]
 
 
 async def delete_product(session: AsyncSession, product_id: str) -> bool:

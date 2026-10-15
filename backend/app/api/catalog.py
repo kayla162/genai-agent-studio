@@ -25,6 +25,7 @@ from app.contract import (
     Model,
     Price,
     Product,
+    ProductCutout,
     ProductDraft,
     SystemStatus,
 )
@@ -48,8 +49,6 @@ SIMULATED = [
 STATUS_TIMEOUT = 3
 #: 文件上傳最多等待的秒數（超過時回報錯誤，worker 仍會繼續處理）
 INGEST_TIMEOUT = 120
-#: 去背最多等待的秒數
-CUTOUT_WAIT = 30
 #: 上傳的商品照：MIME → 副檔名（與本機資料夾支援的格式相同）
 UPLOAD_TYPES = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -227,20 +226,27 @@ async def upload_photo(file: UploadFile, services: Services) -> FilePhoto:
     return FilePhoto(source='upload', url=f'/files/uploads/{name}')
 
 
-@router.post('/api/products/{product_id}/cutout')
+async def queue_cutout(services: ApiServices, product_id: str, photo_url: str) -> Product:
+    """設為去背中並排入 cutouts 佇列，立即回傳（前端在去背中時定時重新讀取商品清單）。"""
+    pending = ProductCutout(model=services.settings.cutout_model, status='pending', url=None, error=None)
+    async with services.db.session() as s:
+        saved = await catalog.set_cutout(s, product_id, photo_url, pending)
+    if saved is None:
+        raise NotFound(f'找不到商品：{product_id}')
+    await services.queues.enqueue_cutout(product_id, photo_url)
+    return saved
+
+
+@router.post('/api/products/{product_id}/cutout', status_code=202)
 async def request_cutout(product_id: str, services: Services) -> Product:
+    """重新去背。"""
     async with services.db.session() as s:
         product = await catalog.get_product(s, product_id)
     if product is None:
         raise NotFound(f'找不到商品：{product_id}')
-    if product.photo.source == 'sample':
+    if not isinstance(product.photo, FilePhoto):
         raise Invalid('示範商品已是去背素材')
-    done = await services.queues.run_task('cutout', wait=CUTOUT_WAIT, product_id=product_id)
-    if not done.completed:
-        raise Unavailable('去背還沒完成：請確認 worker 正在執行，稍後再重新整理')
-    if 'error' in done.result:
-        raise Invalid(done.result['error'])
-    return Product.model_validate(done.result['product'])
+    return await queue_cutout(services, product_id, product.photo.url)
 
 
 def local_photo_url(file: str) -> str:
