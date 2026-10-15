@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     llm_model: str = 'Gemini 3.7 Flash'
     vlm_model: str = 'Gemini 3.7 Vision'
 
+    #: 去背模型：birefnet-general（預設）、birefnet-general-lite，或不需要模型的 sim（測試與 live E2E）
+    cutout_model: str = 'birefnet-general'
+    #: 去背模型的存放位置（Docker 為 models volume）
+    models_dir: Path = REPO_ROOT / 'models'
+
     #: 模擬模式的播放速度（1 為 1× 時間軸，約 15 秒一個任務；0 為不等待）
     sim_speed: float = 1.0
     #: 模擬模式：第一輪刻意失誤（觸發 Query Rewriting）

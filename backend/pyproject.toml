@@ -43,6 +43,7 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 # SAQ 0.26 在 redis-py 8 上呼叫已棄用的 setex
 filterwarnings = ["ignore:Call to deprecated setex:DeprecationWarning"]
+markers = ["model: 需要真正的去背模型檔（models/）與 CUTOUT_TEST_PHOTO 指定的照片，沒有時略過"]
 
 [tool.ruff]
 line-length = 120
