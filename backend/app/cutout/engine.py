@@ -1,8 +1,8 @@
 """worker 持有的去背引擎：準備模型（下載、載入）、把狀態寫到 Redis（系統狀態顯示）、提供 Segmenter。"""
 
 import asyncio
-import contextlib
 import json
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Literal
@@ -52,12 +52,18 @@ class CutoutEngine:
                 except CutoutError as error:
                     await self._report('failed', str(error))
                     raise
+                except Exception as error:
+                    message = f'去背模型準備失敗：{error}'
+                    await self._report('failed', message)
+                    raise CutoutError(message) from error
             return self._segmenter
 
     async def warm_up(self) -> None:
         """worker 啟動時在背景準備模型；失敗只記錄狀態，下一次去背時再試。"""
-        with contextlib.suppress(CutoutError):
+        try:
             await self.segmenter()
+        except Exception:
+            logging.getLogger(__name__).exception('去背模型準備失敗')
 
     async def _prepare(self) -> Segmenter:
         if self.model == 'sim':

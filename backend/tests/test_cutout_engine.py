@@ -134,6 +134,31 @@ async def test_unknown_models_fail_with_the_supported_names(redis: Redis, tmp_pa
         await engine.segmenter()
 
 
+def corrupt_engine(redis: Redis, tmp_path: Path) -> CutoutEngine:
+    """模型檔的大小與 SHA-256 都正確，但內容不是 ONNX，載入時會失敗。"""
+    content = b'not an onnx model' * 10
+    models_dir = tmp_path / 'models'
+    models_dir.mkdir()
+    (models_dir / 'bad.onnx').write_bytes(content)
+    models = {'bad': ModelFile('bad', URL, len(content), hashlib.sha256(content).hexdigest())}
+    return CutoutEngine('bad', models_dir, redis, models=models)
+
+
+async def test_a_model_that_fails_to_load_is_reported_as_failed(redis: Redis, tmp_path: Path) -> None:
+    engine = corrupt_engine(redis, tmp_path)
+    with pytest.raises(CutoutError, match='去背模型準備失敗'):
+        await engine.segmenter()
+    failed = await state(redis)
+    assert failed['model'] == 'bad'
+    assert failed['state'] == 'failed'
+    assert str(failed['error']).startswith('去背模型準備失敗')
+
+
+async def test_warm_up_does_not_raise_for_a_model_that_fails_to_load(redis: Redis, tmp_path: Path) -> None:
+    await corrupt_engine(redis, tmp_path).warm_up()
+    assert (await state(redis))['state'] == 'failed'
+
+
 def test_registry_lists_the_benchmarked_models() -> None:
     from app.cutout.models import MODELS
 
