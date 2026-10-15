@@ -1,13 +1,16 @@
 import json
 from datetime import UTC, datetime
 
+import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brands import LoadedBrand, load_brands
 from app.contract import FilePhoto, Price, ProductDraft, RagChunk
+from app.db.models import ProductRow
 from app.db.session import Database
 from app.repo import catalog
 from app.settings import BACKEND_DIR
@@ -74,6 +77,18 @@ async def test_uploaded_chunks_follow_the_config_chunks_and_replace_by_source(se
     brand = await catalog.get_brand(session, 'selune')
     assert brand is not None
     assert [c.id for c in brand.guideline_chunks][-2:] == ['selune#law-alt', 'selune#doc-abc-3']
+
+
+async def test_get_product_can_lock_the_row_until_the_transaction_ends(db: Database, session: AsyncSession) -> None:
+    await catalog.sync_brands(session, demo_brands(), T0)
+    created = await catalog.save_product(session, draft('晚安面膜'), T0)
+    assert await catalog.get_product(session, created.id, for_update=True) is not None
+    async with db.session() as other:
+        # 不鎖定的讀取不受影響；另一個交易想鎖同一列時（不等待）會被擋下
+        assert await catalog.get_product(other, created.id) is not None
+        with pytest.raises(DBAPIError):
+            await other.execute(select(ProductRow.id).where(ProductRow.id == created.id).with_for_update(nowait=True))
+    await session.rollback()
 
 
 async def test_lists_samples_first_and_keeps_deleted_samples_out(session: AsyncSession) -> None:

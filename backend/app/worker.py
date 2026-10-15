@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import signal
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,11 +36,12 @@ from app.contract import (
 )
 from app.core.clock import utc_now
 from app.cutout.engine import CutoutEngine
+from app.cutout.processing import CutoutError
 from app.db.models import JobRow
 from app.db.session import Database
 from app.errors import AppError, NotFound
 from app.events import EventStore
-from app.files import photo_path
+from app.files import photo_path, product_folder
 from app.pipeline.ports import Ports
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
@@ -50,6 +52,11 @@ from app.settings import Settings, settings
 logger = logging.getLogger(__name__)
 
 RESTART_REASON = 'worker 重新啟動，任務中斷'
+#: 單張照片推論的逾時（秒）；等模型準備（含第一次下載）不算在內
+CUTOUT_INFERENCE_TIMEOUT = 300
+#: 去背推論專用的單一執行緒。逾時的推論會繼續在它的執行緒裡跑完（執行緒無法中途取消），
+#: 單一執行緒確保下一張一定等它結束才開始，不會有兩個推論同時執行（每個約 6.5 GB 記憶體）。
+INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='cutout')
 
 
 @dataclass
@@ -81,18 +88,22 @@ def build_services() -> Services:
 
 
 async def cutout(services: Services, product_id: str, photo_url: str) -> None:
-    """去背：讀照片 → 等模型 → 推論（另一條執行緒，不阻擋其他任務）→ 寫入 PNG → 確認商品沒變才寫入結果。"""
+    """去背：讀照片 → 等模型（不限時間）→ 推論（專用執行緒，有逾時）→ 寫入 PNG → 確認商品沒變才寫入結果。"""
     async with services.db.session() as s:
         product = await catalog.get_product(s, product_id)
     # 商品已刪除，或照片已經換掉（較新的任務會處理新照片）
     if product is None or not isinstance(product.photo, FilePhoto) or product.photo.url != photo_url:
         return
-    folder = services.settings.data_dir / 'products' / product_id
     written: Path | None = None
     try:
+        folder = product_folder(services.settings, product_id)
         photo = await asyncio.to_thread(photo_path(services.settings, photo_url).read_bytes)
         segmenter = await services.cutouts.segmenter()
-        png = await asyncio.to_thread(segmenter.cut, photo)
+        try:
+            async with asyncio.timeout(CUTOUT_INFERENCE_TIMEOUT):
+                png = await asyncio.get_running_loop().run_in_executor(INFERENCE_EXECUTOR, segmenter.cut, photo)
+        except TimeoutError as error:
+            raise CutoutError('去背逾時（超過 5 分鐘），請重試') from error
         name = f'cutout-{hashlib.sha256(png).hexdigest()[:12]}.png'
         await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
         written = folder / name
@@ -102,16 +113,17 @@ async def cutout(services: Services, product_id: str, photo_url: str) -> None:
         )
     except Exception as error:  # noqa: BLE001 - 任何錯誤都顯示在商品卡上
         logger.exception('去背失敗：product_id=%s', product_id)
-        result = ProductCutout(model=services.cutouts.model, status='failed', url=None, error=failure_reason(error))
+        reason = failure_reason(error) if isinstance(error, AppError) else f'去背失敗：{failure_reason(error)}'
+        result = ProductCutout(model=services.cutouts.model, status='failed', url=None, error=reason)
     async with services.db.session() as s:
         saved = await catalog.set_cutout(s, product_id, photo_url, result)
     if written is not None:
-        await asyncio.to_thread(_remove_cutouts, folder, keep=written if saved is not None else None, only=written)
+        await asyncio.to_thread(_remove_cutouts, written, keep_written=result.status == 'done' and saved is not None)
 
 
-def _remove_cutouts(folder: Path, *, keep: Path | None, only: Path) -> None:
-    """寫入成功時刪掉同一商品的舊去背圖；沒寫入（商品已刪除或換了照片）時只刪掉這次寫的檔案。"""
-    targets = [only] if keep is None else [f for f in folder.glob('cutout-*.png') if f != keep]
+def _remove_cutouts(written: Path, *, keep_written: bool) -> None:
+    """結果寫入資料庫後，刪掉同一商品的舊去背圖；結果沒寫入（失敗、商品已刪除或換了照片）時只刪掉這次寫的檔案。"""
+    targets = [f for f in written.parent.glob('cutout-*.png') if f != written] if keep_written else [written]
     for f in targets:
         f.unlink(missing_ok=True)
 

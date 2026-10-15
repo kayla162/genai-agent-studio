@@ -124,8 +124,9 @@ async def list_products(session: AsyncSession, brand_id: str) -> list[Product]:
     return [Product.model_validate(r.data) for r in rows]
 
 
-async def get_product(session: AsyncSession, product_id: str) -> Product | None:
-    row = await session.get(ProductRow, product_id)
+async def get_product(session: AsyncSession, product_id: str, *, for_update: bool = False) -> Product | None:
+    """for_update：鎖定商品列直到交易結束（先讀再改的呼叫端用，避免與其他寫入交錯）。"""
+    row = await session.get(ProductRow, product_id, with_for_update=for_update)
     return Product.model_validate(row.data) if row and not row.deleted else None
 
 

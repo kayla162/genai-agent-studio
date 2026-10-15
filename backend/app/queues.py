@@ -18,8 +18,6 @@ TASKS = 'tasks'
 CUTOUTS = 'cutouts'
 #: tasks 佇列裡單一工作最長的執行時間（秒）
 TASK_TIMEOUT = 600
-#: 單張去背最長的時間（秒）：含第一次下載模型（約 1 GB）與推論
-CUTOUT_TIMEOUT = 600
 
 
 def ingest_channel(task_id: str) -> str:
@@ -58,10 +56,11 @@ class Queues:
         await self.jobs.enqueue('run_job', key=job_id, timeout=0, job_id=job_id)
 
     async def enqueue_cutout(self, product_id: str, photo_url: str) -> None:
+        """第一次下載模型（約 1 GB）可能花很久，佇列不設逾時；推論另有自己的逾時（見 worker）。"""
         await self.cutouts.enqueue(
             'cutout',
             key=cutout_key(product_id, photo_url),
-            timeout=CUTOUT_TIMEOUT,
+            timeout=0,
             product_id=product_id,
             photo_url=photo_url,
         )

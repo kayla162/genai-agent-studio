@@ -5,10 +5,11 @@
 - /files/brands/… → 品牌設定檔資料夾（Logo 等圖檔）
 """
 
+import re
 from pathlib import Path
 from urllib.parse import unquote
 
-from app.errors import NotFound
+from app.errors import Invalid, NotFound
 from app.settings import Settings
 
 #: 只提供圖片；MIME 固定，不依賴作業系統的對照表
@@ -20,6 +21,8 @@ FILE_TYPES = {
     '.svg': 'image/svg+xml',
 }
 PREFIX = '/files/'
+#: 商品 id 要能直接當資料夾名稱：不含路徑分隔字元，也不能是 . 或 ..
+PRODUCT_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
 
 
 def resolve_file(settings: Settings, path: str) -> Path | None:
@@ -42,5 +45,12 @@ def photo_path(settings: Settings, url: str) -> Path:
     """商品照的網址（/files/uploads/…、/files/local/…，檔名經過 URL 編碼）→ 檔案。"""
     target = resolve_file(settings, unquote(url.removeprefix(PREFIX))) if url.startswith(PREFIX) else None
     if target is None:
-        raise NotFound(f'找不到商品照：{url}')
+        raise NotFound(f'找不到商品照：{unquote(url)}')
     return target
+
+
+def product_folder(settings: Settings, product_id: str) -> Path:
+    """商品的檔案資料夾（去背圖）：data/products/{id}。商品 id 格式不對時不給路徑，避免寫到 data/products 之外。"""
+    if not PRODUCT_ID.fullmatch(product_id):
+        raise Invalid(f'商品 id 格式錯誤：{product_id}')
+    return settings.data_dir / 'products' / product_id

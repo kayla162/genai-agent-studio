@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -200,12 +201,13 @@ def photo_bytes(size: tuple[int, int] = (40, 60)) -> bytes:
     return buf.getvalue()
 
 
-async def photo_product(services: Services, url: str, source: str = 'upload') -> Product:
+async def photo_product(services: Services, url: str, source: str = 'upload', product_id: str | None = None) -> Product:
     """去背中的商品；照片檔由呼叫端寫入 data/ 或本機資料夾。"""
     async with services.db.session() as s:
         return await catalog.save_product(
             s,
             ProductDraft(
+                id=product_id,
                 brand_id='selune',
                 name='晚安面膜',
                 features=[],
@@ -318,11 +320,126 @@ async def test_recovery_releases_cutout_orphans_and_requeues_pending_cutouts(
     assert await queues.cutouts.count('active') == 0
 
 
+async def test_enqueued_cutouts_have_no_queue_timeout(queues: Queues) -> None:
+    """第一次下載模型可能很久：佇列不設逾時，推論另有自己的逾時。"""
+    await queues.enqueue_cutout('prod_x', '/files/uploads/a.jpg')
+    record = await queues.cutouts.job(cutout_key('prod_x', '/files/uploads/a.jpg'))
+    assert record is not None and record.timeout == 0
+
+
+class StuckSegmenter:
+    """推論卡住：直到 release（或最多 1 秒）才返回。"""
+
+    name = 'stuck'
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def cut(self, photo: bytes) -> bytes:
+        self.release.wait(1)
+        return photo
+
+
+class FailingSegmenter:
+    name = 'failing'
+
+    def cut(self, photo: bytes) -> bytes:
+        raise RuntimeError('boom')
+
+
+def engine_returning(services: Services, segmenter: Segmenter) -> CutoutEngine:
+    """永遠回傳指定 Segmenter 的引擎（不經過模型準備）。"""
+
+    class FixedEngine(CutoutEngine):
+        async def segmenter(self) -> Segmenter:
+            return segmenter
+
+    return FixedEngine('sim', services.settings.data_dir / 'models', services.redis)
+
+
+def cutout_files(services: Services, product_id: str) -> list[str]:
+    folder = services.settings.data_dir / 'products' / product_id
+    return sorted(f.name for f in folder.glob('cutout-*.png'))
+
+
+async def test_cutout_fails_when_the_inference_times_out(services: Services, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('app.worker.CUTOUT_INFERENCE_TIMEOUT', 0.2)
+    product = await photo_product(services, write_upload(services, 'slow.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    stuck = StuckSegmenter()
+    services.cutouts = engine_returning(services, stuck)
+    try:
+        await cutout(services, product.id, product.photo.url)
+    finally:
+        stuck.release.set()
+    assert (await current(services, product.id)).cutout == ProductCutout(
+        model='sim', status='failed', url=None, error='去背逾時（超過 5 分鐘），請重試'
+    )
+    assert cutout_files(services, product.id) == []
+
+
+async def test_cutout_reports_unexpected_errors_with_a_prefix_and_leaves_no_file(services: Services) -> None:
+    product = await photo_product(services, write_upload(services, 'a.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    services.cutouts = engine_returning(services, FailingSegmenter())
+    await cutout(services, product.id, product.photo.url)
+    assert (await current(services, product.id)).cutout == ProductCutout(
+        model='sim', status='failed', url=None, error='去背失敗：RuntimeError: boom'
+    )
+    assert cutout_files(services, product.id) == []
+
+
+async def test_cutout_removes_its_own_file_when_writing_it_fails(
+    services: Services, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    product = await photo_product(services, write_upload(services, 'a.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    original = Path.write_bytes
+
+    def half_write(self: Path, data: bytes) -> int:
+        if not self.name.startswith('cutout-'):
+            return original(self, data)
+        original(self, data[:10])
+        raise OSError('disk full')
+
+    monkeypatch.setattr(Path, 'write_bytes', half_write)
+    await cutout(services, product.id, product.photo.url)
+    assert (await current(services, product.id)).cutout == ProductCutout(
+        model='sim', status='failed', url=None, error='去背失敗：OSError: disk full'
+    )
+    assert cutout_files(services, product.id) == []
+
+
+async def test_cutout_keeps_only_the_new_file_after_a_success(services: Services) -> None:
+    product = await photo_product(services, write_upload(services, 'a.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    folder = services.settings.data_dir / 'products' / product.id
+    folder.mkdir(parents=True)
+    (folder / 'cutout-old.png').write_bytes(b'old')
+    await cutout(services, product.id, product.photo.url)
+    cut = (await current(services, product.id)).cutout
+    assert cut is not None and cut.url is not None and cut.status == 'done'
+    assert cutout_files(services, product.id) == [cut.url.rsplit('/', 1)[1]]
+
+
+@pytest.mark.parametrize('bad_id', ['..', 'a b', 'x' * 65])
+async def test_cutout_refuses_product_ids_that_are_not_safe_folder_names(services: Services, bad_id: str) -> None:
+    url = write_upload(services, 'a.jpg', photo_bytes())
+    await photo_product(services, url, product_id=bad_id)
+    await cutout(services, bad_id, url)
+    assert (await current(services, bad_id)).cutout == ProductCutout(
+        model='sim', status='failed', url=None, error=f'商品 id 格式錯誤：{bad_id}'
+    )
+    # 什麼都沒寫：data/ 底下沒有去背圖，也沒有建立 products 資料夾
+    assert list(services.settings.data_dir.rglob('cutout-*.png')) == []
+    assert not (services.settings.data_dir / 'products').exists()
+
+
 async def test_run_task_returns_unfinished_when_the_wait_runs_out(queues: Queues) -> None:
     """沒有 worker 時，等不到結果要回傳 completed=False，不能丟出逾時例外。"""
     loop = asyncio.get_running_loop()
     started = loop.time()
-    done = await queues.run_task('cutout', wait=0.5, product_id='prod_x')
+    done = await queues.run_task('write_back', wait=0.5, history_id='hist_x')
     assert (done.completed, done.result) == (False, None)
     assert loop.time() - started < 1.5
 
