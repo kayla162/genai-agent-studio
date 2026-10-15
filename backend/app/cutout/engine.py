@@ -5,7 +5,6 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import Literal
 
 import httpx
 from redis.asyncio import Redis
@@ -13,13 +12,10 @@ from redis.asyncio import Redis
 from app.cutout.models import MODELS, ModelFile, ensure_model, has_model
 from app.cutout.processing import CutoutError
 from app.cutout.segmenter import OnnxSegmenter, Segmenter, SimSegmenter
+from app.cutout.state import STATE_KEY, ModelState
 
-#: worker 回報模型狀態的 Redis key（api 的系統狀態讀取）
-STATE_KEY = 'cutout:model'
 #: 下載模型的逾時（秒）：連線與兩次讀取之間的間隔
 DOWNLOAD_TIMEOUT = 60
-
-ModelState = Literal['downloading', 'loading', 'ready', 'failed', 'sim']
 
 
 class CutoutEngine:

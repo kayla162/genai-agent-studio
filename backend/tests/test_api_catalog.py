@@ -10,7 +10,9 @@ from typing import Any
 from PIL import Image
 
 from app.brands import BrandLoadError
+from app.cutout.state import STATE_KEY
 from app.files import resolve_file
+from app.queues import cutout_key
 from app.settings import Settings
 from tests.conftest import LiveApi
 from tests.fixtures import load_fixture
@@ -49,6 +51,7 @@ async def test_status_reports_each_component(api: LiveApi) -> None:
         'rag': 'sim',
         'gemini': 'sim',
         'comfyui': 'sim',
+        'cutout': 'error',
     }
     assert status['brands']['detail'] == '已載入 2 個品牌'
     async with api.worker():
@@ -137,6 +140,58 @@ async def test_upload_photo_and_read_it_back(api: LiveApi) -> None:
         assert (rejected.status_code, rejected.json()['error']['message']) == (400, message)
 
 
+PENDING = {'model': 'birefnet-general', 'status': 'pending', 'url': None, 'error': None}
+
+
+async def test_new_photo_products_are_queued_for_a_cutout_and_keep_it_on_edit(api: LiveApi) -> None:
+    done = {'model': 'sim', 'status': 'done', 'url': '/files/products/x/cutout-a.png', 'error': None}
+    # 去背狀態由伺服器管理：送來的 cutout 一律忽略
+    product = (await api.http.post('/api/products', json={**DRAFT, 'cutout': done})).json()
+    assert product['cutout'] == PENDING
+    queue = api.services.queues.cutouts
+    assert await queue.job(cutout_key(product['id'], '/files/uploads/x.png')) is not None
+    renamed = await api.http.put(f'/api/products/{product["id"]}', json={**DRAFT, 'name': '改名', 'cutout': done})
+    assert renamed.json()['cutout'] == PENDING
+    assert await queue.count('queued') == 1
+    # 換了照片：重新去背（新照片有自己的 key）
+    photo = {'source': 'upload', 'url': '/files/uploads/y.png'}
+    moved = (await api.http.put(f'/api/products/{product["id"]}', json={**DRAFT, 'photo': photo})).json()
+    assert moved['cutout'] == PENDING
+    assert await queue.job(cutout_key(product['id'], '/files/uploads/y.png')) is not None
+    # 示範商品不需要去背
+    sample = (await api.http.get('/api/products', params={'brandId': 'selune'})).json()[0]
+    fields = {k: v for k, v in sample.items() if k not in ('id', 'createdAt')}
+    kept = (await api.http.put(f'/api/products/{sample["id"]}', json={**fields, 'name': '改名'})).json()
+    assert kept['cutout'] is None
+
+
+async def test_deleting_a_product_removes_its_cutouts(api: LiveApi) -> None:
+    product = (await api.http.post('/api/products', json=DRAFT)).json()
+    folder = api.services.settings.data_dir / 'products' / product['id']
+    folder.mkdir(parents=True)
+    (folder / 'cutout-a.png').write_bytes(PNG)
+    assert (await api.http.delete(f'/api/products/{product["id"]}')).status_code == 204
+    assert not folder.exists()
+
+
+async def test_status_shows_the_cutout_model_state(api: LiveApi) -> None:
+    model = 'birefnet-general'
+    cases = [
+        (model, 'ready', None, 'ok', 'birefnet-general 已載入'),
+        (model, 'loading', None, 'off', '正在載入 birefnet-general'),
+        (model, 'downloading', None, 'off', '第一次使用，正在下載模型（約 1 GB）'),
+        (model, 'failed', '去背模型下載失敗：x', 'error', '去背模型下載失敗：x'),
+        ('sim', 'sim', None, 'sim', '模擬去背：中央的橢圓'),
+    ]
+    for name, state, error, status, detail in cases:
+        message = {'model': name, 'state': state, 'error': error}
+        await api.services.redis.set(STATE_KEY, json.dumps(message, ensure_ascii=False))
+        component = (await status_of(api))['cutout']
+        assert component == {'id': 'cutout', 'label': '去背模型（BiRefNet）', 'status': status, 'detail': detail}
+    await api.services.redis.delete(STATE_KEY)
+    assert (await status_of(api))['cutout']['detail'] == 'worker 尚未回報'
+
+
 def real_png() -> bytes:
     buf = io.BytesIO()
     Image.new('RGB', (40, 60), (120, 80, 160)).save(buf, 'PNG')
@@ -189,8 +244,9 @@ async def test_list_and_import_local_photos(api: LiveApi) -> None:
         'features': [],
         'price': {'sale': 0, 'original': 0},
         'photo': {'source': 'local', 'url': '/files/local/night_cream-v2.png'},
-        'cutout': None,
+        'cutout': PENDING,
     }
+    assert await api.services.queues.cutouts.job(cutout_key(product['id'], product['photo']['url'])) is not None
     for name in ('notes.txt', '.hidden.png', 'missing.png'):
         missing = await api.http.post(f'/api/local-photos/{name}/import', json={'brandId': 'misty-isle'})
         assert missing.status_code == 404

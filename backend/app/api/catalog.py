@@ -1,12 +1,14 @@
 """可用選項、系統狀態、品牌（含文件上傳）、通路模板、商品與商品照、本機資料夾。"""
 
 import asyncio
+import contextlib
 import json
 import re
 import secrets
+import shutil
 from collections.abc import AsyncIterator, Awaitable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, UploadFile
@@ -30,7 +32,9 @@ from app.contract import (
     SystemStatus,
 )
 from app.core.clock import utc_now
+from app.cutout.state import STATE_KEY
 from app.errors import Invalid, NotFound, Unavailable
+from app.files import product_folder
 from app.pipeline.runner import failure_reason
 from app.queues import ingest_channel
 from app.repo import catalog
@@ -120,7 +124,29 @@ async def get_status(services: Services) -> SystemStatus:
         _probe('composer', 'composer（排版與模擬邏輯）', _composer(services)),
         _probe('brands', '品牌設定檔', _brands(services)),
     )
-    return SystemStatus(components=[*probed, *SIMULATED])
+    return SystemStatus(components=[*probed, *SIMULATED, await _cutout_model(services)])
+
+
+async def _cutout_model(services: ApiServices) -> ComponentStatus:
+    """worker 寫在 Redis 的去背模型狀態。"""
+    label = '去背模型（BiRefNet）'
+    try:
+        raw = await asyncio.wait_for(services.redis.get(STATE_KEY), STATUS_TIMEOUT)
+    except Exception as error:  # noqa: BLE001 - 任何錯誤都顯示在系統狀態
+        return ComponentStatus(id='cutout', label=label, status='error', detail=failure_reason(error))
+    if raw is None:
+        return ComponentStatus(id='cutout', label=label, status='error', detail='worker 尚未回報')
+    state = json.loads(raw)
+    model = state['model']
+    shown: dict[str, tuple[Literal['ok', 'sim', 'off', 'error'], str]] = {
+        'ready': ('ok', f'{model} 已載入'),
+        'loading': ('off', f'正在載入 {model}'),
+        'downloading': ('off', '第一次使用，正在下載模型（約 1 GB）'),
+        'failed': ('error', state['error']),
+        'sim': ('sim', '模擬去背：中央的橢圓'),
+    }
+    status, detail = shown[state['state']]
+    return ComponentStatus(id='cutout', label=label, status=status, detail=detail)
 
 
 @router.get('/api/brands')
@@ -179,10 +205,23 @@ async def list_products(services: Services, brand_id: Annotated[str, Query(alias
 
 
 async def _save(services: ApiServices, draft: ProductDraft) -> Product:
+    """去背狀態由伺服器管理，請求中的 cutout 一律忽略：新的商品照（新增或換照片）設為去背中並排入佇列，
+    其餘沿用原本的值（避免開著編輯視窗時完成的去背被蓋回去背中）。"""
     async with services.db.session() as s:
         if await catalog.get_brand(s, draft.brand_id) is None:
             raise Invalid(f'找不到品牌：{draft.brand_id}')
-        return await catalog.save_product(s, draft, utc_now())
+        previous = await catalog.get_product(s, draft.id, for_update=True) if draft.id else None
+        photo = draft.photo if isinstance(draft.photo, FilePhoto) else None
+        new_photo = photo is not None and (previous is None or previous.photo != photo)
+        cutout: ProductCutout | None
+        if new_photo:
+            cutout = ProductCutout(model=services.settings.cutout_model, status='pending', url=None, error=None)
+        else:
+            cutout = previous.cutout if previous else None
+        saved = await catalog.save_product(s, draft.model_copy(update={'cutout': cutout}), utc_now())
+    if new_photo and photo is not None:
+        await services.queues.enqueue_cutout(saved.id, photo.url)
+    return saved
 
 
 @router.post('/api/products', status_code=201)
@@ -202,9 +241,14 @@ async def update_product(product_id: str, draft: ProductDraft, services: Service
 
 @router.delete('/api/products/{product_id}', status_code=204)
 async def delete_product(product_id: str, services: Services) -> None:
+    """刪除商品，連同 data/products/{id}/ 的去背圖。"""
     async with services.db.session() as s:
         if not await catalog.delete_product(s, product_id):
             raise NotFound(f'找不到商品：{product_id}')
+    # 只刪 data/products/{id}/：id 格式不對時不刪（worker 也不會為這種 id 建資料夾）
+    with contextlib.suppress(Invalid):
+        folder = product_folder(services.settings, product_id)
+        await asyncio.to_thread(shutil.rmtree, folder, ignore_errors=True)
 
 
 @router.post('/api/products/photos', status_code=201)

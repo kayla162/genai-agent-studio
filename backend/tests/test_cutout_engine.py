@@ -11,10 +11,11 @@ import pytest
 from PIL import Image
 from redis.asyncio import Redis
 
-from app.cutout.engine import STATE_KEY, CutoutEngine
+from app.cutout.engine import CutoutEngine
 from app.cutout.models import ModelFile, ensure_model
 from app.cutout.processing import CutoutError
 from app.cutout.segmenter import OnnxSegmenter, SimSegmenter
+from app.cutout.state import STATE_KEY
 from tests.test_cutout import png, tiny_model
 
 URL = 'https://models.test/tiny.onnx'
