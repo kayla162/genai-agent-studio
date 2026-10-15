@@ -28,17 +28,19 @@ export default function ProductsPage() {
     void load(brand.id);
   }, [brand.id, load]);
 
-  const startCutout = async (p: Product) => {
-    if (p.cutout) {
-      setPreviewId(p.id);
-      return;
-    }
+  /** 重新去背：排入佇列後立即回來，完成時商品清單會自動更新 */
+  const recut = async (p: Product) => {
     try {
       await cutout(p.id);
-      setPreviewId(p.id);
+      toast.success(`已重新排入去背：${p.name}`, { description: '完成後會自動更新。' });
     } catch (err) {
-      toast.error('去背失敗', { description: err instanceof Error ? err.message : String(err) });
+      toast.error('無法重新去背', { description: err instanceof Error ? err.message : String(err) });
     }
+  };
+
+  const startCutout = (p: Product) => {
+    if (p.cutout?.status === 'done') setPreviewId(p.id);
+    else void recut(p);
   };
 
   return (
@@ -54,7 +56,7 @@ export default function ProductsPage() {
                 product={p}
                 brand={brand}
                 onEdit={() => setEditing(p)}
-                onCutout={() => void startCutout(p)}
+                onCutout={() => startCutout(p)}
                 onDelete={() => setDeleting(p)}
               />
             ))}
@@ -66,7 +68,7 @@ export default function ProductsPage() {
       </div>
 
       <ProductEditDialog product={editing} onClose={() => setEditing(null)} />
-      <CutoutDialog product={preview} brand={brand} onClose={() => setPreviewId(null)} />
+      <CutoutDialog product={preview} brand={brand} onRecut={(p) => void recut(p)} onClose={() => setPreviewId(null)} />
       <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         {deleting && (
           <DialogContent className="sm:max-w-sm">

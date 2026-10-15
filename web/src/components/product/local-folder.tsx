@@ -36,7 +36,7 @@ export function LocalFolder({ brand }: { brand: Brand }) {
     try {
       await getApiClient().importLocalPhoto(photo.file, brand.id);
       await load(brand.id);
-      toast.success(`已匯入「${photo.name}」`, { description: '請到卡片上補上價格與特徵。' });
+      toast.success(`已匯入「${photo.name}」`, { description: '正在背景去背，完成後會自動更新；請到卡片上補上價格與特徵。' });
     } catch (err) {
       toast.error('匯入失敗', { description: err instanceof Error ? err.message : String(err) });
     } finally {

@@ -97,7 +97,7 @@ test('上傳商品照到後端並建立商品', async ({ page }) => {
   await page.locator('input[type="file"]').first().setInputFiles({
     name: 'e2e_cream.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64'),
   });
-  await expect(page.getByText('照片已上傳到後端（data/uploads/）。請補上價格與特徵。')).toBeVisible();
+  await expect(page.getByText('照片已上傳到後端（data/uploads/）。正在背景去背，完成後會自動更新；請補上價格與特徵。')).toBeVisible();
   const products: { photo: { source: string; url?: string } }[] = await (await page.request.get('/api/products?brandId=selune')).json();
   const url = products.find((p) => p.photo.source === 'upload')!.photo.url!;
   expect(url).toMatch(/^\/files\/uploads\/[0-9a-f]{16}\.(png|jpg|webp)$/);

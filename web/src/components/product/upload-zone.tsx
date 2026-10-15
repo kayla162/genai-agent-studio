@@ -32,7 +32,7 @@ export function UploadZone({ brand }: { brand: Brand }) {
         const photo = await api.uploadProductPhoto(await downscaleImage(file));
         await save({ brandId: brand.id, name: nameFromFile(file.name), features: [], price: { sale: 0, original: 0 }, photo, cutout: null });
       }
-      toast.success(`已新增 ${images.length} 個商品`, { description: `${STORED_AT}請補上價格與特徵。` });
+      toast.success(`已新增 ${images.length} 個商品`, { description: `${STORED_AT}正在背景去背，完成後會自動更新；請補上價格與特徵。` });
     } catch (err) {
       toast.error('上傳失敗', { description: err instanceof Error ? err.message : String(err) });
     } finally {
