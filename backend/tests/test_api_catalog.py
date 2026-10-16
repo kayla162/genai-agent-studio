@@ -7,12 +7,17 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PIL import Image
+from saq.job import Status
 
+from app.api import catalog as catalog_api
 from app.brands import BrandLoadError
+from app.contract import ProductCutout
 from app.cutout.state import STATE_KEY
 from app.files import resolve_file
 from app.queues import cutout_key
+from app.repo import catalog
 from app.settings import Settings
 from tests.conftest import LiveApi
 from tests.fixtures import load_fixture
@@ -144,15 +149,28 @@ PENDING = {'model': 'birefnet-general', 'status': 'pending', 'url': None, 'error
 
 
 async def test_new_photo_products_are_queued_for_a_cutout_and_keep_it_on_edit(api: LiveApi) -> None:
-    done = {'model': 'sim', 'status': 'done', 'url': '/files/products/x/cutout-a.png', 'error': None}
+    sent = {'model': 'sim', 'status': 'done', 'url': '/files/products/x/cutout-a.png', 'error': None}
     # 去背狀態由伺服器管理：送來的 cutout 一律忽略
-    product = (await api.http.post('/api/products', json={**DRAFT, 'cutout': done})).json()
+    product = (await api.http.post('/api/products', json={**DRAFT, 'cutout': sent})).json()
     assert product['cutout'] == PENDING
     queue = api.services.queues.cutouts
-    assert await queue.job(cutout_key(product['id'], '/files/uploads/x.png')) is not None
-    renamed = await api.http.put(f'/api/products/{product["id"]}', json={**DRAFT, 'name': '改名', 'cutout': done})
-    assert renamed.json()['cutout'] == PENDING
-    assert await queue.count('queued') == 1
+    key = cutout_key(product['id'], '/files/uploads/x.png')
+    assert await queue.job(key) is not None
+    # worker 完成去背：取出佇列裡的工作、標記完成，結果寫進商品（與請求送來的不同）
+    taken = await queue.dequeue(timeout=1)
+    assert taken is not None and taken.key == key
+    await queue.finish(taken, Status.COMPLETE)
+    stored = ProductCutout(
+        model='birefnet-general', status='done', url=f'/files/products/{product["id"]}/cutout-b.png', error=None
+    )
+    async with api.services.db.session() as s:
+        assert await catalog.set_cutout(s, product['id'], '/files/uploads/x.png', stored) is not None
+    # 只改名稱：沿用資料庫裡的去背結果（不是送來的，也不是重設為去背中），也沒有再排入新的工作
+    renamed = await api.http.put(f'/api/products/{product["id"]}', json={**DRAFT, 'name': '改名', 'cutout': sent})
+    assert renamed.json()['cutout'] == stored.to_json()
+    assert await queue.count('queued') == 0
+    record = await queue.job(key)
+    assert record is not None and record.status == Status.COMPLETE
     # 換了照片：重新去背（新照片有自己的 key）
     photo = {'source': 'upload', 'url': '/files/uploads/y.png'}
     moved = (await api.http.put(f'/api/products/{product["id"]}', json={**DRAFT, 'photo': photo})).json()
@@ -163,6 +181,14 @@ async def test_new_photo_products_are_queued_for_a_cutout_and_keep_it_on_edit(ap
     fields = {k: v for k, v in sample.items() if k not in ('id', 'createdAt')}
     kept = (await api.http.put(f'/api/products/{sample["id"]}', json={**fields, 'name': '改名'})).json()
     assert kept['cutout'] is None
+
+
+async def test_a_product_whose_photo_becomes_a_sample_has_no_cutout(api: LiveApi) -> None:
+    product = (await api.http.post('/api/products', json=DRAFT)).json()
+    assert product['cutout'] == PENDING
+    sample_photo = {'source': 'sample', 'art': 'serum'}
+    saved = await api.http.put(f'/api/products/{product["id"]}', json={**DRAFT, 'photo': sample_photo})
+    assert (saved.json()['photo'], saved.json()['cutout']) == (sample_photo, None)
 
 
 async def test_deleting_a_product_removes_its_cutouts(api: LiveApi) -> None:
@@ -190,6 +216,46 @@ async def test_status_shows_the_cutout_model_state(api: LiveApi) -> None:
         assert component == {'id': 'cutout', 'label': '去背模型（BiRefNet）', 'status': status, 'detail': detail}
     await api.services.redis.delete(STATE_KEY)
     assert (await status_of(api))['cutout']['detail'] == 'worker 尚未回報'
+
+
+async def test_status_never_fails_on_an_unreadable_cutout_state(api: LiveApi) -> None:
+    unreadable = [
+        'not json',
+        '[1, 2]',
+        '"ready"',
+        json.dumps({'model': 'x'}),
+        json.dumps({'model': 'x', 'state': 'weird'}),
+    ]
+    for raw in unreadable:
+        await api.services.redis.set(STATE_KEY, raw)
+        res = await api.http.get('/api/status')
+        assert res.status_code == 200
+        component = (await status_of(api))['cutout']
+        assert (component['status'], component['detail']) == ('error', '去背模型狀態無法辨識'), raw
+    # 失敗時沒有附上原因也不能壞掉
+    await api.services.redis.set(STATE_KEY, json.dumps({'model': 'x', 'state': 'failed', 'error': None}))
+    assert (await status_of(api))['cutout']['status'] == 'error'
+
+
+async def test_status_reports_a_redis_error_and_a_timeout_for_the_cutout_state(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(key: str) -> None:
+        raise RuntimeError('redis 讀取失敗')
+
+    monkeypatch.setattr(api.services.redis, 'get', broken)
+    res = await api.http.get('/api/status')
+    assert res.status_code == 200
+    component = (await status_of(api))['cutout']
+    assert (component['status'], component['detail']) == ('error', 'RuntimeError: redis 讀取失敗')
+
+    async def stuck(key: str) -> None:
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(api.services.redis, 'get', stuck)
+    monkeypatch.setattr(catalog_api, 'STATUS_TIMEOUT', 0.1)
+    component = (await status_of(api))['cutout']
+    assert (component['status'], component['detail']) == ('error', '0.1 秒內沒有回應')
 
 
 def real_png() -> bytes:

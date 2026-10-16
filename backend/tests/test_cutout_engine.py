@@ -3,7 +3,7 @@
 import hashlib
 import io
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import httpx
@@ -12,7 +12,7 @@ from PIL import Image
 from redis.asyncio import Redis
 
 from app.cutout.engine import CutoutEngine
-from app.cutout.models import ModelFile, ensure_model
+from app.cutout.models import CHUNK, ModelFile, ensure_model
 from app.cutout.processing import CutoutError
 from app.cutout.segmenter import OnnxSegmenter, SimSegmenter
 from app.cutout.state import STATE_KEY
@@ -64,6 +64,26 @@ async def test_a_corrupt_download_leaves_nothing_behind(tmp_path: Path) -> None:
     with pytest.raises(CutoutError, match='SHA-256'):
         async with client() as http:
             await ensure_model(model_file(b'the real model'), tmp_path, http)
+    assert list(tmp_path.iterdir()) == []
+
+
+async def test_a_download_larger_than_declared_stops_early_and_leaves_nothing_behind(tmp_path: Path) -> None:
+    sent = 0
+
+    class Endless(httpx.AsyncByteStream):
+        """伺服器一直送資料（最多 50 MiB）；超過宣告的大小就應該停止讀取。"""
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            nonlocal sent
+            while sent < 50:
+                sent += 1
+                yield bytes(CHUNK)
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=Endless()))
+    with pytest.raises(CutoutError, match='SHA-256'):
+        async with httpx.AsyncClient(transport=transport) as http:
+            await ensure_model(model_file(b'the real model'), tmp_path, http)
+    assert sent < 5
     assert list(tmp_path.iterdir()) == []
 
 

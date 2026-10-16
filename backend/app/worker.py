@@ -3,7 +3,8 @@
 - jobs 佇列：run_job（生圖任務，一次一個）
 - tasks 佇列：ingest（品牌文件上傳）、write_back（選定海報回寫成歷史案例），最多同時兩個
 - cutouts 佇列：cutout（商品照去背，一次一個）
-- 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務與去背中的商品重新放回佇列
+- 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務與去背中的商品重新放回佇列；
+  去背中的商品在執行期間也會定時補排（寫入佇列時出錯、紀錄遺失的商品不會一直卡在去背中）
 """
 
 import asyncio
@@ -54,6 +55,9 @@ logger = logging.getLogger(__name__)
 RESTART_REASON = 'worker 重新啟動，任務中斷'
 #: 單張照片推論的逾時（秒）；等模型準備（含第一次下載）不算在內
 CUTOUT_INFERENCE_TIMEOUT = 300
+#: 定時把「去背中卻不在佇列裡」的商品重新排入的間隔（秒）：寫入資料庫或佇列時出錯會留下這樣的商品，
+#: 卡片上的按鈕在去背中是停用的，不補排的話會一直顯示去背中
+CUTOUT_REQUEUE_INTERVAL = 120
 #: 去背推論專用的單一執行緒。逾時的推論會繼續在它的執行緒裡跑完（執行緒無法中途取消），
 #: 單一執行緒確保下一張一定等它結束才開始，不會有兩個推論同時執行（每個約 6.5 GB 記憶體）。
 INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='cutout')
@@ -180,11 +184,33 @@ async def recover(services: Services, queues: Queues) -> None:
         await services.store.append(row.id, JobFailedEvent(type='job.failed', job_id=row.id, reason=RESTART_REASON))
         await services.store.append(row.id, JobStatusEvent(type='job.status', stage='failed', round=row.round))
     # 去背中斷的商品重新排入
+    await requeue_pending_cutouts(services, queues)
+
+
+async def requeue_pending_cutouts(services: Services, queues: Queues) -> int:
+    """把還在去背中的商品排入 cutouts 佇列，回傳新排入的筆數。
+    排入以商品與照片當 key，排隊中或執行中的工作會被 SAQ 去重，所以隨時可以呼叫。"""
     async with services.db.session() as s:
         pending = await catalog.pending_cutouts(s)
+    requeued = 0
     for product in pending:
-        if isinstance(product.photo, FilePhoto):
-            await queues.enqueue_cutout(product.id, product.photo.url)
+        if isinstance(product.photo, FilePhoto) and await queues.enqueue_cutout(product.id, product.photo.url):
+            requeued += 1
+    return requeued
+
+
+async def requeue_cutouts_periodically(
+    services: Services, queues: Queues, interval: float = CUTOUT_REQUEUE_INTERVAL
+) -> None:
+    """worker 執行期間定時補排：只在啟動時補排的話，執行中才遺失的工作要等到下次重新啟動。出錯只記錄，下一輪再試。"""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            requeued = await requeue_pending_cutouts(services, queues)
+            if requeued:
+                logger.warning('補排 %d 個不在佇列裡的去背中商品', requeued)
+        except Exception:
+            logger.exception('補排去背中商品失敗')
 
 
 def build_workers(services: Services, queues: Queues, **options: Any) -> tuple[Worker[Context], ...]:
@@ -249,12 +275,14 @@ async def main() -> None:
     await recover(services, queues)
     # 第一次啟動時下載模型（約 1 GB）；在背景進行，不擋住生圖與文件上傳
     warming = asyncio.create_task(services.cutouts.warm_up())
+    requeueing = asyncio.create_task(requeue_cutouts_periodically(services, queues))
     workers = build_workers(services, queues)
     stop_on_signals(workers)
     try:
         await asyncio.gather(*(w.start() for w in workers))
     finally:
         warming.cancel()
+        requeueing.cancel()
         await queues.disconnect()
         await services.composer.aclose()
         await services.db.dispose()

@@ -37,7 +37,16 @@ from app.pipeline.sim import sim_ports
 from app.queues import Queues, cutout_key, ingest_channel
 from app.repo import catalog, jobs
 from app.settings import Settings
-from app.worker import RESTART_REASON, Services, build_workers, cutout, ingest, recover
+from app.worker import (
+    RESTART_REASON,
+    Services,
+    build_workers,
+    cutout,
+    ingest,
+    recover,
+    requeue_cutouts_periodically,
+    requeue_pending_cutouts,
+)
 from tests.conftest import TEST_REDIS_URL
 from tests.fixtures import BRANDS_DIR, load_fixture
 
@@ -318,6 +327,50 @@ async def test_recovery_releases_cutout_orphans_and_requeues_pending_cutouts(
     record = await queues.cutouts.job(key)
     assert record is not None and record.status == Status.QUEUED
     assert await queues.cutouts.count('active') == 0
+
+
+async def test_pending_cutouts_whose_job_was_lost_are_requeued_once(services: Services, queues: Queues) -> None:
+    """佇列裡沒有紀錄（寫入佇列時出錯、紀錄被清掉）的去背中商品要重新排入；已在佇列裡的不會重複排入。"""
+    product = await photo_product(services, write_upload(services, 'lost.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    assert await queues.cutouts.count('queued') == 0
+    assert await requeue_pending_cutouts(services, queues) == 1
+    record = await queues.cutouts.job(cutout_key(product.id, product.photo.url))
+    assert record is not None and record.status == Status.QUEUED
+    # 第二次：工作還在佇列裡，SAQ 以 key 去重，不會再多一筆
+    assert await requeue_pending_cutouts(services, queues) == 0
+    assert await queues.cutouts.count('queued') == 1
+
+
+async def test_the_requeue_loop_keeps_going_after_an_error(
+    services: Services, queues: Queues, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    product = await photo_product(services, write_upload(services, 'lost.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    calls = 0
+
+    async def flaky(services: Services, queues: Queues) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError('redis 暫時連不上')
+        return await requeue_pending_cutouts(services, queues)
+
+    monkeypatch.setattr('app.worker.requeue_pending_cutouts', flaky)
+    with caplog.at_level('WARNING', logger='app.worker'):
+        loop = asyncio.create_task(requeue_cutouts_periodically(services, queues, interval=0.05))
+        try:
+            for _ in range(100):
+                if await queues.cutouts.count('queued'):
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            loop.cancel()
+            await asyncio.gather(loop, return_exceptions=True)
+    assert calls >= 2
+    assert await queues.cutouts.count('queued') == 1
+    assert 'redis 暫時連不上' in caplog.text
+    assert loop.cancelled()
 
 
 async def test_enqueued_cutouts_have_no_queue_timeout(queues: Queues) -> None:

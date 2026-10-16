@@ -12,7 +12,7 @@ import pytest
 from onnx import TensorProto, helper
 from PIL import Image
 
-from app.cutout.processing import INPUT_SIZE, MEAN, STD, CutoutError, compose, load_photo, to_input, to_mask
+from app.cutout.processing import INPUT_SIZE, MAX_SIDE, MEAN, STD, CutoutError, compose, load_photo, to_input, to_mask
 from app.cutout.segmenter import OnnxSegmenter, SimSegmenter
 
 
@@ -42,6 +42,21 @@ def test_photos_are_turned_upright_and_converted_to_rgb() -> None:
     photo = load_photo(buf.getvalue())
     assert (photo.size, photo.mode) == ((10, 20), 'RGB')
     assert load_photo(png(Image.new('RGBA', (3, 3)))).mode == 'RGB'
+
+
+def test_large_photos_are_shrunk_to_the_max_side_keeping_the_aspect_ratio() -> None:
+    wide = load_photo(png(Image.new('RGB', (3000, 1000), (10, 20, 30))))
+    assert max(wide.size) == MAX_SIDE == 2048
+    assert wide.size[0] / wide.size[1] == pytest.approx(3, rel=0.01)
+    # 轉正之後才縮：手機拍的直式照片（EXIF 旋轉 90 度）長邊也是 2048
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    Image.new('RGB', (3000, 1000), (10, 20, 30)).save(buf, 'JPEG', exif=exif)
+    upright = load_photo(buf.getvalue())
+    assert upright.size[1] == MAX_SIDE and upright.size[0] < upright.size[1]
+    # 小照片不放大
+    assert load_photo(png(Image.new('RGB', (40, 20)))).size == (40, 20)
 
 
 def test_unreadable_photos_raise_a_readable_error() -> None:

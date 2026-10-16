@@ -55,15 +55,17 @@ class Queues:
         """生圖可能花上數十分鐘，不設逾時（流程內各步驟有自己的逾時）。"""
         await self.jobs.enqueue('run_job', key=job_id, timeout=0, job_id=job_id)
 
-    async def enqueue_cutout(self, product_id: str, photo_url: str) -> None:
-        """第一次下載模型（約 1 GB）可能花很久，佇列不設逾時；推論另有自己的逾時（見 worker）。"""
-        await self.cutouts.enqueue(
+    async def enqueue_cutout(self, product_id: str, photo_url: str) -> bool:
+        """第一次下載模型（約 1 GB）可能花很久，佇列不設逾時；推論另有自己的逾時（見 worker）。
+        回傳是否新排入：同一張照片的工作還在排隊或執行時，SAQ 以 key 去重，回傳 False。"""
+        job = await self.cutouts.enqueue(
             'cutout',
             key=cutout_key(product_id, photo_url),
             timeout=0,
             product_id=product_id,
             photo_url=photo_url,
         )
+        return job is not None
 
     async def release_orphans(self, reason: str) -> list[str]:
         """放掉前一個 worker 留下的 ACTIVE 紀錄（生圖與去背），回傳被放掉的 key。

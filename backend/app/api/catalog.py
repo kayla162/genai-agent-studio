@@ -43,6 +43,8 @@ from app.templates import CHANNEL_TEMPLATES
 
 router = APIRouter(tags=['品牌與商品'])
 
+ComponentState = Literal['ok', 'sim', 'off', 'error']
+
 #: 外部服務目前都是模擬版（Plan 5–7 逐一換成真實版）
 SIMULATED = [
     ComponentStatus(id='rag', label='向量庫（Chroma＋BGE）', status='sim', detail='模擬檢索：固定的召回與 Rerank 順序'),
@@ -74,14 +76,16 @@ async def get_options(services: Services) -> ApiOptions:
     return api_options(services.settings)
 
 
-async def _probe(id_: str, label: str, check: Awaitable[str]) -> ComponentStatus:
+async def _probe(id_: str, label: str, check: Awaitable[str | tuple[ComponentState, str]]) -> ComponentStatus:
+    """check 回傳說明文字（狀態為 ok），或（狀態, 說明文字）；逾時或出錯時狀態為 error。"""
     try:
-        detail = await asyncio.wait_for(check, STATUS_TIMEOUT)
+        result = await asyncio.wait_for(check, STATUS_TIMEOUT)
     except TimeoutError:
         return ComponentStatus(id=id_, label=label, status='error', detail=f'{STATUS_TIMEOUT} 秒內沒有回應')
     except Exception as error:  # noqa: BLE001 - 任何錯誤都顯示在系統狀態
         return ComponentStatus(id=id_, label=label, status='error', detail=failure_reason(error))
-    return ComponentStatus(id=id_, label=label, status='ok', detail=detail)
+    status, detail = ('ok', result) if isinstance(result, str) else result
+    return ComponentStatus(id=id_, label=label, status=status, detail=detail)
 
 
 async def _db(services: ApiServices) -> str:
@@ -117,36 +121,35 @@ async def _brands(services: ApiServices) -> str:
 
 @router.get('/api/status')
 async def get_status(services: Services) -> SystemStatus:
-    probed = await asyncio.gather(
+    *probed, cutout = await asyncio.gather(
         _probe('db', 'PostgreSQL', _db(services)),
         _probe('redis', 'Redis（佇列與事件推送）', _redis(services)),
         _probe('worker', 'worker（SAQ）', _workers(services)),
         _probe('composer', 'composer（排版與模擬邏輯）', _composer(services)),
         _probe('brands', '品牌設定檔', _brands(services)),
+        _probe('cutout', '去背模型（BiRefNet）', _cutout_model(services)),
     )
-    return SystemStatus(components=[*probed, *SIMULATED, await _cutout_model(services)])
+    return SystemStatus(components=[*probed, *SIMULATED, cutout])
 
 
-async def _cutout_model(services: ApiServices) -> ComponentStatus:
-    """worker 寫在 Redis 的去背模型狀態。"""
-    label = '去背模型（BiRefNet）'
-    try:
-        raw = await asyncio.wait_for(services.redis.get(STATE_KEY), STATUS_TIMEOUT)
-    except Exception as error:  # noqa: BLE001 - 任何錯誤都顯示在系統狀態
-        return ComponentStatus(id='cutout', label=label, status='error', detail=failure_reason(error))
+async def _cutout_model(services: ApiServices) -> tuple[ComponentState, str]:
+    """worker 寫在 Redis 的去背模型狀態；讀不到、格式不對或不認得的狀態都顯示為 error，不能讓系統狀態整個失敗。"""
+    raw = await services.redis.get(STATE_KEY)
     if raw is None:
-        return ComponentStatus(id='cutout', label=label, status='error', detail='worker 尚未回報')
-    state = json.loads(raw)
-    model = state['model']
-    shown: dict[str, tuple[Literal['ok', 'sim', 'off', 'error'], str]] = {
-        'ready': ('ok', f'{model} 已載入'),
-        'loading': ('off', f'正在載入 {model}'),
-        'downloading': ('off', '第一次使用，正在下載模型（約 1 GB）'),
-        'failed': ('error', state['error']),
-        'sim': ('sim', '模擬去背：中央的橢圓'),
-    }
-    status, detail = shown[state['state']]
-    return ComponentStatus(id='cutout', label=label, status=status, detail=detail)
+        raise Unavailable('worker 尚未回報')
+    try:
+        state = json.loads(raw)
+        model, name = state['model'], state['state']
+        shown: dict[str, tuple[ComponentState, str]] = {
+            'ready': ('ok', f'{model} 已載入'),
+            'loading': ('off', f'正在載入 {model}'),
+            'downloading': ('off', '第一次使用，正在下載模型（約 1 GB）'),
+            'failed': ('error', str(state.get('error') or '去背模型準備失敗')),
+            'sim': ('sim', '模擬去背：中央的橢圓'),
+        }
+        return shown[name]
+    except (ValueError, KeyError, TypeError) as error:
+        raise Invalid('去背模型狀態無法辨識') from error
 
 
 @router.get('/api/brands')
@@ -214,7 +217,10 @@ async def _save(services: ApiServices, draft: ProductDraft) -> Product:
         photo = draft.photo if isinstance(draft.photo, FilePhoto) else None
         new_photo = photo is not None and (previous is None or previous.photo != photo)
         cutout: ProductCutout | None
-        if new_photo:
+        if photo is None:
+            # 示範商品照已是去背素材：照片換成示範圖時，之前的去背結果也不再適用
+            cutout = None
+        elif new_photo:
             cutout = ProductCutout(model=services.settings.cutout_model, status='pending', url=None, error=None)
         else:
             cutout = previous.cutout if previous else None

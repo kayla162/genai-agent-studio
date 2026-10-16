@@ -68,6 +68,7 @@ async def ensure_model(model: ModelFile, models_dir: Path, http: httpx.AsyncClie
         return target
     models_dir.mkdir(parents=True, exist_ok=True)
     part = models_dir / f'{model.filename}.part'
+    mismatch = f'去背模型下載不完整（{model.name}）：檔案大小或 SHA-256 不符'
     digest = hashlib.sha256()
     size = 0
     try:
@@ -78,8 +79,11 @@ async def ensure_model(model: ModelFile, models_dir: Path, http: httpx.AsyncClie
                     f.write(chunk)
                     digest.update(chunk)
                     size += len(chunk)
+                    # 已經比宣告的大：不必讀完（伺服器出錯時可能一直送，會寫滿磁碟）
+                    if size > model.size:
+                        raise CutoutError(mismatch)
         if size != model.size or digest.hexdigest() != model.sha256:
-            raise CutoutError(f'去背模型下載不完整（{model.name}）：檔案大小或 SHA-256 不符')
+            raise CutoutError(mismatch)
         part.replace(target)
     except httpx.HTTPError as error:
         raise CutoutError(f'去背模型下載失敗：{error}') from error

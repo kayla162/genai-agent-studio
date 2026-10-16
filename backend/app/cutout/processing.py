@@ -14,6 +14,8 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from app.errors import AppError
 
 INPUT_SIZE = 1024
+#: 照片的長邊上限（像素）：本機資料夾匯入的是原圖，4800 萬畫素的照片去背後會是好幾十 MB 的 PNG，每張商品卡都要載入
+MAX_SIDE = 2048
 MEAN = (0.485, 0.456, 0.406)
 STD = (0.229, 0.224, 0.225)
 #: 遮罩值 ≥ 這個值視為完全不透明（95%）
@@ -27,11 +29,13 @@ class CutoutError(AppError):
 
 
 def load_photo(data: bytes) -> Image.Image:
-    """讀取照片，依 EXIF 轉正（手機照片常以 EXIF 記錄旋轉方向），轉成 RGB。"""
+    """讀取照片，依 EXIF 轉正（手機照片常以 EXIF 記錄旋轉方向），轉成 RGB，長邊縮到 MAX_SIDE 以內。"""
     try:
         with Image.open(io.BytesIO(data)) as img:
             upright = ImageOps.exif_transpose(img)
-            return upright.convert('RGB')
+            photo = upright.convert('RGB')
+        photo.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)
+        return photo
     except Image.DecompressionBombError as error:
         raise CutoutError('照片尺寸過大，請縮小後再試') from error
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError, TypeError) as error:
