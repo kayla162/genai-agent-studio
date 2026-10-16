@@ -122,7 +122,7 @@ GenAI Agent/
 | 項目 | 估計 |
 |---|---|
 | Windows＋瀏覽器 | 約 4 GB |
-| Docker（7 個容器＋WSL2） | 約 3–4 GB（不含去背）；用 `birefnet-general` 去背時，記憶體上限（`.wslconfig`）要設到約 10 GB 以上；16 GB 的筆電請改用 `birefnet-general-lite`（較小也較快，本機實測峰值約 5.75 GB，Docker 內未實測），或接受較大的上限 |
+| Docker（7 個容器＋WSL2） | 約 3–4 GB（不含去背）；去背時，兩個模型的記憶體上限（`.wslconfig`）都要設到約 10 GB 以上；`birefnet-general-lite` 較快、下載量較小，但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB，lite 在 Docker 內未實測），改用它解決不了記憶體不足；16 GB 的筆電請把上限調到約 10 GB（WSL2 預設是一半的記憶體，即 8 GB，不夠用） |
 | ComfyUI（SDXL 部分卸載到系統記憶體） | 約 6–8 GB |
 | 去背（BiRefNet，worker） | 平常約 2 GB，去背時約 7.6 GiB（Docker 實測） |
 

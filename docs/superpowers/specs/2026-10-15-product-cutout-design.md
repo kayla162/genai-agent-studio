@@ -212,7 +212,7 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
   - live E2E 的 compose 設定 `CUTOUT_MODEL=sim`。
 - **`.env.example`**：說明 `CUTOUT_MODEL`（`birefnet-general`／`birefnet-general-lite`／`sim`），以及第一次啟動會下載約 1 GB 的模型，與 `birefnet-general` 需要的 Docker 記憶體上限（約 10 GB 以上）。
 - **README**：說明去背模型、第一次下載，以及記憶體需求（去背時 worker 約 8 GB；Docker 實測尖峰約 7.6 GiB、平常約 2 GB）。
-  使用 `birefnet-general` 時，Docker／WSL2 的記憶體上限要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，或 WSL2 的 `.wslconfig`）；16 GB 的電腦請改用 `CUTOUT_MODEL=birefnet-general-lite`，或調高上限。
+  兩個模型的 Docker／WSL2 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，或 WSL2 的 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦請把上限調到約 10 GB，WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。
 - **`.gitignore`**：加入本機開發時的模型資料夾 `models/`。
 
 ## 7. 測試
@@ -253,7 +253,7 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 
 - 第 1 節技術表：去背改由「ONNX Runtime＋BiRefNet」負責，ComfyUI 只負責背景生成、打光融合與放大。
 - 5.5：刪除 `cutout_v1` workflow。`product_scene_v1` 直接讀取 `cutout.url` 的透明 PNG。
-- 3.4 筆電記憶體：去背平常約 2 GB、去背時約 7.6 GiB（Docker 實測；本規格第 2 節的表是本機實測）。Docker 的記憶體上限，原本寫 5 GB，與去背所需不符：`birefnet-general` 要設到約 10 GB 以上；16 GB 的筆電請改用 `birefnet-general-lite`，或接受較大的上限。
+- 3.4 筆電記憶體：去背平常約 2 GB、去背時約 7.6 GiB（Docker 實測；本規格第 2 節的表是本機實測）。Docker 的記憶體上限，原本寫 5 GB，與去背所需不符：兩個模型都要設到約 10 GB 以上。`birefnet-general-lite` 較快、下載量較小，但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的筆電請把上限調到約 10 GB（WSL2 預設是一半的記憶體，即 8 GB，不夠用）。
 - 4.1：worker 的佇列新增 `cutouts`（同時 1 個），去背從 `tasks` 佇列移出。
 - 6.2：`data/products/{id}/` 存放去背圖。原圖仍在 `data/uploads/`，本機匯入的照片仍在本機資料夾，本規格不搬移原圖。
 
