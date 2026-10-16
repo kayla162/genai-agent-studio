@@ -20,6 +20,8 @@ export const CUTOUT_POLL_MS = 2_000;
 /** 目前品牌的商品清單（商品庫、新任務、批次佇列、歷史紀錄共用） */
 export const useProductsStore = create<ProductsState>()((set, get) => {
   let poll: ReturnType<typeof setTimeout> | null = null;
+  /** 商品清單被其他操作（載入、重新去背、刪除）改過就加一：讀取送出之後清單變了，回來的結果就是舊的 */
+  let generation = 0;
 
   /** 有去背中的商品就排下一次讀取（同一時間只有一個計時器）；全部完成或失敗、或切換品牌後停止 */
   const schedulePoll = (brandId: string) => {
@@ -29,15 +31,18 @@ export const useProductsStore = create<ProductsState>()((set, get) => {
     poll = setTimeout(() => {
       poll = null;
       if (get().brandId !== brandId) return;
+      const sent = generation;
+      // 結果回來時清單已被改過：丟掉（不寫入、也不排下一次；改動的那一方已經自己排了）
+      const stale = () => generation !== sent || get().brandId !== brandId;
       getApiClient().listProducts(brandId).then(
         (products) => {
-          if (get().brandId !== brandId) return;
+          if (stale()) return;
           set({ products });
           schedulePoll(brandId);
         },
         // 讀取失敗（例如後端重新啟動）：下一輪再試
         () => {
-          if (get().brandId === brandId) schedulePoll(brandId);
+          if (!stale()) schedulePoll(brandId);
         },
       );
     }, CUTOUT_POLL_MS);
@@ -51,8 +56,19 @@ export const useProductsStore = create<ProductsState>()((set, get) => {
     load: async (brandId) => {
       if (poll) clearTimeout(poll);
       poll = null;
+      generation += 1;
       set({ brandId, loading: true });
-      const products = await getApiClient().listProducts(brandId);
+      let products: Product[];
+      try {
+        products = await getApiClient().listProducts(brandId);
+      } catch (error) {
+        // 載入失敗：不能一直停在載入中；清單裡有去背中的商品時也要繼續更新
+        if (get().brandId === brandId) {
+          set({ loading: false });
+          schedulePoll(brandId);
+        }
+        throw error;
+      }
       // 載入期間切換了品牌就丟棄舊結果
       if (get().brandId !== brandId) return;
       set({ products, loading: false });
@@ -65,12 +81,17 @@ export const useProductsStore = create<ProductsState>()((set, get) => {
     },
     remove: async (id) => {
       await getApiClient().deleteProduct(id);
+      generation += 1;
       set({ products: get().products.filter((p) => p.id !== id) });
+      // 送出中的讀取結果會被丟掉，所以由這裡接著排下一次讀取
+      const brandId = get().brandId;
+      if (brandId) schedulePoll(brandId);
     },
     cutout: async (id) => {
       set({ cutting: [...get().cutting, id] });
       try {
         const updated = await getApiClient().requestCutout(id);
+        generation += 1;
         set({ products: get().products.map((p) => (p.id === id ? updated : p)) });
         const brandId = get().brandId;
         if (brandId) schedulePoll(brandId);

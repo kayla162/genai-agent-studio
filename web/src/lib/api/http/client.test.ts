@@ -71,6 +71,16 @@ describe('HttpApiClient REST', () => {
     expect(call(0).body).toEqual({ ...DRAFT, id: 'prod_1' });
   });
 
+  it('accepts the 202 reply of a cutout request and returns the pending product', async () => {
+    const pending: Product = {
+      ...PRODUCT, cutout: { model: 'birefnet-general', status: 'pending', url: null, error: null },
+    };
+    const { api, call } = setup(() => Response.json(pending, { status: 202 }));
+    expect(await api.requestCutout('prod_1')).toEqual(pending);
+    expect([call(0).method, call(0).url]).toEqual(['POST', 'http://api.test/api/products/prod_1/cutout']);
+    expect(api.connection.get().status).toBe('connected');
+  });
+
   it('uploads product photos as multipart form data', async () => {
     const { api, call } = setup(() => Response.json({ source: 'upload', url: '/files/uploads/a.png' }, { status: 201 }));
     const photo = await api.uploadProductPhoto(new File([new Uint8Array([1, 2, 3])], 'serum.png', { type: 'image/png' }));

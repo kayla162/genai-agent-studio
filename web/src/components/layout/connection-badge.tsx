@@ -21,7 +21,7 @@ const DOT: Record<ConnectionState['status'], string> = {
 const COMPONENT: Record<ComponentStatus['status'], { label: string; className: string }> = {
   ok: { label: '正常', className: 'bg-emerald-50 text-emerald-700' },
   sim: { label: '模擬', className: 'bg-secondary text-primary' },
-  off: { label: '未啟用', className: 'bg-muted text-muted-foreground' },
+  off: { label: '準備中', className: 'bg-muted text-muted-foreground' },
   error: { label: '異常', className: 'bg-red-50 text-red-700' },
 };
 

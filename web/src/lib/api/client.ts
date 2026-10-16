@@ -40,7 +40,7 @@ export interface ApiClient {
   deleteProduct(id: string): Promise<void>;
   /** 上傳商品照，回傳可放進 Product.photo 的參照（mock：轉成 data URL 存在本機；live：上傳到後端） */
   uploadProductPhoto(file: Blob): Promise<ProductPhoto>;
-  /** 對商品照去背並寫回 Product.cutout（mock：示意，約 1.2 秒） */
+  /** 重新去背：把商品設為去背中並排入佇列，立即回傳商品（cutout 可能是 pending；之後重新讀取清單才看得到結果）。mock 約 1.2 秒後完成 */
   requestCutout(productId: string): Promise<Product>;
   /** 列出 assets/products/ 的照片；此模式無法讀取本機資料夾時回傳 null */
   listLocalPhotos(): Promise<LocalPhoto[] | null>;
