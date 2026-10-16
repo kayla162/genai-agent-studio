@@ -124,7 +124,7 @@ GenAI Agent/
 | Windows＋瀏覽器 | 約 4 GB |
 | Docker（7 個容器＋WSL2） | 約 3–4 GB，以 `.wslconfig` 設上限 5 GB |
 | ComfyUI（SDXL 部分卸載到系統記憶體） | 約 6–8 GB |
-| 去背（BiRefNet，worker） | 平常約 1.1 GB，去背時約 6.5 GB |
+| 去背（BiRefNet，worker） | 平常約 2 GB，去背時約 7.6 GB（Docker 實測） |
 
 合計偏緊。BGE 模型使用 ONNX int8，用到才載入；建議筆電升級到 32 GB。實際數字在 Plan 7 實測並記錄。
 

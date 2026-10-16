@@ -201,7 +201,7 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
   - 新增 `models` volume，掛載到 worker 的 `/app/models`；`MODELS_DIR` 以環境變數固定。
   - live E2E 的 compose 設定 `CUTOUT_MODEL=sim`。
 - **`.env.example`**：說明 `CUTOUT_MODEL`（`birefnet-general`／`birefnet-general-lite`／`sim`），以及第一次啟動會下載約 1 GB 的模型。
-- **README**：說明去背模型、第一次下載，以及記憶體需求（去背時約 6.5 GB）。
+- **README**：說明去背模型、第一次下載，以及記憶體需求（去背時 worker 約 8 GB；Docker 實測尖峰約 7.6 GiB、平常約 2 GB）。
 - **`.gitignore`**：加入本機開發時的模型資料夾 `models/`。
 
 ## 7. 測試
@@ -242,7 +242,7 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 
 - 第 1 節技術表：去背改由「ONNX Runtime＋BiRefNet」負責，ComfyUI 只負責背景生成、打光融合與放大。
 - 5.5：刪除 `cutout_v1` workflow。`product_scene_v1` 直接讀取 `cutout.url` 的透明 PNG。
-- 3.4 筆電記憶體：加上去背時約 6.5 GB、平常約 1.1 GB。
+- 3.4 筆電記憶體：加上去背時約 7.6 GB、平常約 2 GB（Docker 實測；第 2 節的表是本機實測）。
 - 6.2：`data/products/{id}/` 存放去背圖。原圖仍在 `data/uploads/`，本機匯入的照片仍在本機資料夾，本規格不搬移原圖。
 
 ## 9. 不在範圍內

@@ -98,14 +98,19 @@ test('上傳商品照到後端並建立商品', async ({ page }) => {
     name: 'e2e_cream.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64'),
   });
   await expect(page.getByText('照片已上傳到後端（data/uploads/）。正在背景去背，完成後會自動更新；請補上價格與特徵。')).toBeVisible();
-  const products: { photo: { source: string; url?: string } }[] = await (await page.request.get('/api/products?brandId=selune')).json();
-  const url = products.find((p) => p.photo.source === 'upload')!.photo.url!;
+  const products: { name: string; photo: { source: string; url?: string } }[] = await (await page.request.get('/api/products?brandId=selune')).json();
+  // 檔名 e2e_cream.png → 商品名稱 e2e cream
+  const url = products.find((p) => p.photo.source === 'upload' && p.name === 'e2e cream')!.photo.url!;
   expect(url).toMatch(/^\/files\/uploads\/[0-9a-f]{16}\.(png|jpg|webp)$/);
-  // 背景去背（CUTOUT_MODEL=sim）完成後，商品卡改用透明 PNG
-  await expect(page.getByText('已去背', { exact: true })).toBeVisible();
-  const cut = page.locator('img[src^="/files/products/"]').first();
+  // 背景去背（CUTOUT_MODEL=sim）完成後，這張商品卡改用透明 PNG
+  const card = page.locator('div.rounded-xl.border').filter({ has: page.getByText('e2e cream', { exact: true }) });
+  await expect(card.getByText('已去背', { exact: true })).toBeVisible();
+  const cut = card.locator('img[src^="/files/products/"]');
   await expect.poll(() => cut.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
-  await page.getByRole('button', { name: '去背預覽' }).click();
-  const original = page.getByRole('dialog').locator(`img[src="${url}"]`);
+  await card.getByRole('button', { name: '去背預覽' }).click();
+  const dialog = page.getByRole('dialog');
+  const original = dialog.locator(`img[src="${url}"]`);
   await expect.poll(() => original.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+  const dialogCut = dialog.locator('img[src^="/files/products/"]');
+  await expect.poll(() => dialogCut.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
 });

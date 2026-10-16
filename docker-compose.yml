@@ -86,6 +86,7 @@ services:
   worker:
     <<: *backend
     command: ['python', '-m', 'app.worker']
+    # 這份 volumes 會取代 x-backend 的 volumes（不是合併），所以兩處的掛載要一起修改
     volumes:
       - ./brands:/app/brands:ro
       - ./assets/products:/app/assets/products:ro
