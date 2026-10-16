@@ -18,6 +18,7 @@ x-backend: &backend
     BRANDS_DIR: /app/brands
     DATA_DIR: /app/data
     LOCAL_PHOTOS_DIR: /app/assets/products
+    MODELS_DIR: /app/models
   volumes:
     - ./brands:/app/brands:ro
     - ./assets/products:/app/assets/products:ro
@@ -85,6 +86,12 @@ services:
   worker:
     <<: *backend
     command: ['python', '-m', 'app.worker']
+    volumes:
+      - ./brands:/app/brands:ro
+      - ./assets/products:/app/assets/products:ro
+      - ./data:/app/data
+      # 去背模型（BiRefNet）：第一次啟動時下載，約 1 GB
+      - models:/app/models
     depends_on:
       api: { condition: service_healthy }
 
@@ -101,3 +108,4 @@ services:
 volumes:
   postgres:
   redis:
+  models:

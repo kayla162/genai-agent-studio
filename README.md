@@ -46,12 +46,13 @@ docker compose up -d --build
 - 前端：http://127.0.0.1:3000
 - API 文件：http://127.0.0.1:3000/docs
 - 停止：`docker compose down`（資料保留在 volume；加上 `-v` 會清空資料庫）
-- 設定：複製 `.env.example` 成 `.env` 後修改（模擬速度、首輪是否刻意失誤等），再 `docker compose up -d`
+- 設定：複製 `.env.example` 成 `.env` 後修改（模擬速度、首輪是否刻意失誤、去背模型等），再 `docker compose up -d`
+- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 10 秒。第一次啟動時下載模型（約 1 GB，存在 `models` volume），右上角的系統狀態會顯示下載與載入進度。去背時 worker 約使用 6.5 GB 記憶體
 
 自己的資料：
 
 - **品牌**：複製 `brands/_template.yaml` 成 `brands/<品牌 id>.yaml` 填寫，改完執行 `docker compose restart api worker`。格式錯誤的品牌會略過，原因顯示在系統狀態。
-- **商品照**：放在 `assets/products/`，到「商品庫 → 本機資料夾」匯入；也可以直接上傳（存在 `data/`）。這兩個資料夾都不會上傳 GitHub。
+- **商品照**：放在 `assets/products/`，到「商品庫 → 本機資料夾」匯入；也可以直接上傳（存在 `data/`）。這兩個資料夾都不會上傳 GitHub。去背結果存在 `data/products/{商品 id}/`。
 
 ## 只看前端（mock 模式）
 

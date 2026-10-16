@@ -51,7 +51,7 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 | 模式 | 路由 | 頁面 |
 |---|---|---|
 | 工作台 | `/studio` | 新任務：一句話需求 → 生成 → 挑圖改字 → 匯出 zip |
-| 工作台 | `/products` | 商品庫：上傳／拖放、去背預覽（示意）、本機資料夾匯入（live 模式） |
+| 工作台 | `/products` | 商品庫：上傳／拖放、自動去背（live：BiRefNet；mock：示意）與預覽、本機資料夾匯入（live 模式） |
 | 工作台 | `/queue` | 批次佇列：多商品 × 多模板 |
 | 工作台 | `/history` | 歷史紀錄：篩選、收藏、以相同設定重做 |
 | 工作台 | `/brands` | 品牌知識庫：CI、禁用詞、RAG 切塊、上傳文件 |

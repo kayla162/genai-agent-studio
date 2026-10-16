@@ -6,6 +6,8 @@ x-e2e-backend: &e2e-backend
     SIM_SPEED: '1'
     SIM_FIRST_ROUND_FAIL: 'true'
     SIM_FORCE_ALL_FAIL: 'false'
+    # 模擬去背：不下載約 1 GB 的模型
+    CUTOUT_MODEL: sim
   volumes: !override
     - ./brands:/app/brands:ro
     - e2e-photos:/app/assets/products:ro

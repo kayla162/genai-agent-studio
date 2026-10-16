@@ -101,6 +101,11 @@ test('上傳商品照到後端並建立商品', async ({ page }) => {
   const products: { photo: { source: string; url?: string } }[] = await (await page.request.get('/api/products?brandId=selune')).json();
   const url = products.find((p) => p.photo.source === 'upload')!.photo.url!;
   expect(url).toMatch(/^\/files\/uploads\/[0-9a-f]{16}\.(png|jpg|webp)$/);
-  const img = page.locator(`img[src="${url}"]`).first();
-  await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+  // 背景去背（CUTOUT_MODEL=sim）完成後，商品卡改用透明 PNG
+  await expect(page.getByText('已去背', { exact: true })).toBeVisible();
+  const cut = page.locator('img[src^="/files/products/"]').first();
+  await expect.poll(() => cut.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+  await page.getByRole('button', { name: '去背預覽' }).click();
+  const original = page.getByRole('dialog').locator(`img[src="${url}"]`);
+  await expect.poll(() => original.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
 });

@@ -32,7 +32,7 @@ uv sync
 ## 任務流程
 
 1. `POST /api/jobs` 驗證後寫入任務，送出 `job.accepted` 與 `job.status queued`，放進 `jobs` 佇列。
-2. worker 一次執行一個生圖任務（只有一張 GPU）；去背、文件上傳與回寫在 `tasks` 佇列，最多同時兩個。
+2. worker 一次執行一個生圖任務（只有一張 GPU）；文件上傳與回寫在 `tasks` 佇列，最多同時兩個；商品照去背在 `cutouts` 佇列，一次一個。
 3. 每則事件在同一個交易中鎖定任務列並取得下一個 `seq`，commit 後發布到 Redis 頻道 `job:{id}`；結束任務的 `job.status` 一定是最後一則。
 4. 取消：排隊中的直接取消；執行中的設定旗標，worker 在步驟之間停止。
 
@@ -45,6 +45,7 @@ app/
 ├─ api/            FastAPI：main.py（入口與錯誤格式）、catalog、jobs、files、services
 ├─ pipeline/       任務流程（runner）、外部服務介面（ports）、模擬版（sim）
 ├─ adapters/       composer 用戶端
+├─ cutout/         商品照去背：前後處理（processing）、BiRefNet 與模擬版（segmenter）、模型下載（models）、準備與狀態（engine）
 ├─ core/           時間（clock：一律 UTC）與偽隨機數（rng：與前端的 num.ts 相同，模擬的 seed 才會一致）
 ├─ db/             SQLAlchemy 模型與連線
 ├─ repo/           資料存取：品牌與商品（catalog）、任務（jobs）、歷史紀錄（history）
@@ -52,6 +53,7 @@ app/
 ├─ errors.py       領域錯誤（AppError 與子類別）；api 轉成 { error: { code, message } }
 ├─ templates.py    通路模板（與 web/src/lib/compose/templates.ts 相同）
 ├─ events.py       事件保存與推送、WebSocket 串流
+├─ files.py        /files/... 網址與資料夾的對應（api 提供檔案、worker 讀取商品照）
 ├─ queues.py       SAQ 佇列
 ├─ worker.py       worker 的任務與啟動時復原
 ├─ brands.py       品牌設定檔（brands/*.yaml）的驗證與匯入
