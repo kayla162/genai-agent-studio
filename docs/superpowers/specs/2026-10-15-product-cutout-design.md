@@ -210,7 +210,7 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 - **docker-compose**：
   - 新增 `models` volume，掛載到 worker 的 `/app/models`；`MODELS_DIR` 以環境變數固定。
   - live E2E 的 compose 設定 `CUTOUT_MODEL=sim`。
-- **`.env.example`**：說明 `CUTOUT_MODEL`（`birefnet-general`／`birefnet-general-lite`／`sim`），以及第一次啟動會下載約 1 GB 的模型，與 `birefnet-general` 需要的 Docker 記憶體上限（約 10 GB 以上）。
+- **`.env.example`**：說明 `CUTOUT_MODEL`（`birefnet-general`／`birefnet-general-lite`／`sim`），以及第一次啟動會下載約 1 GB 的模型，與兩個模型都需要的 Docker 記憶體上限（約 10 GB 以上）。
 - **README**：說明去背模型、第一次下載，以及記憶體需求（去背時 worker 約 8 GB；Docker 實測尖峰約 7.6 GiB、平常約 2 GB）。
   兩個模型的 Docker／WSL2 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，或 WSL2 的 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦請把上限調到約 10 GB，WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。
 - **`.gitignore`**：加入本機開發時的模型資料夾 `models/`。
