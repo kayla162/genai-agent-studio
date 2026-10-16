@@ -47,7 +47,7 @@ docker compose up -d --build
 - API 文件：http://127.0.0.1:3000/docs
 - 停止：`docker compose down`（資料保留在 volume；加上 `-v` 會清空資料庫，也會刪除 `models` volume，下次啟動要重新下載約 1 GB 的去背模型）
 - 設定：複製 `.env.example` 成 `.env` 後修改（模擬速度、首輪是否刻意失誤、去背模型等），再 `docker compose up -d`
-- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）
+- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）。使用 `birefnet-general` 時，Docker 的記憶體上限要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，WSL2 則改 `.wslconfig`）；16 GB 的電腦請改用 `CUTOUT_MODEL=birefnet-general-lite`
 
 自己的資料：
 

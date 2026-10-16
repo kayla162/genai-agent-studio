@@ -59,7 +59,7 @@ CUTOUT_INFERENCE_TIMEOUT = 300
 #: 卡片上的按鈕在去背中是停用的，不補排的話會一直顯示去背中
 CUTOUT_REQUEUE_INTERVAL = 120
 #: 去背推論專用的單一執行緒。逾時的推論會繼續在它的執行緒裡跑完（執行緒無法中途取消），
-#: 單一執行緒確保下一張一定等它結束才開始，不會有兩個推論同時執行（每個約 6.5 GB 記憶體）。
+#: 單一執行緒確保下一張一定等它結束才開始，不會有兩個推論同時執行（每個約 8 GB 記憶體，Docker 實測尖峰約 7.6 GiB）。
 INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='cutout')
 
 

@@ -122,9 +122,9 @@ GenAI Agent/
 | 項目 | 估計 |
 |---|---|
 | Windows＋瀏覽器 | 約 4 GB |
-| Docker（7 個容器＋WSL2） | 約 3–4 GB，以 `.wslconfig` 設上限 5 GB |
+| Docker（7 個容器＋WSL2） | 約 3–4 GB（不含去背）；用 `birefnet-general` 去背時，記憶體上限（`.wslconfig`）要設到約 10 GB 以上；16 GB 的筆電請改用 `birefnet-general-lite`（較小也較快，本機實測峰值約 5.75 GB，Docker 內未實測），或接受較大的上限 |
 | ComfyUI（SDXL 部分卸載到系統記憶體） | 約 6–8 GB |
-| 去背（BiRefNet，worker） | 平常約 2 GB，去背時約 7.6 GB（Docker 實測） |
+| 去背（BiRefNet，worker） | 平常約 2 GB，去背時約 7.6 GiB（Docker 實測） |
 
 合計偏緊。BGE 模型使用 ONNX int8，用到才載入；建議筆電升級到 32 GB。實際數字在 Plan 7 實測並記錄。
 
@@ -133,9 +133,10 @@ GenAI Agent/
 ### 4.1 生命週期
 
 1. `POST /api/jobs`：驗證後寫入 `jobs`，送出 `job.accepted` 與 `job.status queued`，放入 `jobs` 佇列。
-2. worker 有兩個佇列，在同一個行程內共用已載入的模型：
+2. worker 有三個佇列，在同一個行程內共用已載入的模型：
    - `jobs`：生圖任務，同時只執行 1 個（只有一張 GPU）。
-   - `tasks`：文件上傳、去背、歷史回寫，同時最多 2 個，不必等生圖任務。
+   - `tasks`：文件上傳、歷史回寫，同時最多 2 個，不必等生圖任務。
+   - `cutouts`：商品照去背（BiRefNet），同時只執行 1 個（推論時記憶體用量大），大量新增商品時不會擋住文件上傳。
 3. 階段與事件順序與 mock 劇本相同：
    - `parsing` → `retrieving`（`rag.retrieved`、`rag.reranked`）
    - 每一輪：`prompting`（每個模板一則 `prompt.generated`）→ `rendering`（每個 variant 一則 `comfy.queued`、`render.progress`、`render.completed`）→ `composing` → `reviewing`（每張候選 10 則 `review.check`＋`review.completed`）

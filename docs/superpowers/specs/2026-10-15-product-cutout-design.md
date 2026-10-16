@@ -65,7 +65,7 @@ birefnet-general 的記憶體用量：
 
 | 檔案 | 內容 |
 |---|---|
-| `processing.py` | 純函式。前處理：依 EXIF 轉正、轉 RGB、以 LANCZOS 縮成 1024×1024、除以像素最大值、以 ImageNet 的平均值與標準差正規化，與實測時使用的 rembg 2.0.85 相同。後處理：sigmoid、min-max 正規化、以 LANCZOS 縮回原尺寸、修正透明度、合成 RGBA。 |
+| `processing.py` | 純函式。前處理：依 EXIF 轉正、轉 RGB、長邊超過 2048 像素時先縮小（本機資料夾匯入的是原圖，不縮的話輸出的 PNG 會很大）、以 LANCZOS 縮成 1024×1024、除以像素最大值、以 ImageNet 的平均值與標準差正規化，與實測時使用的 rembg 2.0.85 相同。後處理：sigmoid、min-max 正規化、以 LANCZOS 縮回照片的尺寸（縮小後的尺寸）、修正透明度、合成 RGBA。 |
 | `segmenter.py` | `Segmenter` 介面：`cut(photo: bytes) -> bytes`，輸入照片，輸出透明 PNG。有兩種實作：`OnnxSegmenter` 以 ONNX Runtime 執行，關閉記憶體池；`SimSegmenter` 產生中央橢圓遮罩，不需要模型。 |
 | `models.py` | 模型清單（名稱、網址、位元組數、SHA-256）、下載與核對 |
 
@@ -83,10 +83,10 @@ birefnet-general 的記憶體用量：
 - **存放位置**：設定 `models_dir`。本機開發時是 `REPO_ROOT/models`，加入 `.gitignore`；Docker 中是 `/app/models`，掛載 `models` volume。
 - **啟動時下載**：worker 啟動時在背景準備模型，不阻擋 worker 開始處理其他工作。
   - 已有檔案且大小與 SHA-256 都正確，就直接載入。
-  - 否則下載到 `<名稱>.onnx.part`，完成後核對大小與 SHA-256，正確才改名。
-- **等待模型**：模型準備好之前，去背任務會等待；等待時間計入任務逾時。
+  - 否則下載到 `<名稱>.onnx.part`，完成後核對大小與 SHA-256，正確才改名；下載的位元組數超過宣告的大小時立即中止。
+- **等待模型**：模型準備好之前，去背任務會等待。等待時間沒有上限（第一次下載約 1 GB，可能很久），不計入任何逾時；只有推論本身有逾時（見 4.4）。
 - **下載失敗**：記錄錯誤。下一次去背時重新嘗試下載，不會在每個任務都重試多次。
-- **常駐記憶體**：載入後的 session 留在 worker 行程裡，平常約 1.1 GB。
+- **常駐記憶體**：載入後的 session 留在 worker 行程裡，平常約 1.1 GB（本機實測；Docker 內約 2 GB）。
 - **只在 worker 執行**：api 不載入模型。
 
 ### 4.3 任務與資料流程
@@ -105,25 +105,31 @@ birefnet-general 的記憶體用量：
 2. **重新去背**：`POST /api/products/{id}/cutout`。
    - 示範商品回 400。
    - 其他商品設為 `pending` 並排入，立即回傳 `202` 與商品。
-3. **修改商品**：`PUT` 忽略請求中的 `cutout`。照片網址改變時，視同重新去背；沒有改變時保留原本的 `cutout`。
+3. **修改商品**：`PUT` 忽略請求中的 `cutout`。照片網址改變時，視同重新去背；沒有改變時保留原本的 `cutout`；照片換成示範圖時，`cutout` 設為 `null`。
 4. **worker 的 `cutout` 任務**（參數：商品 id、照片網址）：
    1. 讀取商品。商品不存在，或照片網址已經不同（表示已有較新的任務），就結束。
    2. 讀取照片檔：`upload` 從 `data/`，`local` 從本機資料夾，經 `app/files.py` 的 `photo_path`（內部使用 `resolve_file`）驗證路徑。
    3. 等待模型準備好。
-   4. 推論以 `asyncio.to_thread` 執行，不阻擋 event loop。
+   4. 推論在專用的單一執行緒執行（`run_in_executor`），不阻擋 event loop，逾時 300 秒（見 4.4）。
    5. 寫入 `data/products/{id}/cutout-{PNG 內容的 SHA-256 前 12 碼}.png`。
    6. 在同一個交易中鎖定商品列（`SELECT … FOR UPDATE`），確認商品仍存在、照片網址相同，才把 `cutout` 設為 `{ model, status: 'done', url: '/files/products/{id}/cutout-….png', error: null }`。
    7. 交易提交後，刪除同一資料夾裡其他的 `cutout-*.png`。若第 6 步沒有寫入，就只刪除剛寫的檔案。
 5. **失敗**：任何錯誤都以第 6 步同樣的確認方式，把 `cutout` 設為 `failed`。`error` 為繁體中文原因，例如「照片無法讀取」或「去背模型下載失敗：…」，並記錄 traceback。
 6. **worker 啟動復原**：在 `recover()` 中：
    - 先放掉 `cutouts` 佇列裡前一個 worker 留下的 ACTIVE 紀錄，作法與 `jobs` 佇列相同；
-   - 再把 `cutout.status` 仍是 `pending` 的商品重新排入。
+   - 再把 `cutout.status` 仍是 `pending` 的商品重新排入。worker 執行期間也每 120 秒重新排入一次（見 4.4）。
 7. **刪除商品**：刪除自建商品時一併刪除 `data/products/{id}/`。示範商品只標記刪除，沒有資料夾。
 
-### 4.4 逾時
+### 4.4 逾時與中斷
 
-- `cutouts` 佇列的任務逾時是 600 秒，涵蓋等待模型下載與推論。
-- 逾時或 worker 中斷時，SAQ 會中止任務，商品仍是 `pending`；下次 worker 啟動時，由 4.3 第 6 步重新排入。
+- **佇列沒有逾時**：`cutouts` 佇列的任務不設 SAQ 逾時（`timeout=0`，與生圖任務相同）。第一次下載模型可能花很久，等待模型的時間不計入任何逾時。
+- **只有推論有逾時**：推論在專用的單一執行緒（`run_in_executor`）執行，逾時 300 秒；逾時時商品設為 `failed`，原因是「去背逾時（超過 5 分鐘），請重試」。
+  - 逾時的推論無法中途取消，會在它的執行緒裡跑完。
+  - 單一執行緒確保下一張等它結束才開始，不會有兩個推論同時佔用記憶體。
+- **worker 中斷**：由兩件事補上，都在 worker 啟動時執行：
+  - 放掉前一個 worker 留下的 ACTIVE 紀錄；
+  - 把仍是 `pending` 的商品重新排入（`requeue_pending_cutouts`，見 4.3 第 6 步）。
+- **執行期間的補排**：重新排入也每 120 秒執行一次（`CUTOUT_REQUEUE_INTERVAL`）。寫入資料庫或佇列時出錯（Redis 暫時連不上等），會留下沒有佇列紀錄的 `pending` 商品，卡片上的按鈕在去背中是停用的，不補排的話會一直顯示「去背中」。排入以商品與照片當 key，排隊中或執行中的工作不會重複。
 
 ### 4.5 合約變更
 
@@ -158,7 +164,11 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 | `failed` | `error` | 失敗原因 |
 | `sim` | `sim` | 「模擬去背」 |
 | 沒有這個 key | `error` | 「worker 尚未回報」 |
+| 內容格式不對，或不認得的狀態 | `error` | 「去背模型狀態無法辨識」 |
+| 讀取 Redis 出錯 | `error` | 錯誤訊息 |
+| 3 秒內沒有回應 | `error` | 「3 秒內沒有回應」 |
 
+- 去背模型的檢查與其他元件一起執行，每一項最多等 3 秒；任何錯誤都顯示為 `error`，不會讓 `/api/status` 整個失敗。
 - `ComponentStatus.id` 本來就是字串，不需要改合約。
 
 ## 5. 前端
@@ -200,8 +210,9 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 - **docker-compose**：
   - 新增 `models` volume，掛載到 worker 的 `/app/models`；`MODELS_DIR` 以環境變數固定。
   - live E2E 的 compose 設定 `CUTOUT_MODEL=sim`。
-- **`.env.example`**：說明 `CUTOUT_MODEL`（`birefnet-general`／`birefnet-general-lite`／`sim`），以及第一次啟動會下載約 1 GB 的模型。
+- **`.env.example`**：說明 `CUTOUT_MODEL`（`birefnet-general`／`birefnet-general-lite`／`sim`），以及第一次啟動會下載約 1 GB 的模型，與 `birefnet-general` 需要的 Docker 記憶體上限（約 10 GB 以上）。
 - **README**：說明去背模型、第一次下載，以及記憶體需求（去背時 worker 約 8 GB；Docker 實測尖峰約 7.6 GiB、平常約 2 GB）。
+  使用 `birefnet-general` 時，Docker／WSL2 的記憶體上限要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，或 WSL2 的 `.wslconfig`）；16 GB 的電腦請改用 `CUTOUT_MODEL=birefnet-general-lite`，或調高上限。
 - **`.gitignore`**：加入本機開發時的模型資料夾 `models/`。
 
 ## 7. 測試
@@ -212,8 +223,8 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 |---|---|
 | `processing` | 輸入的形狀與正規化；EXIF 轉正；透明度修正的門檻；縮回原尺寸；輸出的 RGBA |
 | `models` | 本機的假 HTTP 伺服器：核對成功後才改名；SHA-256 不符時刪除暫存檔並回報；已有正確的檔案就不下載 |
-| `cutout` 任務 | pending → done，寫入檔案與網址，並刪除舊檔；照片無法讀取 → failed；途中刪除商品或更換照片 → 丟棄結果，新照片的任務仍會完成；worker 啟動時放掉 ACTIVE 殘留紀錄、重新排入 pending；`cutouts` 佇列同時只執行一個 |
-| API | 新增上傳或本機匯入商品時排入且回傳 pending；`PUT` 忽略 `cutout`，換照片時重新排入；`POST …/cutout` 回 202；同一張照片重複排入只做一次；刪除商品時刪除資料夾；系統狀態的「去背模型」五種情況 |
+| `cutout` 任務 | pending → done，寫入檔案與網址，並刪除舊檔；照片無法讀取 → failed；途中刪除商品或更換照片 → 丟棄結果，新照片的任務仍會完成；worker 啟動時放掉 ACTIVE 殘留紀錄、重新排入 pending；執行期間定時補排沒有佇列紀錄的 pending（補排出錯後繼續下一輪，已在佇列裡的不重複）；推論逾時 → failed；`cutouts` 佇列同時只執行一個 |
+| API | 新增上傳或本機匯入商品時排入且回傳 pending；`PUT` 忽略 `cutout`，換照片時重新排入；`POST …/cutout` 回 202；同一張照片重複排入只做一次；刪除商品時刪除資料夾；系統狀態的「去背模型」五種情況，以及格式不對、不認得的狀態、Redis 出錯與逾時（都是 `error`）；照片換成示範圖時 `cutout` 為 null |
 | 遷移 | 舊格式轉為 pending；示範商品不變；可以 downgrade |
 
 **真模型測試**：標記為 `model`，照片路徑由環境變數 `CUTOUT_TEST_PHOTO` 指定；沒有模型檔或沒有指定照片時略過。確認四角透明、商品中央不透明。
@@ -242,7 +253,8 @@ export interface ProductCutout { model: string; status: CutoutStatus; url: strin
 
 - 第 1 節技術表：去背改由「ONNX Runtime＋BiRefNet」負責，ComfyUI 只負責背景生成、打光融合與放大。
 - 5.5：刪除 `cutout_v1` workflow。`product_scene_v1` 直接讀取 `cutout.url` 的透明 PNG。
-- 3.4 筆電記憶體：加上去背時約 7.6 GB、平常約 2 GB（Docker 實測；第 2 節的表是本機實測）。
+- 3.4 筆電記憶體：去背平常約 2 GB、去背時約 7.6 GiB（Docker 實測；本規格第 2 節的表是本機實測）。Docker 的記憶體上限，原本寫 5 GB，與去背所需不符：`birefnet-general` 要設到約 10 GB 以上；16 GB 的筆電請改用 `birefnet-general-lite`，或接受較大的上限。
+- 4.1：worker 的佇列新增 `cutouts`（同時 1 個），去背從 `tasks` 佇列移出。
 - 6.2：`data/products/{id}/` 存放去背圖。原圖仍在 `data/uploads/`，本機匯入的照片仍在本機資料夾，本規格不搬移原圖。
 
 ## 9. 不在範圍內

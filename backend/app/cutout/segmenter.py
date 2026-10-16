@@ -1,4 +1,4 @@
-"""去背的實作：照片（bytes）→ 透明 PNG（bytes）。同步執行，worker 以 asyncio.to_thread 呼叫。"""
+"""去背的實作：照片（bytes）→ 透明 PNG（bytes）。同步執行，worker 在專用的單一執行緒裡呼叫（run_in_executor）。"""
 
 from pathlib import Path
 from typing import Protocol
@@ -17,7 +17,8 @@ class Segmenter(Protocol):
 
 
 class OnnxSegmenter:
-    """BiRefNet（ONNX）。關閉 ONNX Runtime 的記憶體池：推論完立刻歸還記憶體（峰值約 6.5 GB，平常約 1.1 GB）。"""
+    """BiRefNet（ONNX）。關閉 ONNX Runtime 的記憶體池：推論完立刻歸還記憶體。
+    本機實測峰值約 6.5 GB、平常約 1.1 GB；Docker 內實測峰值約 7.6 GiB、平常約 2 GB。"""
 
     def __init__(self, name: str, model_path: Path) -> None:
         self.name = name
