@@ -7,6 +7,7 @@ import type { ApiClient, ConnectionChannel, DemoControls, JobSnapshot, ProductDr
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString } from '@/lib/core/num';
 import { chunkDocument, EMBED_DIMS, embedPreview } from '@/lib/rag/chunk';
+import { historyChunk } from '@/lib/rag/history';
 import { dashboardStats } from '@/lib/stats/dashboard';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from './data';
 import { parseBrief } from './brief';
@@ -34,7 +35,8 @@ interface JobRecord {
 const MOCK_CONNECTION: ConnectionState = Object.freeze({ status: 'connected', transport: 'mock', error: null });
 
 const KEYS = {
-  products: 'products', deleted: 'deletedSampleIds', history: 'history', docChunks: 'docChunks', jobs: 'jobs',
+  products: 'products', deleted: 'deletedSampleIds', history: 'history', docChunks: 'docChunks', historyChunks: 'historyChunks',
+  jobs: 'jobs',
 } as const;
 
 /** 本機保留的已結束任務數（Agent 透視與成效儀表板使用），超過時刪掉最舊的 */
@@ -155,10 +157,14 @@ export class MockApiClient implements ApiClient {
     throw new Error('只有 live 模式可以匯入本機資料夾');
   }
 
-  /** 示範品牌 + 使用者上傳文件產生的切塊 */
+  /** 示範品牌 + 使用者上傳文件與選定海報回寫的切塊（順序與後端相同：設定檔、上傳的手冊、歷史回寫） */
   async listBrands() {
     const uploaded = (await this.store.get<Record<string, RagChunk[]>>(KEYS.docChunks)) ?? {};
-    return BRANDS.map((b) => (uploaded[b.id]?.length ? { ...b, guidelineChunks: [...b.guidelineChunks, ...uploaded[b.id]] } : b));
+    const written = (await this.store.get<Record<string, RagChunk[]>>(KEYS.historyChunks)) ?? {};
+    return BRANDS.map((b) => {
+      const added = [...(uploaded[b.id] ?? []), ...(written[b.id] ?? [])];
+      return added.length ? { ...b, guidelineChunks: [...b.guidelineChunks, ...added] } : b;
+    });
   }
 
   async listTemplates() { return CHANNEL_TEMPLATES; }
@@ -237,6 +243,13 @@ export class MockApiClient implements ApiClient {
     const p = (await this.customProducts()).find((x) => x.id === id) ?? SAMPLE_PRODUCTS.find((x) => x.id === id);
     if (!p) throw new Error(`Unknown product: ${id}`);
     return p;
+  }
+
+  /** 商品目前的名稱；已刪除時為 null（與後端的歷史回寫相同） */
+  private async productName(id: string): Promise<string | null> {
+    const deleted = new Set((await this.store.get<string[]>(KEYS.deleted)) ?? []);
+    const custom = (await this.customProducts()).find((x) => x.id === id);
+    return (custom ?? SAMPLE_PRODUCTS.find((x) => x.id === id && !deleted.has(id)))?.name ?? null;
   }
 
   async uploadProductPhoto(file: Blob): Promise<ProductPhoto> {
@@ -472,6 +485,11 @@ export class MockApiClient implements ApiClient {
       };
       const history = (await this.store.get<HistoryEntry[]>(KEYS.history)) ?? [];
       await this.store.set(KEYS.history, [entry, ...history]);
+      // 回寫成歷史切塊（與後端的 write_back 相同，以 id 取代）
+      const chunk = historyChunk(entry, await this.productName(entry.productId));
+      const written = (await this.store.get<Record<string, RagChunk[]>>(KEYS.historyChunks)) ?? {};
+      const kept = (written[entry.brandId] ?? []).filter((c) => c.id !== chunk.id);
+      await this.store.set(KEYS.historyChunks, { ...written, [entry.brandId]: [...kept, chunk] });
       return entry;
     });
   }

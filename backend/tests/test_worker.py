@@ -1,4 +1,4 @@
-"""worker：任務經過佇列執行、啟動時復原、去背、RAG 的啟動準備、品牌文件上傳、回寫。需要 composer。"""
+"""worker：任務經過佇列執行、啟動時復原、去背、RAG 的啟動準備、品牌文件上傳、歷史回寫。需要 composer。"""
 
 import asyncio
 import io
@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -21,6 +22,7 @@ from app.adapters.composer import ComposerClient
 from app.brands import load_brands
 from app.contract import (
     FilePhoto,
+    HistoryEntry,
     IngestChunkedEvent,
     IngestEmbeddedEvent,
     JobAcceptedEvent,
@@ -35,16 +37,18 @@ from app.contract import (
 from app.cutout.engine import CutoutEngine
 from app.cutout.segmenter import Segmenter, SimSegmenter
 from app.db.session import Database
+from app.errors import Unavailable
 from app.events import EventStore
 from app.pipeline.sim import SimRetriever, sim_ports
-from app.queues import Queues, cutout_key, ingest_channel
+from app.queues import Queues, TaskFailed, cutout_key, ingest_channel
 from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
+from app.rag.history import history_chunk
 from app.rag.retriever import BgeRetriever
 from app.rag.state import RagMode
 from app.rag.store import VectorStore
-from app.rag.sync import chunk_metadata, index_text
-from app.repo import catalog, jobs
+from app.rag.sync import SyncResult, chunk_metadata, index_text, sync_brand
+from app.repo import catalog, history, jobs
 from app.settings import Settings
 from app.worker import (
     RESTART_REASON,
@@ -57,10 +61,11 @@ from app.worker import (
     requeue_cutouts_periodically,
     requeue_pending_cutouts,
     warm_up_rag,
+    write_back,
 )
 from tests.conftest import TEST_CHROMA_DATABASE, TEST_REDIS_URL
 from tests.fake_encoder import FakeEncoder, fake_engine
-from tests.fixtures import BRANDS_DIR, load_fixture
+from tests.fixtures import BRANDS_DIR, load_fixture, selected_history
 
 NOW = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
 
@@ -717,3 +722,129 @@ async def test_ingest_reports_unexpected_errors_as_internal(
     assert await collect_ingest(services, 't1', 'a.md', '主色') == [
         {'error': {'code': 'internal', 'message': '文件處理失敗：RuntimeError: boom'}}
     ]
+
+
+async def selected(services: Services) -> HistoryEntry:
+    """寫入歷史紀錄（選定 selune-retry 的 IG 貼文）；history 參照 jobs，所以先建立任務。"""
+    entry = selected_history()
+    async with services.db.session() as s:
+        await jobs.create_job(s, entry.job_id, entry.input, NOW)
+        await history.add_history(s, entry)
+    return entry
+
+
+async def chunks_by_origin(services: Services, brand_id: str = 'selune') -> list[tuple[str, str]]:
+    async with services.db.session() as s:
+        return [(c.id, origin) for c, origin in await catalog.list_chunks(s, brand_id)]
+
+
+async def history_chunks(services: Services) -> list[RagChunk]:
+    async with services.db.session() as s:
+        return [c for c, origin in await catalog.list_chunks(s, 'selune') if origin == 'history']
+
+
+async def written(services: Services, history_id: str) -> bool:
+    async with services.db.session() as s:
+        entry = await history.get_history(s, history_id)
+    assert entry is not None
+    return entry.written_to_rag
+
+
+async def test_sim_write_back_upserts_the_history_chunk_into_postgres_only(
+    services: Services, chroma: VectorStore
+) -> None:
+    services.vectors = chroma
+    entry = await selected(services)
+    chunk = history_chunk(entry, '極光玻尿酸修護精華 30ml', ZoneInfo('Asia/Taipei'))
+    assert await write_back(services, entry.id) is True
+    assert await history_chunks(services) == [chunk]
+    assert await written(services, entry.id) is True
+    # 列在知識庫的最後（設定檔、合規替代用語、上傳的手冊之後）；重跑以 id upsert，不會重複
+    assert await write_back(services, entry.id) is True
+    assert (await chunks_by_origin(services))[-1] == (chunk.id, 'history')
+    assert await history_chunks(services) == [chunk]
+    # 模擬模式不連 Chroma
+    assert await chroma.brands() == []
+    assert await write_back(services, 'hist_nope') is False
+
+
+async def test_write_back_leaves_out_the_name_of_a_deleted_product(services: Services) -> None:
+    entry = await selected(services)
+    async with services.db.session() as s:
+        assert await catalog.delete_product(s, entry.product_id)
+    assert await write_back(services, entry.id) is True
+    [chunk] = await history_chunks(services)
+    assert chunk == history_chunk(entry, None, ZoneInfo('Asia/Taipei'))
+    assert chunk.text.startswith('IG 貼文海報，審查 99 分。')
+
+
+async def test_bge_write_back_embeds_the_chunk_into_chroma_where_retrieval_finds_it(
+    services: Services, bge: FakeEncoder, chroma: VectorStore
+) -> None:
+    entry = await selected(services)
+    await sync_brand(services.db, chroma, services.rag, services.locks, 'selune')
+    bge.embedded.clear()
+    chunk = history_chunk(entry, '極光玻尿酸修護精華 30ml', ZoneInfo('Asia/Taipei'))
+    assert await write_back(services, entry.id) is True
+    assert bge.embedded == [index_text(chunk)]
+    assert (await chroma.metadata('selune'))[chunk.id] == chunk_metadata('selune', chunk, 'history')
+    assert await history_chunks(services) == [chunk]
+    assert await written(services, entry.id) is True
+    # 寫入的內容與同步要的相同：之後的同步不必重新向量化
+    assert await sync_brand(services.db, chroma, services.rag, services.locks, 'selune') == SyncResult(0, 0)
+    assert len(bge.embedded) == 1
+    hits = await chroma.query('selune', FakeEncoder.vector(index_text(chunk)), 1)
+    assert [h.id for h in hits] == [chunk.id]
+
+
+async def test_bge_write_back_writes_postgres_and_embeds_outside_the_brand_lock(
+    services: Services, bge: FakeEncoder, chroma: VectorStore
+) -> None:
+    entry = await selected(services)
+    async with services.locks('selune'):
+        task = asyncio.create_task(write_back(services, entry.id))
+        for _ in range(50):
+            if bge.embedded:
+                break
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
+        assert len(bge.embedded) == 1
+        assert len(await history_chunks(services)) == 1
+        assert not task.done()
+        assert await chroma.metadata('selune') == {}
+    assert await task is True
+    assert list(await chroma.metadata('selune')) == [f'selune#hist-{entry.id}']
+
+
+async def test_bge_write_back_fails_when_chroma_is_down_but_keeps_postgres(
+    services: Services, bge: FakeEncoder
+) -> None:
+    services.vectors = VectorStore('http://127.0.0.1:9')
+    entry = await selected(services)
+    with pytest.raises(Unavailable, match=r'^向量庫（Chroma）無法連線'):
+        await write_back(services, entry.id)
+    # PostgreSQL 為準：下一次同步會補上 Chroma；writtenToRag 維持 false
+    assert len(await history_chunks(services)) == 1
+    assert await written(services, entry.id) is False
+
+
+async def test_run_task_raises_task_failed_when_the_task_fails_or_is_aborted(
+    services: Services, queues: Queues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(services: Services, history_id: str) -> bool:
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr('app.worker.write_back', broken)
+    async with running(services, queues):
+        with pytest.raises(TaskFailed, match='背景工作 write_back 失敗'):
+            await queues.run_task('write_back', wait=5, history_id='hist_x')
+    # 沒有 worker：排隊中的工作被中止
+    waiting = asyncio.create_task(queues.run_task('write_back', wait=5, history_id='hist_y'))
+    for _ in range(50):
+        queued = [job async for job in queues.tasks.iter_jobs(statuses=[Status.QUEUED])]
+        if queued:
+            break
+        await asyncio.sleep(0.05)
+    await queues.tasks.abort(queued[0], 'stop')
+    with pytest.raises(TaskFailed, match='stop'):
+        await waiting

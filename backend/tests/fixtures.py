@@ -5,6 +5,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from app.contract import HistoryEntry
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = REPO_ROOT / 'contracts' / 'fixtures'
 BRANDS_DIR = REPO_ROOT / 'brands'
@@ -21,3 +23,27 @@ def _read(name: str) -> str:
 def load_fixture(name: str) -> Any:
     """每次回傳新的物件（測試可以放心修改）。"""
     return json.loads(_read(name))
+
+
+def selected_history() -> HistoryEntry:
+    """選定 selune-retry 任務的 IG 貼文最佳候選（第 2 輪 v0，審查 99 分）。
+    web/src/lib/rag/history.test.ts 以同一筆歷史紀錄比對同一段回寫文字。"""
+    data = load_fixture('timelines/selune-retry.json')
+    events = [x['event'] for x in data['events']]
+    best = next(e['bestRenderIds']['ig-post'] for e in events if e['type'] == 'job.completed')
+    render = next(r for e in events if e['type'] == 'render.completed' for r in e['renders'] if r['id'] == best)
+    return HistoryEntry.model_validate(
+        {
+            'id': 'hist_3fa2c1d0e9b8',
+            'jobId': data['jobId'],
+            'brandId': 'selune',
+            'productId': data['input']['productId'],
+            'input': data['input'],
+            'templateId': 'ig-post',
+            'render': {**render, 'score': 99, 'passed': True},
+            'copy': render['spec']['copy'],
+            'selectedAt': '2026-10-21T16:30:00.000Z',
+            'favorite': False,
+            'writtenToRag': False,
+        }
+    )

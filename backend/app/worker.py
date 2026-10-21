@@ -1,7 +1,7 @@
 """SAQ worker：uv run python -m app.worker
 
 - jobs 佇列：run_job（生圖任務，一次一個）
-- tasks 佇列：ingest（品牌手冊上傳：切塊、向量化、寫入知識庫）、write_back（選定海報回寫成歷史案例），最多同時兩個
+- tasks 佇列：ingest（品牌手冊上傳：切塊、向量化、寫入知識庫）、write_back（選定的海報回寫成歷史切塊），最多同時兩個
 - cutouts 佇列：cutout（商品照去背，一次一個）
 - 啟動時在背景準備模型：去背模型下載並載入；RAG 模型下載並核對（第一次檢索時才載入），再把品牌同步到 Chroma
 - 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務與去背中的商品重新放回佇列；
@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from itertools import batched
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from redis.asyncio import Redis
 from saq import Worker
@@ -52,6 +53,7 @@ from app.pipeline.sim import sim_ports
 from app.queues import Queues, ingest_channel
 from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
+from app.rag.history import history_chunk
 from app.rag.retriever import BgeRetriever
 from app.rag.store import VectorRecord, VectorStore, collection_name
 from app.rag.sync import UPSERT_BATCH, BrandLocks, sync_all, vector_record
@@ -233,7 +235,24 @@ async def _ingest_sim(services: Services, brand_id: str, name: str, chunks: list
 
 
 async def write_back(services: Services, history_id: str) -> bool:
-    """選定的海報回寫成歷史案例（模擬：只標記已回寫；Plan 5 改為寫入 Chroma）。"""
+    """選定的海報回寫成歷史切塊：以 id upsert 到 PostgreSQL（重跑不會重複），真實版再向量化並寫入 Chroma
+    （向量化在品牌鎖之外，寫入在鎖內），最後標記 writtenToRag。歷史紀錄不存在時回傳 False。
+    切塊文字帶有商品目前的名稱；商品已刪除時省略。
+
+    出錯時丟出例外，SAQ 記為失敗，api 回傳 writtenToRag: false；已寫入 PostgreSQL 的切塊在下一次同步時補上 Chroma。
+    """
+    async with services.db.session() as s:
+        entry = await history.get_history(s, history_id)
+        product = await catalog.get_product(s, entry.product_id) if entry else None
+    if entry is None:
+        return False
+    chunk = history_chunk(entry, product.name if product else None, ZoneInfo(services.settings.timezone))
+    async with services.db.session() as s:
+        await catalog.upsert_chunk(s, entry.brand_id, chunk, 'history', utc_now())
+    if services.rag.mode == 'bge':
+        record = await vector_record(services.rag, entry.brand_id, chunk, 'history')
+        async with services.locks(entry.brand_id):
+            await services.vectors.upsert(entry.brand_id, [record])
     async with services.db.session() as s:
         return await history.mark_written(s, history_id)
 

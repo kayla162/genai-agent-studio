@@ -203,6 +203,10 @@ async def test_select_a_render_then_favorite_it_and_count_the_job(api: LiveApi) 
     )
     assert unknown.json() == {'error': {'code': 'not_found', 'message': '找不到候選圖：r_nope'}}
     assert (await api.http.get('/api/history', params={'brandId': 'selune'})).json() == [entry]
+    # 回寫的歷史切塊列在知識庫的最後
+    brands = {b['id']: b for b in (await api.http.get('/api/brands')).json()}
+    last = brands['selune']['guidelineChunks'][-1]
+    assert (last['id'], last['source'], last['tag']) == (f'selune#hist-{entry["id"]}', f'history/{job_id}', 'history')
     assert (await api.http.get('/api/history', params={'brandId': 'misty-isle'})).json() == []
     favorite = await api.http.patch(f'/api/history/{entry["id"]}', json={'favorite': True})
     assert favorite.json() == {**entry, 'favorite': True}
@@ -210,3 +214,25 @@ async def test_select_a_render_then_favorite_it_and_count_the_job(api: LiveApi) 
     stats = (await api.http.get('/api/stats', params={'brandId': 'selune'})).json()
     assert (stats['jobs'], stats['passRate'], stats['recent'][0]['jobId']) == (1, 1, job_id)
     assert (await api.http.get('/api/stats', params={'brandId': 'misty-isle'})).json()['jobs'] == 0
+
+
+async def test_select_answers_written_to_rag_false_when_the_write_back_fails(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def broken(services: Any, history_id: str) -> bool:
+        raise RuntimeError('向量庫（Chroma）無法連線')
+
+    monkeypatch.setattr('app.worker.write_back', broken)
+    async with api.worker():
+        job_id = (await api.http.post('/api/jobs', json=job_input())).json()['jobId']
+        messages = await stream(api, job_id)
+        render_id = (await api.http.get(f'/api/jobs/{job_id}')).json()['summary']['bestRenderIds']['story']
+        rendered = [r for m in messages if m['type'] == 'render.completed' for r in m['renders']]
+        copy = next(r for r in rendered if r['id'] == render_id)['spec']['copy']
+        res = await api.http.post(f'/api/jobs/{job_id}/select', json={'renderId': render_id, 'copy': copy})
+    # 歷史紀錄已經建立，所以不回 500；重送也不會重複建立
+    assert res.status_code == 201
+    entry = res.json()
+    assert entry['writtenToRag'] is False
+    assert (await api.http.get('/api/history', params={'brandId': 'selune'})).json() == [entry]
+    assert f'歷史回寫失敗：history_id={entry["id"]}' in caplog.text

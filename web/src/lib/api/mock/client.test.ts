@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobEvent, JobInput, JobMessage, ProductCutout } from '@/types/contract';
+import { historyChunk } from '@/lib/rag/history';
+import { chunkKind } from '@/lib/rag/kind';
 import type { ApiClient, ProductDraft } from '../client';
 import { getApiClient } from '../index';
 import { MAX_STORED_JOBS, MockApiClient, makeJobId } from './client';
@@ -216,6 +218,46 @@ describe('jobs', () => {
     expect(entry.input.templateIds).toEqual(['ig-post']);
     expect(await api.listHistory('selune')).toHaveLength(1);
     expect(await api.listHistory('misty-isle')).toHaveLength(0);
+  });
+
+  it('writes the selected render back as a history chunk listed after the uploaded documents', async () => {
+    const store = new MemoryStore();
+    const api = new MockApiClient(store);
+    api.demo.set({ speed: 4 });
+    const { jobId, events } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(14_500);
+    const done = events.find((e) => e.type === 'job.completed');
+    if (done?.type !== 'job.completed') throw new Error('job did not complete');
+    const prompt = events.find((e) => e.type === 'prompt.generated' && e.round === 2);
+    if (prompt?.type !== 'prompt.generated') throw new Error('missing round 2 prompt');
+
+    const entry = await api.selectRender(jobId, done.bestRenderIds['ig-post']!, prompt.spec.copy);
+    const uploading = api.ingestBrandDocument('selune', new File(['主色維持 #B76E79。'], 'later.md'), () => {});
+    await vi.advanceTimersByTimeAsync(300);
+    const [uploaded] = await uploading;
+    const chunks = (await new MockApiClient(store).listBrands()).find((b) => b.id === 'selune')!.guidelineChunks;
+    // 與後端相同：設定檔、上傳的手冊、歷史回寫
+    expect(chunks.slice(-2)).toEqual([uploaded, historyChunk(entry, '極光玻尿酸修護精華 30ml')]);
+    expect(chunkKind(chunks.at(-1)!.id)).toBe('history');
+    expect(chunks.at(-1)).toMatchObject({ id: `selune#hist-${entry.id}`, source: `history/${jobId}`, tag: 'history' });
+    expect((await api.listBrands()).find((b) => b.id === 'misty-isle')!.guidelineChunks).toEqual(MISTY_ISLE.guidelineChunks);
+  });
+
+  it('leaves the product name out of the history chunk when the product was deleted', async () => {
+    const api = new MockApiClient();
+    api.demo.set({ speed: 4 });
+    const { jobId, events } = await startJob(api);
+    await vi.advanceTimersByTimeAsync(14_500);
+    const done = events.find((e) => e.type === 'job.completed');
+    if (done?.type !== 'job.completed') throw new Error('job did not complete');
+    const prompt = events.find((e) => e.type === 'prompt.generated');
+    if (prompt?.type !== 'prompt.generated') throw new Error('missing prompt');
+    await api.deleteProduct('prod_selune_serum');
+
+    const entry = await api.selectRender(jobId, done.bestRenderIds['ig-post']!, prompt.spec.copy);
+    const chunk = (await api.listBrands()).find((b) => b.id === 'selune')!.guidelineChunks.at(-1);
+    expect(chunk).toEqual(historyChunk(entry, null));
+    expect(chunk?.text).toMatch(/^IG 貼文海報，審查 \d+ 分。/);
   });
 
   it('rejects empty template lists', async () => {

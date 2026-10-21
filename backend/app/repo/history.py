@@ -28,8 +28,13 @@ async def list_history(session: AsyncSession, brand_id: str | None = None) -> li
     return [HistoryEntry.model_validate(r.data) for r in await session.scalars(query)]
 
 
+async def get_history(session: AsyncSession, history_id: str) -> HistoryEntry | None:
+    row = await session.get(HistoryRow, history_id)
+    return HistoryEntry.model_validate(row.data) if row else None
+
+
 async def mark_written(session: AsyncSession, history_id: str) -> bool:
-    """回寫成歷史案例後標記 writtenToRag。"""
+    """回寫成歷史切塊後標記 writtenToRag。"""
     row = await session.get(HistoryRow, history_id)
     if row is None:
         return False

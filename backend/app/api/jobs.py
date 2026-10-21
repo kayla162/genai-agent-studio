@@ -31,6 +31,7 @@ from app.contract import (
 )
 from app.core.clock import iso, utc_now
 from app.errors import Invalid, NotFound, Unavailable
+from app.queues import TaskFailed
 from app.repo import catalog, history, jobs
 from app.stats import dashboard_stats
 
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=['任務'])
 
-#: 回寫歷史案例最多等待的秒數（逾時時 writtenToRag 為 false，worker 仍會完成）
+#: 回寫歷史切塊最多等待的秒數（逾時時 writtenToRag 為 false，worker 仍會完成）
 WRITE_BACK_WAIT = 10
 #: WebSocket 關閉代碼：任務不存在（前端不再重新連線）
 WS_NOT_FOUND = 4404
@@ -209,7 +210,10 @@ async def stream_job(websocket: WebSocket, job_id: str, services: Services, afte
 
 @router.post('/api/jobs/{job_id}/select', status_code=201)
 async def select_render(job_id: str, body: SelectRequest, services: Services) -> HistoryEntry:
-    """選定候選圖：寫入歷史紀錄，再由 worker 回寫成歷史案例（writtenToRag）。"""
+    """選定候選圖：寫入歷史紀錄，再由 worker 回寫成歷史切塊（writtenToRag）。
+
+    回寫最多等 WRITE_BACK_WAIT 秒；逾時、失敗或被中止時 writtenToRag 為 false。歷史紀錄已經建立，所以不回錯誤。
+    """
     async with services.db.session() as s:
         summary = await jobs.get_summary(s, job_id)
         if summary is None:
@@ -231,7 +235,11 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
             written_to_rag=False,
         )
         await history.add_history(s, entry)
-    done = await services.queues.run_task('write_back', wait=WRITE_BACK_WAIT, history_id=entry.id)
+    try:
+        done = await services.queues.run_task('write_back', wait=WRITE_BACK_WAIT, history_id=entry.id)
+    except TaskFailed as error:
+        logger.warning('歷史回寫失敗：history_id=%s：%s', entry.id, error)
+        return entry
     if done.completed and done.result:
         entry = entry.model_copy(update={'written_to_rag': True})
     return entry

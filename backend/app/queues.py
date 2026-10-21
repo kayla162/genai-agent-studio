@@ -1,7 +1,7 @@
 """SAQ 佇列：api 放入工作，worker 執行。
 
 - jobs：生圖任務，一次只執行一個（只有一張 GPU）；key 為任務 id，同一個任務不會重複排入。
-- tasks：文件上傳、回寫歷史案例，最多同時兩個，不必等生圖任務。
+- tasks：文件上傳、回寫歷史切塊，最多同時兩個，不必等生圖任務。
 - cutouts：商品照去背，一次一個（推論時約 8 GB 記憶體，Docker 實測尖峰約 7.6 GiB）；大量新增商品時不會擋住文件上傳。
 """
 
@@ -28,6 +28,10 @@ def ingest_channel(task_id: str) -> str:
 def cutout_key(product_id: str, photo_url: str) -> str:
     """同一張照片的去背還在排隊或執行時不會重複排入；換了照片 key 就不同，一定會排入。"""
     return f'cutout:{product_id}:{hashlib.sha256(photo_url.encode()).hexdigest()[:8]}'
+
+
+class TaskFailed(RuntimeError):
+    """背景工作失敗或被中止（SAQ 的 FAILED、ABORTED）。"""
 
 
 @dataclass(frozen=True)
@@ -87,7 +91,7 @@ class Queues:
         await self.tasks.enqueue(function, timeout=TASK_TIMEOUT, **kwargs)
 
     async def run_task(self, function: str, /, wait: float, **kwargs: Any) -> TaskResult:
-        """放入 tasks 佇列並最多等 wait 秒；沒等到時工作仍在背景繼續。失敗時丟出 RuntimeError。"""
+        """放入 tasks 佇列並最多等 wait 秒；沒等到時工作仍在背景繼續。失敗或被中止時丟出 TaskFailed。"""
         job = await self.tasks.enqueue(function, timeout=TASK_TIMEOUT, **kwargs)
         assert job is not None
         try:
@@ -101,5 +105,5 @@ class Queues:
         if job.status == Status.COMPLETE:
             return TaskResult(True, job.result)
         if job.status in (Status.FAILED, Status.ABORTED):
-            raise RuntimeError(f'背景工作 {function} 失敗：{job.error}')
+            raise TaskFailed(f'背景工作 {function} 失敗：{job.error}')
         return TaskResult(False, None)

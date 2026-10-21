@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import case, delete, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brands import LoadedBrand, is_alt
@@ -122,6 +123,21 @@ async def replace_document_chunks(
     )
     for i, c in enumerate(chunks):
         session.add(_chunk_row(brand_id, c, 'upload', i, now))
+    await session.commit()
+
+
+async def upsert_chunk(session: AsyncSession, brand_id: str, chunk: RagChunk, origin: str, now: datetime) -> None:
+    """以 id 新增或取代一個切塊（歷史回寫：重跑不會產生重複的切塊）。已經有時保留第一次寫入的時間，列出的順序不變。"""
+    values = {
+        'brand_id': brand_id,
+        'source': chunk.source,
+        'section': chunk.section,
+        'tag': chunk.tag,
+        'text': chunk.text,
+        'origin': origin,
+    }
+    stmt = insert(BrandChunkRow).values(id=chunk.id, position=0, created_at=now, **values)
+    await session.execute(stmt.on_conflict_do_update(index_elements=[BrandChunkRow.id], set_=values))
     await session.commit()
 
 
