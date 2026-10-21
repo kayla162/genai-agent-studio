@@ -1,34 +1,15 @@
 """composer（web/composer）的用戶端：版型，以及模擬模式沿用的前端 mock 邏輯（/sim/*）。"""
 
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-from app.contract import (
-    Brand,
-    BrandDocument,
-    Fix,
-    LayoutBox,
-    ParsedBrief,
-    Product,
-    PromptSpec,
-    RagChunk,
-    ReviewCheck,
-    TemplateId,
-)
+from app.contract import Brand, Fix, LayoutBox, ParsedBrief, Product, PromptSpec, ReviewCheck, TemplateId
 from app.pipeline.ports import ReviewResult, SpecRequest
 
 
 class ComposerError(Exception):
     pass
-
-
-@dataclass(frozen=True)
-class SimIngest:
-    dims: int
-    #: 切塊與模擬向量的前幾維
-    chunks: list[tuple[RagChunk, list[float]]]
 
 
 class ComposerClient:
@@ -86,8 +67,3 @@ class ComposerClient:
     async def sim_fixes(self, checks: list[ReviewCheck], brand: Brand, spec: PromptSpec) -> list[Fix]:
         body = {'checks': [c.to_json() for c in checks], 'brand': brand.to_json(), 'spec': spec.to_json()}
         return [Fix.model_validate(f) for f in await self._post('/sim/fixes', body)]
-
-    async def sim_ingest(self, brand_id: str, doc: BrandDocument) -> SimIngest:
-        data = await self._post('/sim/ingest', {'brandId': brand_id, 'doc': doc.to_json()})
-        chunks = [(RagChunk.model_validate(c['chunk']), list(c['preview'])) for c in data['chunks']]
-        return SimIngest(dims=data['dims'], chunks=chunks)

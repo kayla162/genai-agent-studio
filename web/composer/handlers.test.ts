@@ -7,7 +7,6 @@ import { SAMPLE_PRODUCTS, SELUNE } from '@/lib/api/mock/data';
 import { reviewRender } from '@/lib/api/mock/review';
 import { computeLayout } from '@/lib/compose/layout';
 import { getTemplate } from '@/lib/compose/templates';
-import { chunkDocument, EMBED_DIMS } from '@/lib/rag/chunk';
 import { handle } from './handlers';
 
 const serum = SAMPLE_PRODUCTS[0] as Product;
@@ -41,14 +40,6 @@ describe('composer handlers', () => {
     const review = handle('/sim/review', { spec, brand: SELUNE, variant: 1, seed: 42 }) as { checks: ReviewCheck[] };
     expect(review).toEqual({ checks: full.checks, score: full.score, passed: full.passed });
     expect(handle('/sim/fixes', { checks: review.checks, brand: SELUNE, spec })).toEqual(planFixes(review.checks, SELUNE, spec));
-  });
-
-  it('chunks a document with simulated embeddings', () => {
-    const doc = { name: 'ci_update.md', text: '# 色彩更新\n主色維持 #2F4A44。\n\n# Logo\n- Logo 淨空區至少 0.5 倍高度' };
-    const result = handle('/sim/ingest', { brandId: 'misty-isle', doc }) as { dims: number; chunks: { chunk: unknown; preview: number[] }[] };
-    expect(result.dims).toBe(EMBED_DIMS);
-    expect(result.chunks.map((c) => c.chunk)).toEqual(chunkDocument('misty-isle', doc));
-    expect(result.chunks.every((c) => c.preview.length === 6)).toBe(true);
   });
 
   it('rejects unknown routes', () => {

@@ -1,5 +1,5 @@
 import type {
-  Brand, BrandDocument, CheckId, Engine, ParsedBrief, Product, PromptSpec, ReviewCheck, TemplateId,
+  Brand, CheckId, Engine, ParsedBrief, Product, PromptSpec, ReviewCheck, TemplateId,
 } from '@/types/contract';
 import { planFixes } from '@/lib/agent/fixes';
 import { buildPromptSpec } from '@/lib/agent/prompt';
@@ -8,7 +8,6 @@ import { applyFlaws, FLAWS } from '@/lib/api/mock/flaws';
 import { reviewRender } from '@/lib/api/mock/review';
 import { computeLayout } from '@/lib/compose/layout';
 import { getTemplate } from '@/lib/compose/templates';
-import { chunkDocument, EMBED_DIMS, embedPreview } from '@/lib/rag/chunk';
 
 /** 找不到路徑（伺服器回 404） */
 export class UnknownRoute extends Error {}
@@ -40,11 +39,6 @@ const HANDLERS: Record<string, Handler> = {
 
   '/sim/fixes': ({ checks, brand, spec }: { checks: ReviewCheck[]; brand: Brand; spec: PromptSpec }) =>
     planFixes(checks, brand, spec),
-
-  '/sim/ingest': ({ brandId, doc }: { brandId: string; doc: BrandDocument }) => ({
-    dims: EMBED_DIMS,
-    chunks: chunkDocument(brandId, doc).map((chunk) => ({ chunk, preview: embedPreview(chunk.text) })),
-  }),
 };
 
 export function handle(path: string, body: unknown): unknown {

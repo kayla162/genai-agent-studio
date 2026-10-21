@@ -19,7 +19,6 @@ from app.api.services import ApiServices, Services
 from app.contract import (
     ApiOptions,
     Brand,
-    BrandDocument,
     ChannelTemplate,
     ComponentStatus,
     FilePhoto,
@@ -37,6 +36,8 @@ from app.errors import Invalid, NotFound, Unavailable
 from app.files import product_folder
 from app.pipeline.runner import failure_reason
 from app.queues import ingest_channel
+from app.rag.extract import MAX_BYTES as MAX_DOCUMENT_BYTES
+from app.rag.extract import check_type, document_name, extract_text
 from app.repo import catalog
 from app.settings import Settings
 from app.templates import CHANNEL_TEMPLATES
@@ -53,8 +54,9 @@ SIMULATED = [
 ]
 #: 系統狀態每一項最多等待的秒數
 STATUS_TIMEOUT = 3
-#: 文件上傳最多等待的秒數（超過時回報錯誤，worker 仍會繼續處理）
-INGEST_TIMEOUT = 120
+#: 文件上傳最多多久沒有進度（秒）：超過時回報錯誤，worker 仍會繼續處理。
+#: 大份手冊向量化需要幾分鐘，只要持續有進度就不算逾時
+INGEST_IDLE_TIMEOUT = 120
 #: 上傳的商品照：MIME → 副檔名（與本機資料夾支援的格式相同）
 UPLOAD_TYPES = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp'}
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -158,24 +160,26 @@ async def list_brands(services: Services) -> list[Brand]:
         return await catalog.list_brands(s)
 
 
-async def _ingest_lines(services: ApiServices, task_id: str, brand_id: str, doc: BrandDocument) -> AsyncIterator[str]:
-    """先訂閱再放入佇列，才不會漏掉 worker 發布的訊息；收到 ingest.stored 或錯誤時結束。"""
+async def _ingest_lines(services: ApiServices, task_id: str, brand_id: str, name: str, text: str) -> AsyncIterator[str]:
+    """先訂閱再放入佇列，才不會漏掉 worker 發布的訊息；收到 ingest.stored 或錯誤時結束。
+    每收到一則進度就重新計算逾時：只有連續 INGEST_IDLE_TIMEOUT 秒沒有進度才算逾時。"""
     pubsub = services.redis.pubsub()
     await pubsub.subscribe(ingest_channel(task_id))
     try:
-        await services.queues.enqueue_task('ingest', task_id=task_id, brand_id=brand_id, name=doc.name, text=doc.text)
+        await services.queues.enqueue_task('ingest', task_id=task_id, brand_id=brand_id, name=name, text=text)
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + INGEST_TIMEOUT
+        deadline = loop.time() + INGEST_IDLE_TIMEOUT
         while loop.time() < deadline:
             raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if raw is None:
                 continue
+            deadline = loop.time() + INGEST_IDLE_TIMEOUT
             yield raw['data'] + '\n'
             message = json.loads(raw['data'])
             if 'error' in message or message['type'] == 'ingest.stored':
                 return
-        timeout = {'code': 'unavailable', 'message': '文件處理逾時：請確認 worker 正在執行'}
-        yield json.dumps({'error': timeout}, ensure_ascii=False) + '\n'
+        message = f'文件處理逾時：{INGEST_IDLE_TIMEOUT} 秒沒有任何進度，請確認 worker 正在執行'
+        yield json.dumps({'error': {'code': 'unavailable', 'message': message}}, ensure_ascii=False) + '\n'
     finally:
         await pubsub.unsubscribe()
         await pubsub.aclose()  # type: ignore[no-untyped-call]
@@ -186,12 +190,19 @@ async def _ingest_lines(services: ApiServices, task_id: str, brand_id: str, doc:
     response_class=StreamingResponse,
     responses={200: {'content': {'application/x-ndjson': {}}, 'description': '每行一則 IngestEvent，或 { error }'}},
 )
-async def ingest_document(brand_id: str, doc: BrandDocument, services: Services) -> StreamingResponse:
-    """上傳品牌文件：切塊 → 向量化 → 寫入知識庫，進度以 NDJSON 串流回報。"""
+async def ingest_document(brand_id: str, file: UploadFile, services: Services) -> StreamingResponse:
+    """上傳品牌手冊（multipart 的 file 欄位：.md、.txt、.pdf）：切塊 → 向量化 → 寫入知識庫，進度以 NDJSON 串流回報。
+
+    檔案的問題（格式、大小、編碼、PDF 加密或沒有文字）在開始串流之前就回應錯誤；之後只把文字放進佇列，不傳原檔。
+    """
     async with services.db.session() as s:
         if await catalog.get_brand(s, brand_id) is None:
             raise NotFound(f'找不到品牌：{brand_id}')
-    lines = _ingest_lines(services, secrets.token_hex(8), brand_id, doc)
+    name = document_name(file.filename or '')
+    check_type(name)
+    data = await file.read(MAX_DOCUMENT_BYTES + 1)
+    text = await asyncio.to_thread(extract_text, name, data)
+    lines = _ingest_lines(services, secrets.token_hex(8), brand_id, name, text)
     # nginx 預設會先緩衝回應；關掉才能一行一行送到前端
     return StreamingResponse(lines, media_type='application/x-ndjson', headers={'X-Accel-Buffering': 'no'})
 

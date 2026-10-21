@@ -536,11 +536,6 @@ class JobSnapshot(Model):
 
 
 # ---------- 品牌文件上傳 ----------
-class BrandDocument(Model):
-    name: str
-    text: str
-
-
 class IngestChunkedEvent(Model):
     type: Literal['ingest.chunked']
     source: str

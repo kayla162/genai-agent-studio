@@ -21,6 +21,8 @@ from app.adapters.composer import ComposerClient
 from app.brands import load_brands
 from app.contract import (
     FilePhoto,
+    IngestChunkedEvent,
+    IngestEmbeddedEvent,
     JobAcceptedEvent,
     JobInput,
     JobStatusEvent,
@@ -28,6 +30,7 @@ from app.contract import (
     Product,
     ProductCutout,
     ProductDraft,
+    RagChunk,
 )
 from app.cutout.engine import CutoutEngine
 from app.cutout.segmenter import Segmenter, SimSegmenter
@@ -35,10 +38,12 @@ from app.db.session import Database
 from app.events import EventStore
 from app.pipeline.sim import SimRetriever, sim_ports
 from app.queues import Queues, cutout_key, ingest_channel
+from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
 from app.rag.retriever import BgeRetriever
 from app.rag.state import RagMode
 from app.rag.store import VectorStore
+from app.rag.sync import chunk_metadata, index_text
 from app.repo import catalog, jobs
 from app.settings import Settings
 from app.worker import (
@@ -54,7 +59,7 @@ from app.worker import (
     warm_up_rag,
 )
 from tests.conftest import TEST_CHROMA_DATABASE, TEST_REDIS_URL
-from tests.fake_encoder import FakeEncoder
+from tests.fake_encoder import FakeEncoder, fake_engine
 from tests.fixtures import BRANDS_DIR, load_fixture
 
 NOW = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
@@ -566,10 +571,12 @@ async def test_rag_warm_up_logs_errors_without_raising(
     assert '向量庫（Chroma）無法連線' in caplog.text
 
 
-async def collect_ingest(services: Services, task_id: str, name: str, text: str) -> list[dict[str, Any]]:
+async def collect_ingest(
+    services: Services, task_id: str, name: str, text: str, brand_id: str = 'misty-isle'
+) -> list[dict[str, Any]]:
     pubsub = services.redis.pubsub()
     await pubsub.subscribe(ingest_channel(task_id))
-    await ingest(services, task_id, 'misty-isle', name, text)
+    await ingest(services, task_id, brand_id, name, text)
     messages: list[dict[str, Any]] = []
     for _ in range(50):
         raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.2)
@@ -582,15 +589,131 @@ async def collect_ingest(services: Services, task_id: str, name: str, text: str)
     return messages
 
 
-async def test_ingest_reports_each_step_and_stores_the_chunks(services: Services) -> None:
-    text = '# 色彩更新\n主色維持 #2F4A44。\n\n# Logo\n- 深色背景使用反白 Logo\n\n2026 春季素材 CTR 3.9%。'
-    messages = await collect_ingest(services, 't1', 'ci_update.md', text)
-    assert [m['type'] for m in messages] == ['ingest.chunked'] + ['ingest.embedded'] * 3 + ['ingest.stored']
-    assert messages[-1] == {'type': 'ingest.stored', 'collection': 'misty-isle_ci', 'count': 3}
+DOC = '# 色彩更新\n主色維持 #2F4A44。\n\n# Logo\n- 深色背景使用反白 Logo\n\n2026 春季素材 CTR 3.9%。'
+STORED = {'type': 'ingest.stored', 'collection': 'misty-isle_ci', 'count': 3}
+
+
+async def uploads(services: Services, brand_id: str = 'misty-isle') -> list[RagChunk]:
     async with services.db.session() as s:
-        brand = await catalog.get_brand(s, 'misty-isle')
-    assert brand is not None
-    assert [c.source for c in brand.guideline_chunks].count('ci_update.md') == 3
+        return [c for c, origin in await catalog.list_chunks(s, brand_id) if origin == 'upload']
+
+
+def embedded(chunks: list[RagChunk], previews: list[list[float]]) -> list[dict[str, Any]]:
+    return [
+        IngestEmbeddedEvent(
+            type='ingest.embedded', chunk_id=c.id, index=i, total=len(chunks), dims=EMBED_DIMS, preview=p
+        ).to_json()
+        for i, (c, p) in enumerate(zip(chunks, previews, strict=True))
+    ]
+
+
+@pytest.fixture
+def bge(services: Services, redis: Redis, chroma: VectorStore) -> FakeEncoder:
+    """真實版的上傳：FakeEncoder 與 Chroma 的 genai_test database。"""
+    encoder = FakeEncoder()
+    services.rag = fake_engine(redis, encoder)
+    services.vectors = chroma
+    return encoder
+
+
+async def test_sim_ingest_chunks_in_python_with_simulated_vectors(services: Services) -> None:
+    messages = await collect_ingest(services, 't1', 'ci_update.md', DOC)
+    chunks = chunk_document('misty-isle', 'ci_update.md', DOC)
+    assert len(chunks) == 3
+    assert messages == [
+        IngestChunkedEvent(type='ingest.chunked', source='ci_update.md', chunks=chunks).to_json(),
+        *embedded(chunks, [embed_preview(c.text) for c in chunks]),
+        STORED,
+    ]
+    assert await uploads(services) == chunks
+
+
+async def test_bge_ingest_embeds_each_chunk_then_writes_postgres_and_chroma(
+    services: Services, bge: FakeEncoder, chroma: VectorStore
+) -> None:
+    messages = await collect_ingest(services, 't1', 'ci_update.md', DOC)
+    chunks = chunk_document('misty-isle', 'ci_update.md', DOC)
+    # 逐塊向量化「章節：內文」；進度是真實向量的前 6 維（四捨五入到小數 3 位）
+    assert bge.embedded == [index_text(c) for c in chunks]
+    previews = [vector_preview(FakeEncoder.vector(index_text(c))) for c in chunks]
+    assert messages == [
+        IngestChunkedEvent(type='ingest.chunked', source='ci_update.md', chunks=chunks).to_json(),
+        *embedded(chunks, previews),
+        STORED,
+    ]
+    assert await uploads(services) == chunks
+    assert await chroma.metadata('misty-isle') == {c.id: chunk_metadata('misty-isle', c, 'upload') for c in chunks}
+
+    # 同名文件重新上傳時取代舊的切塊（切塊變少時，多的要刪掉）；其他文件不受影響
+    other = '# 字型\n標題使用 Noto Serif TC。'
+    shorter = '# 色彩更新\n主色改為 #1F3A34。'
+    await collect_ingest(services, 't2', 'other.md', other)
+    assert (await collect_ingest(services, 't3', 'ci_update.md', shorter))[-1]['type'] == 'ingest.stored'
+    expected = chunk_document('misty-isle', 'other.md', other) + chunk_document('misty-isle', 'ci_update.md', shorter)
+    assert await uploads(services) == expected
+    assert await chroma.metadata('misty-isle') == {c.id: chunk_metadata('misty-isle', c, 'upload') for c in expected}
+
+
+async def test_bge_ingest_embeds_outside_the_brand_lock_but_writes_inside_it(
+    services: Services, bge: FakeEncoder
+) -> None:
+    async with services.locks('misty-isle'):
+        task = asyncio.create_task(collect_ingest(services, 't1', 'ci_update.md', DOC))
+        for _ in range(50):
+            if len(bge.embedded) == 3:
+                break
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
+        assert len(bge.embedded) == 3
+        assert await uploads(services) == []
+        assert not task.done()
+    assert (await task)[-1] == STORED
+    assert len(await uploads(services)) == 3
+
+
+async def test_ingest_reports_a_missing_brand_and_an_empty_document(services: Services) -> None:
+    assert await collect_ingest(services, 't1', 'a.md', '主色', brand_id='nope') == [
+        {'error': {'code': 'not_found', 'message': '找不到品牌：nope'}}
+    ]
     assert await collect_ingest(services, 't2', 'empty.md', '   ') == [
         {'error': {'code': 'invalid', 'message': '文件沒有可用的文字內容'}}
+    ]
+
+
+async def test_bge_ingest_reports_an_unreachable_chroma_as_unavailable_and_keeps_postgres(
+    services: Services, bge: FakeEncoder
+) -> None:
+    services.vectors = VectorStore('http://127.0.0.1:9')
+    messages = await collect_ingest(services, 't1', 'ci_update.md', DOC)
+    assert [m.get('type') for m in messages[:-1]] == ['ingest.chunked'] + ['ingest.embedded'] * 3
+    error = messages[-1]['error']
+    assert error['code'] == 'unavailable'
+    assert error['message'].startswith('向量庫（Chroma）無法連線（http://127.0.0.1:9）：')
+    # PostgreSQL 為準：下一次同步會補上 Chroma
+    assert len(await uploads(services)) == 3
+
+
+async def test_bge_ingest_reports_a_model_failure_as_unavailable(
+    services: Services, redis: Redis, chroma: VectorStore
+) -> None:
+    def broken(models_dir: Path) -> FakeEncoder:
+        raise RuntimeError('模型檔損毀')
+
+    services.rag = RagEngine('bge', Path('models'), redis, models=[], load=broken)
+    services.vectors = chroma
+    messages = await collect_ingest(services, 't1', 'ci_update.md', DOC)
+    assert [m.get('type') for m in messages[:-1]] == ['ingest.chunked']
+    assert messages[-1] == {'error': {'code': 'unavailable', 'message': 'RAG 模型準備失敗：模型檔損毀'}}
+    assert await uploads(services) == []
+
+
+async def test_ingest_reports_unexpected_errors_as_internal(
+    services: Services, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(brand_id: str, name: str, text: str) -> list[RagChunk]:
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr('app.worker.chunk_document', boom)
+    assert await collect_ingest(services, 't1', 'a.md', '主色') == [
+        {'error': {'code': 'internal', 'message': '文件處理失敗：RuntimeError: boom'}}
     ]

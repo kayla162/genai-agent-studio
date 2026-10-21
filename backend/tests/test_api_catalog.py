@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from PIL import Image
+from pypdf import PdfWriter
 from saq.job import Status
 
 from app.api import catalog as catalog_api
@@ -16,11 +17,13 @@ from app.brands import BrandLoadError
 from app.contract import ProductCutout
 from app.cutout.state import STATE_KEY
 from app.files import resolve_file
-from app.queues import cutout_key
+from app.queues import cutout_key, ingest_channel
+from app.rag.chunking import chunk_document
+from app.rag.extract import MAX_BYTES, NO_TEXT
 from app.repo import catalog
 from app.settings import Settings
 from tests.conftest import LiveApi
-from tests.fixtures import load_fixture
+from tests.fixtures import SAMPLE_PDF, load_fixture
 
 PNG = b'\x89PNG\r\n\x1a\n' + bytes(24)
 DRAFT = {
@@ -74,9 +77,9 @@ async def test_status_reports_each_component(api: LiveApi) -> None:
     }
 
 
-async def ingest(api: LiveApi, brand_id: str, name: str, text: str) -> list[dict[str, Any]]:
-    body = {'name': name, 'text': text}
-    async with api.http.stream('POST', f'/api/brands/{brand_id}/documents', json=body) as res:
+async def ingest(api: LiveApi, brand_id: str, name: str, data: bytes) -> list[dict[str, Any]]:
+    files = {'file': (name, data, 'application/octet-stream')}
+    async with api.http.stream('POST', f'/api/brands/{brand_id}/documents', files=files) as res:
         assert (res.status_code, res.headers['content-type']) == (200, 'application/x-ndjson')
         return [json.loads(line) async for line in res.aiter_lines() if line]
 
@@ -84,16 +87,79 @@ async def ingest(api: LiveApi, brand_id: str, name: str, text: str) -> list[dict
 async def test_ingest_streams_progress_as_ndjson(api: LiveApi) -> None:
     text = '# 色彩更新\n主色維持 #2F4A44。\n\n# Logo\n- 深色背景使用反白 Logo\n\n2026 春季素材 CTR 3.9%。'
     async with api.worker():
-        lines = await ingest(api, 'misty-isle', 'ci_update.md', text)
+        lines = await ingest(api, 'misty-isle', 'ci_update.md', text.encode())
         assert [m['type'] for m in lines] == ['ingest.chunked'] + ['ingest.embedded'] * 3 + ['ingest.stored']
+        assert lines[0]['chunks'] == [c.to_json() for c in chunk_document('misty-isle', 'ci_update.md', text)]
         assert lines[-1] == {'type': 'ingest.stored', 'collection': 'misty-isle_ci', 'count': 3}
-        empty = await ingest(api, 'misty-isle', 'empty.md', '   ')
+        pdf = await ingest(api, 'misty-isle', 'C:\\fakepath\\ci-sample.pdf', SAMPLE_PDF.read_bytes())
+        assert pdf[-1] == {'type': 'ingest.stored', 'collection': 'misty-isle_ci', 'count': 2}
+        assert pdf[0]['source'] == 'ci-sample.pdf'
+        empty = await ingest(api, 'misty-isle', 'empty.md', b'   ')
         assert empty == [{'error': {'code': 'invalid', 'message': '文件沒有可用的文字內容'}}]
     brands = {b['id']: b for b in (await api.http.get('/api/brands')).json()}
-    assert [c['source'] for c in brands['misty-isle']['guidelineChunks']].count('ci_update.md') == 3
-    missing = await api.http.post('/api/brands/nope/documents', json={'name': 'a.md', 'text': 'x'})
-    assert missing.status_code == 404
-    assert missing.json() == {'error': {'code': 'not_found', 'message': '找不到品牌：nope'}}
+    sources = [c['source'] for c in brands['misty-isle']['guidelineChunks']]
+    assert (sources.count('ci_update.md'), sources.count('ci-sample.pdf')) == (3, 2)
+
+
+async def upload_error(api: LiveApi, brand_id: str, files: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    res = await api.http.post(f'/api/brands/{brand_id}/documents', files=files)
+    assert res.headers['content-type'] == 'application/json'
+    return res.status_code, res.json()['error']
+
+
+async def test_ingest_rejects_bad_files_before_streaming(api: LiveApi) -> None:
+    """不需要 worker：檔案的問題在放入佇列之前就回應錯誤。"""
+    blank = io.BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(420, 595)
+    writer.write(blank)
+    cases: list[tuple[str, dict[str, Any], int, str]] = [
+        ('nope', {'file': ('a.md', b'x')}, 404, '找不到品牌：nope'),
+        ('selune', {'file': ('a.docx', b'x')}, 400, '只支援 .md、.txt、.pdf'),
+        ('selune', {'file': ('a.txt', '主色'.encode('big5'))}, 400, '文字檔需為 UTF-8 編碼'),
+        ('selune', {'file': ('scan.pdf', blank.getvalue())}, 400, NO_TEXT),
+        ('selune', {'file': ('big.md', b'a' * (MAX_BYTES + 1))}, 400, '檔案不可超過 20 MB'),
+        ('selune', {'other': ('a.md', b'x')}, 400, '請求格式錯誤：body.file：Field required'),
+    ]
+    for brand_id, files, status, message in cases:
+        code = 'not_found' if status == 404 else 'invalid'
+        assert await upload_error(api, brand_id, files) == (status, {'code': code, 'message': message})
+    assert await api.services.queues.tasks.count('queued') == 0
+
+
+async def test_ingest_times_out_only_after_a_pause_in_progress(api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    """閒置逾時：持續有進度時，總時間超過逾時也照常完成；沒有進度（沒有 worker）時才回報逾時。"""
+    monkeypatch.setattr(catalog_api, 'INGEST_IDLE_TIMEOUT', 1)
+    publishing: list[asyncio.Task[None]] = []
+
+    async def slow_worker(function: str, /, **kwargs: Any) -> None:
+        async def publish() -> None:
+            channel = ingest_channel(kwargs['task_id'])
+            for i in range(6):
+                await asyncio.sleep(0.4)
+                event = {'type': 'ingest.embedded', 'chunkId': 'x', 'index': i, 'total': 6, 'dims': 1, 'preview': []}
+                await api.services.redis.publish(channel, json.dumps(event))
+            stored = {'type': 'ingest.stored', 'collection': 'selune_ci', 'count': 6}
+            await api.services.redis.publish(channel, json.dumps(stored))
+
+        publishing.append(asyncio.create_task(publish()))
+
+    monkeypatch.setattr(api.services.queues, 'enqueue_task', slow_worker)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    lines = await ingest(api, 'selune', 'a.md', '# 色彩\n主色'.encode())
+    assert loop.time() - started > 2
+    assert [m['type'] for m in lines] == ['ingest.embedded'] * 6 + ['ingest.stored']
+    await asyncio.gather(*publishing)
+
+    async def no_worker(function: str, /, **kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(api.services.queues, 'enqueue_task', no_worker)
+    message = '文件處理逾時：1 秒沒有任何進度，請確認 worker 正在執行'
+    assert await ingest(api, 'selune', 'a.md', '# 色彩\n主色'.encode()) == [
+        {'error': {'code': 'unavailable', 'message': message}}
+    ]
 
 
 async def test_create_update_and_delete_products(api: LiveApi) -> None:

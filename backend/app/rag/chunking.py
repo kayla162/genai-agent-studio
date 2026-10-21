@@ -9,6 +9,7 @@
 
 import math
 import re
+from collections.abc import Sequence
 
 import regex
 
@@ -117,7 +118,12 @@ def _js_round(x: float) -> int:
     return floor + 1 if x - floor >= 0.5 else floor
 
 
+def vector_preview(vector: Sequence[float], n: int = 6) -> list[float]:
+    """向量的前幾維，四捨五入到小數 3 位（同 JS 的 Math.round(x * 1000) / 1000）：上傳進度顯示的向量值。"""
+    return [_js_round(x * 1000) / 1000 for x in vector[:n]]
+
+
 def embed_preview(text: str, n: int = 6) -> list[float]:
     """模擬向量的前幾維（同前端 embedPreview）：由文字的雜湊決定，四捨五入到小數 3 位。"""
     rng = Mulberry32(hash_string(text))
-    return [_js_round((rng() * 2 - 1) * 1000) / 1000 for _ in range(n)]
+    return vector_preview([rng() * 2 - 1 for _ in range(n)], n)

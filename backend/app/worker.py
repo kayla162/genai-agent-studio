@@ -1,7 +1,7 @@
 """SAQ worker：uv run python -m app.worker
 
 - jobs 佇列：run_job（生圖任務，一次一個）
-- tasks 佇列：ingest（品牌文件上傳）、write_back（選定海報回寫成歷史案例），最多同時兩個
+- tasks 佇列：ingest（品牌手冊上傳：切塊、向量化、寫入知識庫）、write_back（選定海報回寫成歷史案例），最多同時兩個
 - cutouts 佇列：cutout（商品照去背，一次一個）
 - 啟動時在背景準備模型：去背模型下載並載入；RAG 模型下載並核對（第一次檢索時才載入），再把品牌同步到 Chroma
 - 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務與去背中的商品重新放回佇列；
@@ -14,8 +14,10 @@ import json
 import logging
 import os
 import signal
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from itertools import batched
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +28,6 @@ from sqlalchemy import select
 
 from app.adapters.composer import ComposerClient
 from app.contract import (
-    BrandDocument,
     FilePhoto,
     IngestChunkedEvent,
     IngestEmbeddedEvent,
@@ -35,23 +36,25 @@ from app.contract import (
     JobStatusEvent,
     LogEvent,
     ProductCutout,
+    RagChunk,
 )
 from app.core.clock import utc_now
 from app.cutout.engine import CutoutEngine
 from app.cutout.processing import CutoutError
 from app.db.models import JobRow
 from app.db.session import Database
-from app.errors import AppError, NotFound
+from app.errors import AppError, Invalid, NotFound
 from app.events import EventStore
 from app.files import photo_path, product_folder
 from app.pipeline.ports import Ports
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
 from app.queues import Queues, ingest_channel
+from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
 from app.rag.retriever import BgeRetriever
-from app.rag.store import VectorStore
-from app.rag.sync import BrandLocks, sync_all
+from app.rag.store import VectorRecord, VectorStore, collection_name
+from app.rag.sync import UPSERT_BATCH, BrandLocks, sync_all, vector_record
 from app.repo import catalog, history
 from app.settings import Settings, settings
 
@@ -161,8 +164,15 @@ def _remove_cutouts(written: Path, *, keep_written: bool) -> None:
         f.unlink(missing_ok=True)
 
 
+#: 上傳進度的訊息（一則 IngestEvent 或 { error }）發布到 ingest:{task_id}
+Send = Callable[[dict[str, Any]], Awaitable[None]]
+
+
 async def ingest(services: Services, task_id: str, brand_id: str, name: str, text: str) -> None:
-    """品牌文件：切塊 → 向量化（模擬）→ 寫入；每一步發布到 Redis 頻道 ingest:{task_id}，api 以 NDJSON 串流轉給前端。"""
+    """品牌手冊：切塊 → 向量化 → 寫入知識庫；每一步發布到 Redis 頻道 ingest:{task_id}，api 以 NDJSON 串流轉給前端。
+
+    錯誤碼：品牌不存在 not_found、沒有可用文字 invalid、模型準備失敗或 Chroma 無法連線 unavailable、其他 internal。
+    """
 
     async def send(message: dict[str, Any]) -> None:
         await services.redis.publish(ingest_channel(task_id), json.dumps(message, ensure_ascii=False))
@@ -171,25 +181,55 @@ async def ingest(services: Services, task_id: str, brand_id: str, name: str, tex
         async with services.db.session() as s:
             if await catalog.get_brand(s, brand_id) is None:
                 raise NotFound(f'找不到品牌：{brand_id}')
-        result = await services.composer.sim_ingest(brand_id, BrandDocument(name=name, text=text))
-        chunks = [c for c, _ in result.chunks]
+        chunks = chunk_document(brand_id, name, text)
         if not chunks:
-            raise AppError('文件沒有可用的文字內容')
-        await services.pace(400)
-        await send(IngestChunkedEvent(type='ingest.chunked', source=name, chunks=chunks).to_json())
-        for i, (chunk, preview) in enumerate(result.chunks):
-            await services.pace(250)
-            embedded = IngestEmbeddedEvent(
-                type='ingest.embedded', chunk_id=chunk.id, index=i, total=len(chunks), dims=result.dims, preview=preview
-            )
-            await send(embedded.to_json())
-        async with services.db.session() as s:
-            await catalog.replace_document_chunks(s, brand_id, name, chunks, utc_now())
-        await services.pace(300)
-        await send(IngestStoredEvent(type='ingest.stored', collection=f'{brand_id}_ci', count=len(chunks)).to_json())
+            raise Invalid('文件沒有可用的文字內容')
+        embed_and_write = _ingest_bge if services.rag.mode == 'bge' else _ingest_sim
+        await embed_and_write(services, brand_id, name, chunks, send)
+        stored = IngestStoredEvent(type='ingest.stored', collection=collection_name(brand_id), count=len(chunks))
+        await send(stored.to_json())
     except Exception as error:  # noqa: BLE001 - 錯誤一律轉給前端
         logger.exception('品牌文件上傳失敗：task_id=%s', task_id)
-        await send({'error': {'code': 'invalid', 'message': failure_reason(error)}})
+        if isinstance(error, AppError):
+            await send({'error': {'code': error.code, 'message': error.message}})
+        else:
+            await send({'error': {'code': 'internal', 'message': f'文件處理失敗：{failure_reason(error)}'}})
+
+
+def _embedded(chunks: list[RagChunk], i: int, dims: int, preview: list[float]) -> dict[str, Any]:
+    event = IngestEmbeddedEvent(
+        type='ingest.embedded', chunk_id=chunks[i].id, index=i, total=len(chunks), dims=dims, preview=preview
+    )
+    return event.to_json()
+
+
+async def _ingest_bge(services: Services, brand_id: str, name: str, chunks: list[RagChunk], send: Send) -> None:
+    """逐塊向量化（進度顯示真實向量的前 6 維）；完成後在品牌鎖內先寫 PostgreSQL，再寫 Chroma：
+    先刪除同一個 source 的上傳切塊，再 upsert。Chroma 寫入失敗時 PostgreSQL 的資料仍在，下一次同步會補上。"""
+    await send(IngestChunkedEvent(type='ingest.chunked', source=name, chunks=chunks).to_json())
+    records: list[VectorRecord] = []
+    for i, chunk in enumerate(chunks):
+        record = await vector_record(services.rag, brand_id, chunk, 'upload')
+        records.append(record)
+        await send(_embedded(chunks, i, len(record.embedding), vector_preview(record.embedding)))
+    async with services.locks(brand_id):
+        async with services.db.session() as s:
+            await catalog.replace_document_chunks(s, brand_id, name, chunks, utc_now())
+        await services.vectors.delete(brand_id, where={'$and': [{'source': name}, {'origin': 'upload'}]})
+        for batch in batched(records, UPSERT_BATCH, strict=False):
+            await services.vectors.upsert(brand_id, batch)
+
+
+async def _ingest_sim(services: Services, brand_id: str, name: str, chunks: list[RagChunk], send: Send) -> None:
+    """模擬版：向量是雜湊產生的假數字，依 1× 時間軸等待；只寫入 PostgreSQL。"""
+    await services.pace(400)
+    await send(IngestChunkedEvent(type='ingest.chunked', source=name, chunks=chunks).to_json())
+    for i, chunk in enumerate(chunks):
+        await services.pace(250)
+        await send(_embedded(chunks, i, EMBED_DIMS, embed_preview(chunk.text)))
+    async with services.db.session() as s:
+        await catalog.replace_document_chunks(s, brand_id, name, chunks, utc_now())
+    await services.pace(300)
 
 
 async def write_back(services: Services, history_id: str) -> bool:
