@@ -125,6 +125,7 @@ GenAI Agent/
 | Docker（7 個容器＋WSL2） | 約 3–4 GB（不含去背）；去背時，兩個模型的記憶體上限（`.wslconfig`）都要設到約 10 GB 以上；`birefnet-general-lite` 較快、下載量較小，但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB，lite 在 Docker 內未實測），改用它解決不了記憶體不足；16 GB 的筆電請把上限調到約 10 GB（WSL2 預設是一半的記憶體，即 8 GB，不夠用） |
 | ComfyUI（SDXL 部分卸載到系統記憶體） | 約 6–8 GB |
 | 去背（BiRefNet，worker） | 平常約 2 GB，去背時約 7.6 GiB（Docker 實測） |
+| RAG 模型（BGE-M3＋Reranker，worker） | 載入後約增加 1.6–1.9 GB（Plan 5 驗收時於 Docker 實測並更新） |
 
 合計偏緊。BGE 模型使用 ONNX int8，用到才載入；建議筆電升級到 32 GB。實際數字在 Plan 7 實測並記錄。
 
@@ -186,8 +187,10 @@ GenAI Agent/
   - 上傳的 CI 手冊（origin `upload`）
   - 選定海報的回寫（origin `history`）
 - **模型**：BGE-M3 dense 向量（1024 維）、bge-reranker-v2-m3；兩者皆以 ONNX int8 在 CPU 執行，用到才載入。
-- **檢索**：查詢為「品牌名｜商品名｜一句話需求｜賣點」→ 向量召回 8 筆（排除 `alt`）→ Rerank。`rag.retrieved` 送出 8 筆向量分數，`rag.reranked` 送出依 Rerank 分數排序的 8 筆；Prompt 使用前 5 筆。
-- **上傳手冊**：切塊（`web/src/lib/rag/chunk.ts` 移植到 Python）→ 逐塊向量化（`ingest.embedded` 的 preview 為真實向量的前幾維）→ 寫入 Chroma（同一 source 先刪後寫）→ `ingest.stored`。API 以 NDJSON 串流回傳 `IngestEvent`。
+- **資料的主從**：PostgreSQL 的 `brand_chunks` 為準，Chroma 只是索引；worker 比對兩邊並修正差異，Chroma 的資料遺失時會自動重建（細節見 `2026-10-21-plan5-rag-design.md`）。
+- **檢索**：查詢為「品牌名｜商品名｜一句話需求｜賣點」（賣點取 `parsedBrief.sellingPoints`，沒有時用商品的 `features`）→ 向量召回 8 筆（排除 `alt`）→ Rerank。`rag.retrieved` 送出 8 筆向量分數，`rag.reranked` 送出依 Rerank 分數排序的 8 筆；Prompt 使用前 5 筆。
+- **上傳手冊**：以 multipart 上傳 `.md`、`.txt` 或 `.pdf`（pypdf 抽出文字層，20 MB 以內）→ 切塊（`web/src/lib/rag/chunk.ts` 移植到 Python）→ 逐塊向量化（`ingest.embedded` 的 preview 為真實向量的前幾維）→ 寫入 Chroma（同一 source 先刪後寫）→ `ingest.stored`。API 以 NDJSON 串流回傳 `IngestEvent`。
+- **Query Rewriting 的重新檢索**：以改寫後的查詢召回 4 筆 origin `alt` 或 tag `law` 的切塊並 Rerank，沒有出現在 `ragRefs` 中的依序加入。
 - **歷史回寫**：`selectRender` 建立歷史紀錄後，`tasks` 佇列把模板、文案、Prompt 摘要與分數寫成 tag `history` 的切塊；完成後 `writtenToRag` 設為 true。API 最多等候 10 秒，逾時則先回傳 false，回寫在背景繼續。
 
 ### 5.3 Prompt 構建（Gemini，每個模板呼叫一次）
@@ -256,6 +259,7 @@ GenAI Agent/
 
 ### 5.8 用量與成本
 
+- 於 Plan 6 實作（Plan 5 沒有付費呼叫）。
 - 每次 Gemini 呼叫記錄 input／output tokens（寫入 `job_usage`，並以 `log` 事件顯示）；ComfyUI 記錄 GPU 秒數。
 - 儀表板的每張成本改為實際用量乘以設定中的單價：Gemini 依模型計價；本機 GPU 計 0，雲端 GPU 依秒數計價。
 
@@ -300,6 +304,7 @@ GenAI Agent/
    - `getOptions()`：可用的 LLM、VLM、生圖引擎與顯示名稱
    - `getSystemStatus()`：db、redis、chroma、composer、comfyui、gemini 的狀態
    - `listLocalPhotos()`、`importLocalPhoto()`：取代元件直接呼叫 Next 路由
+   - `ingestBrandDocument(brandId, file: File, onEvent)`：改為傳入檔案（Plan 5，支援 PDF）
 
    `MockApiClient` 一併實作。
 
@@ -310,7 +315,7 @@ GenAI Agent/
 | GET | `/api/options` | `getOptions` |
 | GET | `/api/status` | `getSystemStatus` |
 | GET | `/api/brands` | `listBrands` |
-| POST | `/api/brands/{id}/documents` | `ingestBrandDocument`（NDJSON 串流） |
+| POST | `/api/brands/{id}/documents` | `ingestBrandDocument`（multipart 上傳，NDJSON 串流） |
 | GET | `/api/templates` | `listTemplates` |
 | GET | `/api/products?brandId=` | `listProducts` |
 | POST、PUT | `/api/products`、`/api/products/{id}` | `saveProduct` |
@@ -383,8 +388,8 @@ GenAI Agent/
 | 計畫 | 內容 | 完成時 |
 |---|---|---|
 | Plan 4：後端骨架與即時串流 | 目錄與 Docker Compose、PostgreSQL 與 Alembic、品牌 YAML（示範品牌轉檔與範本）、全部 REST 端點、WebSocket 補送、SAQ worker、composer 的 `/layout` 與 `/sim/*`、所有轉接器的模擬版、合約變更、`HttpApiClient` 與 live 模式調整、靜態輸出與 nginx、golden fixtures 機制 | live 模式以模擬資料跑完整流程 |
-| Plan 5：RAG | Chroma、BGE-M3 與 Reranker、切塊移植、文件上傳串流、檢索與 Rerank、Query Rewriting 的重新檢索、歷史回寫、儀表板統計移植與實際用量成本 | 檢索與知識庫是真的 |
-| Plan 6：Gemini Agent、伺服器端排版與 VLM 審查 | composer 的 `/render`、`/review`、`measurePrimary`、`ocrDiffs` 與字型；需求拆解、Prompt 構建（結構化輸出與程式護欄）、Query Rewriting、VLM 審查、用量紀錄 | 文字與審查是真的，圖仍是程序化背景 |
+| Plan 5：RAG | Chroma、BGE-M3 與 Reranker、切塊移植、文件上傳串流（含 PDF）、檢索與 Rerank、Query Rewriting 的重新檢索、歷史回寫（儀表板統計已在 Plan 4 移植；實際用量成本移到 Plan 6） | 檢索與知識庫是真的 |
+| Plan 6：Gemini Agent、伺服器端排版與 VLM 審查 | composer 的 `/render`、`/review`、`measurePrimary`、`ocrDiffs` 與字型；需求拆解、Prompt 構建（結構化輸出與程式護欄）、Query Rewriting、VLM 審查、用量紀錄（`job_usage`、單價設定、儀表板改用實際用量計算成本） | 文字與審查是真的，圖仍是程序化背景 |
 | Plan 7：ComfyUI 生圖 | 筆電實測與模型組合、workflow 與參數對照表、ComfyUI 連線程式（上傳、進度、輸出、取消）、讀取已去背的商品圖、`includesProduct` 繪製、雲端切換、安裝與模型授權文件 | 全部流程都是真的 |
 | Plan 8：作品集 Demo | Cloudflare Pages 部署、Access 名單設定步驟、README 架構圖與操作說明、展示影片腳本 | 名單內的人可以觀看 Demo |
 
