@@ -27,14 +27,15 @@ const q = encodeURIComponent;
 const query = (brandId?: string) => (brandId ? `?brandId=${q(brandId)}` : '');
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function toApiError(res: Response): Promise<ApiError> {
+/** 後端的錯誤 JSON（{ error: { code, message } }）；不是時為 null（例如 nginx 的錯誤頁、next dev 在後端停止時回的 500） */
+async function backendError(res: Response): Promise<ApiError | null> {
   try {
     const body = (await res.json()) as { error?: { code?: string; message?: string } };
     if (body.error?.message) return new ApiError(body.error.code ?? 'error', body.error.message, res.status);
   } catch {
-    // 不是後端的 JSON（例如 nginx 的錯誤頁）
+    // 不是 JSON
   }
-  return new ApiError('http_error', `後端回應 HTTP ${res.status}`, res.status);
+  return null;
 }
 
 /** 逐行讀取 NDJSON（一個 chunk 可能含多行，也可能只有半行） */
@@ -70,7 +71,11 @@ export class HttpApiClient implements ApiClient {
     this.connection = new ConnectionTracker(() => void this.probe());
   }
 
-  /** 送出請求；連不上後端時更新連線狀態，非 2xx 時丟出 ApiError */
+  /**
+   * 送出請求；連不上後端時更新連線狀態，非 2xx 時丟出 ApiError。
+   * 後端的錯誤一律是 JSON（未預期的錯誤也是 500 internal）；不是 JSON 的 5xx 來自中間的代理，視為連不上後端（network）：
+   * nginx 連不上 api 時回 502、504，next dev 的 rewrites 在後端停止時回 500。
+   */
   private async send(path: string, init: RequestInit = {}): Promise<Response> {
     let res: Response;
     try {
@@ -79,11 +84,17 @@ export class HttpApiClient implements ApiClient {
       this.lost('無法連線到後端');
       throw new ApiError('network', '無法連線到後端，請確認服務已啟動', 0);
     }
-    // 502、504：nginx 連不上 api
-    if (res.status === 502 || res.status === 504) this.lost(`後端沒有回應（HTTP ${res.status}）`);
-    else this.connection.set('connected');
-    if (!res.ok) throw await toApiError(res);
-    return res;
+    if (res.ok) {
+      this.connection.set('connected');
+      return res;
+    }
+    const error = await backendError(res);
+    if (!error && res.status >= 500) {
+      this.lost(`後端沒有回應（HTTP ${res.status}）`);
+      throw new ApiError('network', '無法連線到後端，請確認服務已啟動', res.status);
+    }
+    this.connection.set('connected');
+    throw error ?? new ApiError('http_error', `後端回應 HTTP ${res.status}`, res.status);
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {

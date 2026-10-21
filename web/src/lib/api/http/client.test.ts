@@ -98,7 +98,7 @@ describe('HttpApiClient REST', () => {
     expect(api.connection.get().status).toBe('connected');
 
     reply = () => new Response('<html>Bad Gateway</html>', { status: 502 });
-    await expect(api.listJobs()).rejects.toMatchObject({ code: 'http_error', message: '後端回應 HTTP 502' });
+    await expect(api.listJobs()).rejects.toMatchObject({ code: 'network', message: '無法連線到後端，請確認服務已啟動', status: 502 });
     expect(api.connection.get()).toMatchObject({ status: 'disconnected', error: '後端沒有回應（HTTP 502）' });
 
     reply = () => {
@@ -110,6 +110,36 @@ describe('HttpApiClient REST', () => {
     reply = () => Response.json([]);
     expect(await api.listJobs()).toEqual([]);
     expect(api.connection.get()).toMatchObject({ status: 'connected', error: null });
+  });
+
+  it('treats a 5xx that is not the backend error JSON as an unreachable backend', async () => {
+    // next dev 的 rewrites 在後端停止時回 500 純文字
+    let reply = () => new Response('Internal Server Error', { status: 500, headers: { 'content-type': 'text/plain' } });
+    const { api } = setup(() => reply());
+    await expect(api.listBrands()).rejects.toMatchObject({ code: 'network', message: '無法連線到後端，請確認服務已啟動', status: 500 });
+    expect(api.connection.get()).toMatchObject({ status: 'disconnected', error: '後端沒有回應（HTTP 500）' });
+
+    // 後端自己的 500（錯誤 JSON）：後端連得上，丟出後端的訊息
+    reply = () => Response.json({ error: { code: 'internal', message: '未預期的錯誤：RuntimeError: boom' } }, { status: 500 });
+    await expect(api.listBrands()).rejects.toMatchObject({ code: 'internal', message: '未預期的錯誤：RuntimeError: boom', status: 500 });
+    expect(api.connection.get()).toMatchObject({ status: 'connected', error: null });
+
+    // 不是 JSON 的 4xx 仍是 http_error（代理連得上後端時才會轉送請求）
+    reply = () => new Response('Not Found', { status: 404 });
+    await expect(api.listBrands()).rejects.toMatchObject({ code: 'http_error', message: '後端回應 HTTP 404', status: 404 });
+    expect(api.connection.get().status).toBe('connected');
+  });
+
+  it('keeps checking while the dev server answers 500 for a stopped backend', async () => {
+    let up = false;
+    const { api } = setup(() => (up ? Response.json({ status: 'ok' }) : new Response('Internal Server Error', { status: 500 })));
+    const states: string[] = [];
+    api.connection.subscribe((s) => states.push(s.status));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(states).toEqual(['disconnected']);
+    up = true;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(states).toEqual(['disconnected', 'connected']);
   });
 
   it('checks the backend while someone watches the connection, until it answers', async () => {

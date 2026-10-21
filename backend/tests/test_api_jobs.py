@@ -13,6 +13,7 @@ from websockets.exceptions import ConnectionClosedError
 from app.contract import JobStatusEvent
 from tests.conftest import LiveApi
 from tests.fixtures import load_fixture
+from tests.test_events import DownPubSub, publish_down
 
 
 def job_input(**patch: Any) -> dict[str, Any]:
@@ -137,6 +138,20 @@ async def test_job_streams_every_event_and_replays_after_seq(api: LiveApi) -> No
     assert await stream(api, job_id, after=len(messages)) == []
     missing = await api.http.get('/api/jobs/job_nope')
     assert (missing.status_code, missing.json()['error']['code']) == (404, 'not_found')
+
+
+async def test_websocket_streams_from_the_database_when_redis_is_down(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 訂閱與發布都失敗：事件只在資料庫，串流每秒讀取一次，任務結束後正常關閉（不是 1011）
+    monkeypatch.setattr(api.services.store.redis, 'pubsub', lambda: DownPubSub(subscribe_fails=True))
+    monkeypatch.setattr(api.services.store, 'publish', publish_down)
+    async with api.worker():
+        job_id = (await api.http.post('/api/jobs', json=job_input())).json()['jobId']
+        messages = await stream(api, job_id)
+    assert [m['seq'] for m in messages] == list(range(1, len(messages) + 1))
+    assert stages(messages[-1:]) == [('job.status', 'done')]
+    assert (await api.http.get(f'/api/jobs/{job_id}')).json()['events'] == messages
 
 
 async def test_websocket_closes_with_4404_for_unknown_jobs(api: LiveApi) -> None:
