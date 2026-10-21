@@ -22,7 +22,7 @@ export const CHUNK_SAMPLES: ChunkSample[] = [
       '* 深色背景使用反白 Logo。',
       '• 標誌不可變形！',
       '   - 縮排的條列；',
-      '- 含有行分隔符號 的行不是條列',
+      '- 含有行分隔符號\u2028的行不是條列',
       '-沒有空白的破折號不是條列',
       '####### 七個井號不是標題',
       '#沒有空白也不是標題',
@@ -30,8 +30,8 @@ export const CHUNK_SAMPLES: ChunkSample[] = [
       '週年慶素材的平均 CTR 為 4.2%',
       '###### 第六級標題',
       '標題下方的段落。',
-      '#　全形空白後的標題   ',
-      '# 含有行分隔符號 的行不是標題',
+      '#\u3000全形空白後的標題   ',
+      '# 含有行分隔符號\u2028的行不是標題',
       '最後一段沒有句號',
     ].join('\n'),
   },
@@ -43,13 +43,13 @@ export const CHUNK_SAMPLES: ChunkSample[] = [
       '對齊網格。',
       'Logo',
       '置於左上。',
-      '\t中文　　全形空白 不換行空白\v垂直定位\f換頁都算空白。',
+      '\t中文\u3000\u3000全形空白\u00a0不換行空白\v垂直定位\f換頁都算空白。',
       '漢字\u{20000} \u{20001}擴充區 B 的字也是漢字。',
       '品牌色「晞月玫瑰」 與「珍珠金」、 頓號後的空白保留。',
       'ひらがな と カタカナ 旁的空白保留。',
-      '﻿開頭的 BOM 會被 trim 去掉。',
+      '\ufeff開頭的 BOM 會被 trim 去掉。',
       '\u0085 與 \u001c 不是 JavaScript 的空白\u0085',
-      '文字 中間的行分隔符號是空白。',
+      '文字\u2028中間的行分隔符號是空白。',
     ].join('\n'),
   },
   // 中英混排、半形句尾標點（! ? ;）、不分大小寫的標籤規則
@@ -99,7 +99,7 @@ export const CHUNK_SAMPLES: ChunkSample[] = [
     text: ['😀'.repeat(10) + '。', '', `${'\u{20000}'.repeat(5)}😀😀😀。👩‍💻 工程師。`].join('\n'),
   },
   // 只有空白的行也算空行（含全形空白與 BOM）；U+0085 不是 JavaScript 的空白，所以不算
-  { brandId: 'selune', name: 'blocks.txt', text: '第一段\n　\t\n第二段\n﻿\n第三段\n\u0085\n仍是第三段' },
+  { brandId: 'selune', name: 'blocks.txt', text: '第一段\n\u3000\t\n第二段\n\ufeff\n第三段\n\u0085\n仍是第三段' },
   // Windows（CRLF）與舊版 Mac（CR）的換行
   {
     brandId: 'selune', name: 'crlf.txt',
@@ -119,7 +119,7 @@ export const CHUNK_SAMPLES: ChunkSample[] = [
   { brandId: 'misty-isle', name: '規範.txt', text: '標題最多兩行。' },
   // 沒有內文
   { brandId: 'selune', name: 'empty.txt', text: '' },
-  { brandId: 'selune', name: 'blank.txt', text: ' \n\n 　\n' },
+  { brandId: 'selune', name: 'blank.txt', text: ' \n\n \u3000\n' },
   { brandId: 'misty-isle', name: 'headings-only.md', text: '# 只有標題\n\n## 沒有內文' },
 ];
 

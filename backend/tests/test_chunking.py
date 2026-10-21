@@ -53,7 +53,7 @@ def test_splits_by_heading_and_paragraph_and_ends_bullets_with_a_full_stop() -> 
 
 def test_whitespace_follows_javascript() -> None:
     # JS 的 trim() 會去掉 U+FEFF，但 U+0085 不算空白（Python 的 str.strip() 剛好相反）
-    assert chunk_document('selune', 'a.txt', '﻿開頭\u0085。')[0].text == '開頭\u0085。'
+    assert chunk_document('selune', 'a.txt', '\ufeff開頭\u0085。')[0].text == '開頭\u0085。'
     # 漢字之間的換行拿掉，英文旁的保留
     assert chunk_document('selune', 'a.txt', '標題靠左\n對齊網格。\nLogo\n置於左上。')[0].text == (
         '標題靠左對齊網格。Logo 置於左上。'

@@ -19,10 +19,10 @@ from app.core.rng import Mulberry32, hash_string, to_base36
 EMBED_DIMS = 1024
 
 #: JavaScript 視為空白的字元（\s 與 String.prototype.trim() 相同）
-_JS_SPACE = '\t\n\v\f\r       　﻿' + ''.join(map(chr, range(0x2000, 0x200B)))
+_JS_SPACE = '\t\n\v\f\r \u00a0\u1680\u2028\u2029\u202f\u205f\u3000\ufeff' + ''.join(map(chr, range(0x2000, 0x200B)))
 _S = f'[{_JS_SPACE}]'
 #: JavaScript 的 .（沒有 s 旗標）
-_DOT = '[^\n\r  ]'
+_DOT = '[^\n\r\u2028\u2029]'
 _STOPS = '。！？!?；;'
 
 #: 依序比對，第一個命中的規則決定標籤
