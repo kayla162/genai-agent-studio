@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote
 
+import httpx
 from fastapi import APIRouter, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
@@ -31,13 +32,14 @@ from app.contract import (
     SystemStatus,
 )
 from app.core.clock import utc_now
-from app.cutout.state import STATE_KEY
+from app.cutout.state import STATE_KEY as CUTOUT_STATE_KEY
 from app.errors import Invalid, NotFound, Unavailable
 from app.files import product_folder
 from app.pipeline.runner import failure_reason
 from app.queues import ingest_channel
 from app.rag.extract import MAX_BYTES as MAX_DOCUMENT_BYTES
 from app.rag.extract import check_type, document_name, extract_text
+from app.rag.state import STATE_KEY as RAG_STATE_KEY
 from app.repo import catalog
 from app.settings import Settings
 from app.templates import CHANNEL_TEMPLATES
@@ -46,9 +48,8 @@ router = APIRouter(tags=['品牌與商品'])
 
 ComponentState = Literal['ok', 'sim', 'off', 'error']
 
-#: 外部服務目前都是模擬版（Plan 5–7 逐一換成真實版）
+#: 還是模擬版的外部服務（Plan 6、7 換成真實版）
 SIMULATED = [
-    ComponentStatus(id='rag', label='向量庫（Chroma＋BGE）', status='sim', detail='模擬檢索：固定的召回與 Rerank 順序'),
     ComponentStatus(id='gemini', label='Gemini（LLM／VLM）', status='sim', detail='模擬 Agent 與 VLM 審查'),
     ComponentStatus(id='comfyui', label='ComfyUI', status='sim', detail='模擬生圖：程序化背景'),
 ]
@@ -121,6 +122,22 @@ async def _brands(services: ApiServices) -> str:
     return f'已載入 {count} 個品牌'
 
 
+async def _chroma(services: ApiServices) -> str | tuple[ComponentState, str]:
+    """Chroma 的 heartbeat（只有 worker 寫入 Chroma，api 只檢查它是否回應）；正常時顯示網址。
+    RAG_MODE=sim 時不檢查：模擬模式不連 Chroma，沒有啟動 Chroma 的環境（例如 live E2E）不該顯示錯誤。"""
+    if services.settings.rag_mode == 'sim':
+        return 'sim', '模擬模式不使用向量庫'
+    url = services.settings.chroma_url.rstrip('/')
+    try:
+        async with httpx.AsyncClient(timeout=STATUS_TIMEOUT) as http:
+            res = await http.get(f'{url}/api/v2/heartbeat')
+    except httpx.HTTPError as error:
+        raise Unavailable(f'連不上 Chroma（{url}）：{failure_reason(error)}') from error
+    if res.status_code != 200:
+        raise Unavailable(f'Chroma 回應 HTTP {res.status_code}（{url}）')
+    return url
+
+
 @router.get('/api/status')
 async def get_status(services: Services) -> SystemStatus:
     *probed, cutout = await asyncio.gather(
@@ -129,14 +146,38 @@ async def get_status(services: Services) -> SystemStatus:
         _probe('worker', 'worker（SAQ）', _workers(services)),
         _probe('composer', 'composer（排版與模擬邏輯）', _composer(services)),
         _probe('brands', '品牌設定檔', _brands(services)),
+        _probe('chroma', '向量庫（Chroma）', _chroma(services)),
+        _probe('rag', 'RAG 模型（BGE-M3＋Reranker）', _rag_model(services)),
         _probe('cutout', '去背模型（BiRefNet）', _cutout_model(services)),
     )
     return SystemStatus(components=[*probed, *SIMULATED, cutout])
 
 
+async def _rag_model(services: ApiServices) -> tuple[ComponentState, str]:
+    """worker 寫在 Redis 的 RAG 模型狀態（只讀 app.rag.state，api 不載入 onnxruntime）；
+    讀不到、格式不對或不認得的狀態都顯示為 error，不能讓系統狀態整個失敗。"""
+    raw = await services.redis.get(RAG_STATE_KEY)
+    if raw is None:
+        raise Unavailable('worker 尚未回報')
+    try:
+        state = json.loads(raw)
+        name = state['state']
+        shown: dict[str, tuple[ComponentState, str]] = {
+            'sim': ('sim', '模擬檢索：固定的召回與 Rerank 順序'),
+            'downloading': ('off', '第一次使用，正在下載模型（約 1.2 GB）'),
+            'standby': ('ok', '模型已就緒，第一次檢索時載入'),
+            'loading': ('off', '正在載入模型'),
+            'ready': ('ok', 'bge-m3＋bge-reranker-v2-m3 已載入'),
+            'failed': ('error', str(state.get('error') or 'RAG 模型準備失敗')),
+        }
+        return shown[name]
+    except (ValueError, KeyError, TypeError) as error:
+        raise Invalid('RAG 模型狀態無法辨識') from error
+
+
 async def _cutout_model(services: ApiServices) -> tuple[ComponentState, str]:
     """worker 寫在 Redis 的去背模型狀態；讀不到、格式不對或不認得的狀態都顯示為 error，不能讓系統狀態整個失敗。"""
-    raw = await services.redis.get(STATE_KEY)
+    raw = await services.redis.get(CUTOUT_STATE_KEY)
     if raw is None:
         raise Unavailable('worker 尚未回報')
     try:

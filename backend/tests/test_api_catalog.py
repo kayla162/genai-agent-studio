@@ -4,6 +4,8 @@ import asyncio
 import io
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,10 +21,14 @@ from app.cutout.state import STATE_KEY
 from app.files import resolve_file
 from app.queues import cutout_key, ingest_channel
 from app.rag.chunking import chunk_document
+from app.rag.engine import RagEngine
+from app.rag.errors import RagError
 from app.rag.extract import MAX_BYTES, NO_TEXT
+from app.rag.state import STATE_KEY as RAG_STATE_KEY
 from app.repo import catalog
 from app.settings import Settings
 from tests.conftest import LiveApi
+from tests.fake_encoder import FakeEncoder
 from tests.fixtures import SAMPLE_PDF, load_fixture
 
 PNG = b'\x89PNG\r\n\x1a\n' + bytes(24)
@@ -50,18 +56,23 @@ async def status_of(api: LiveApi) -> dict[str, dict[str, Any]]:
 
 async def test_status_reports_each_component(api: LiveApi) -> None:
     status = await status_of(api)
-    assert {k: c['status'] for k, c in status.items()} == {
-        'db': 'ok',
-        'redis': 'ok',
-        'worker': 'error',
-        'composer': 'ok',
-        'brands': 'ok',
-        'rag': 'sim',
-        'gemini': 'sim',
-        'comfyui': 'sim',
-        'cutout': 'error',
-    }
+    assert [(k, c['status']) for k, c in status.items()] == [
+        ('db', 'ok'),
+        ('redis', 'ok'),
+        ('worker', 'error'),
+        ('composer', 'ok'),
+        ('brands', 'ok'),
+        ('chroma', 'ok'),
+        ('rag', 'error'),
+        ('gemini', 'sim'),
+        ('comfyui', 'sim'),
+        ('cutout', 'error'),
+    ]
     assert status['brands']['detail'] == '已載入 2 個品牌'
+    # Chroma 正常時顯示網址；worker 還沒啟動，RAG 模型的狀態還沒有回報
+    chroma_url = api.services.settings.chroma_url
+    assert status['chroma'] == {'id': 'chroma', 'label': '向量庫（Chroma）', 'status': 'ok', 'detail': chroma_url}
+    assert status['rag']['detail'] == 'worker 尚未回報'
     async with api.worker():
         for _ in range(50):
             if (await status_of(api))['worker']['status'] == 'ok':
@@ -322,6 +333,99 @@ async def test_status_reports_a_redis_error_and_a_timeout_for_the_cutout_state(
     monkeypatch.setattr(catalog_api, 'STATUS_TIMEOUT', 0.1)
     component = (await status_of(api))['cutout']
     assert (component['status'], component['detail']) == ('error', '0.1 秒內沒有回應')
+
+
+RAG_LABEL = 'RAG 模型（BGE-M3＋Reranker）'
+
+
+async def test_status_shows_the_rag_model_state(api: LiveApi) -> None:
+    cases = [
+        ('sim', 'sim', None, 'sim', '模擬檢索：固定的召回與 Rerank 順序'),
+        ('bge', 'downloading', None, 'off', '第一次使用，正在下載模型（約 1.2 GB）'),
+        ('bge', 'standby', None, 'ok', '模型已就緒，第一次檢索時載入'),
+        ('bge', 'loading', None, 'off', '正在載入模型'),
+        ('bge', 'ready', None, 'ok', 'bge-m3＋bge-reranker-v2-m3 已載入'),
+        ('bge', 'failed', 'RAG 模型下載失敗：x', 'error', 'RAG 模型下載失敗：x'),
+    ]
+    for mode, state, error, status, detail in cases:
+        message = {'model': mode, 'state': state, 'error': error}
+        await api.services.redis.set(RAG_STATE_KEY, json.dumps(message, ensure_ascii=False))
+        assert (await status_of(api))['rag'] == {'id': 'rag', 'label': RAG_LABEL, 'status': status, 'detail': detail}
+    await api.services.redis.delete(RAG_STATE_KEY)
+    missing = {'id': 'rag', 'label': RAG_LABEL, 'status': 'error', 'detail': 'worker 尚未回報'}
+    assert (await status_of(api))['rag'] == missing
+
+
+async def test_status_reads_what_the_rag_engine_reports(api: LiveApi, tmp_path: Path) -> None:
+    await RagEngine('sim', tmp_path, api.services.redis).prepare_files()
+    assert (await status_of(api))['rag']['status'] == 'sim'
+    engine = RagEngine('bge', tmp_path, api.services.redis, models=[], load=lambda _: FakeEncoder())
+    await engine.prepare_files()
+    assert (await status_of(api))['rag']['detail'] == '模型已就緒，第一次檢索時載入'
+    await engine.encoder()
+    assert (await status_of(api))['rag']['detail'] == 'bge-m3＋bge-reranker-v2-m3 已載入'
+
+    def broken(models_dir: Path) -> FakeEncoder:
+        raise RuntimeError('模型檔損毀')
+
+    with pytest.raises(RagError):
+        await RagEngine('bge', tmp_path, api.services.redis, models=[], load=broken).encoder()
+    component = (await status_of(api))['rag']
+    assert (component['status'], component['detail']) == ('error', 'RAG 模型準備失敗：模型檔損毀')
+
+
+async def test_status_never_fails_on_an_unreadable_rag_state(api: LiveApi) -> None:
+    unreadable = [
+        'not json',
+        '[1, 2]',
+        '"ready"',
+        json.dumps({'model': 'bge'}),
+        json.dumps({'model': 'bge', 'state': 'weird'}),
+    ]
+    for raw in unreadable:
+        await api.services.redis.set(RAG_STATE_KEY, raw)
+        res = await api.http.get('/api/status')
+        assert res.status_code == 200
+        component = {c['id']: c for c in res.json()['components']}['rag']
+        assert (component['status'], component['detail']) == ('error', 'RAG 模型狀態無法辨識'), raw
+    # 失敗時沒有附上原因
+    await api.services.redis.set(RAG_STATE_KEY, json.dumps({'model': 'bge', 'state': 'failed', 'error': None}))
+    component = (await status_of(api))['rag']
+    assert (component['status'], component['detail']) == ('error', 'RAG 模型準備失敗')
+
+
+async def test_status_reports_an_unreachable_or_wrong_chroma(api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows 對沒有開的埠約 2 秒才拒絕連線：放寬逾時，確認是「連不上」而不是逾時
+    monkeypatch.setattr(catalog_api, 'STATUS_TIMEOUT', 10)
+    down = api.services.settings.model_copy(update={'chroma_url': 'http://127.0.0.1:9'})
+    monkeypatch.setattr(api.services, 'settings', down)
+    res = await api.http.get('/api/status')
+    assert res.status_code == 200
+    chroma = {c['id']: c for c in res.json()['components']}['chroma']
+    assert chroma['status'] == 'error'
+    assert chroma['detail'].startswith('連不上 Chroma（http://127.0.0.1:9）：ConnectError')
+    # 有回應但不是 Chroma（例如網址填成 api）
+    url = str(api.http.base_url).rstrip('/')
+    monkeypatch.setattr(api.services, 'settings', api.services.settings.model_copy(update={'chroma_url': url}))
+    chroma = (await status_of(api))['chroma']
+    assert (chroma['status'], chroma['detail']) == ('error', f'Chroma 回應 HTTP 404（{url}）')
+
+
+async def test_status_does_not_probe_chroma_in_sim_mode(api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 網址指向沒有開的埠：有檢查的話會是 error
+    sim = api.services.settings.model_copy(update={'rag_mode': 'sim', 'chroma_url': 'http://127.0.0.1:9'})
+    monkeypatch.setattr(api.services, 'settings', sim)
+    chroma = (await status_of(api))['chroma']
+    assert chroma == {'id': 'chroma', 'label': '向量庫（Chroma）', 'status': 'sim', 'detail': '模擬模式不使用向量庫'}
+
+
+def test_the_api_does_not_import_the_model_runtimes() -> None:
+    """系統狀態只讀 Redis 的 rag:model（app.rag.state）與 Chroma 的 heartbeat：api 不載入 onnxruntime 等套件。"""
+    heavy = ('onnxruntime', 'tokenizers', 'chromadb', 'app.rag.engine', 'app.cutout.engine')
+    code = f'import sys, app.api.main; print([m for m in {heavy!r} if m in sys.modules])'
+    backend = Path(__file__).resolve().parents[1]
+    result = subprocess.run([sys.executable, '-c', code], cwd=backend, capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == '[]'
 
 
 def real_png() -> bytes:
