@@ -9,10 +9,11 @@ from pathlib import Path
 import httpx
 from redis.asyncio import Redis
 
-from app.cutout.models import MODELS, ModelFile, ensure_model, has_model
+from app.cutout.models import MODELS, ensure_model
 from app.cutout.processing import CutoutError
 from app.cutout.segmenter import OnnxSegmenter, Segmenter, SimSegmenter
 from app.cutout.state import STATE_KEY, ModelState
+from app.modelfiles import ModelFile, has_model
 
 #: 下載模型的逾時（秒）：連線與兩次讀取之間的間隔
 DOWNLOAD_TIMEOUT = 60

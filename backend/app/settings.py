@@ -8,6 +8,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.rag.state import RagMode
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -32,8 +34,14 @@ class Settings(BaseSettings):
 
     #: 去背模型：birefnet-general（預設）、birefnet-general-lite，或不需要模型的 sim（測試與 live E2E）
     cutout_model: str = 'birefnet-general'
-    #: 去背模型的存放位置（Docker 為 models volume）
+    #: 去背與 RAG 模型的存放位置（Docker 為 models volume）
     models_dir: Path = REPO_ROOT / 'models'
+
+    #: RAG：bge（BGE-M3＋Reranker＋Chroma，第一次啟動時下載模型約 1.2 GB），
+    #: 或不需要模型與 Chroma 的 sim（測試與 live E2E）
+    rag_mode: RagMode = 'bge'
+    #: 向量庫（Docker 內為 http://chroma:8000）
+    chroma_url: str = 'http://127.0.0.1:8001'
 
     #: 模擬模式的播放速度（1 為 1× 時間軸，約 15 秒一個任務；0 為不等待）
     sim_speed: float = 1.0
