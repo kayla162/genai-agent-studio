@@ -1,4 +1,4 @@
-"""worker：任務經過佇列執行、啟動時復原、去背、品牌文件上傳、回寫。需要 composer。"""
+"""worker：任務經過佇列執行、啟動時復原、去背、RAG 的啟動準備、品牌文件上傳、回寫。需要 composer。"""
 
 import asyncio
 import io
@@ -33,21 +33,28 @@ from app.cutout.engine import CutoutEngine
 from app.cutout.segmenter import Segmenter, SimSegmenter
 from app.db.session import Database
 from app.events import EventStore
-from app.pipeline.sim import sim_ports
+from app.pipeline.sim import SimRetriever, sim_ports
 from app.queues import Queues, cutout_key, ingest_channel
+from app.rag.engine import RagEngine
+from app.rag.retriever import BgeRetriever
+from app.rag.state import RagMode
+from app.rag.store import VectorStore
 from app.repo import catalog, jobs
 from app.settings import Settings
 from app.worker import (
     RESTART_REASON,
     Services,
+    build_services,
     build_workers,
     cutout,
     ingest,
     recover,
     requeue_cutouts_periodically,
     requeue_pending_cutouts,
+    warm_up_rag,
 )
-from tests.conftest import TEST_REDIS_URL
+from tests.conftest import TEST_CHROMA_DATABASE, TEST_REDIS_URL
+from tests.fake_encoder import FakeEncoder
 from tests.fixtures import BRANDS_DIR, load_fixture
 
 NOW = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
@@ -61,7 +68,10 @@ async def services(db: Database, redis: Redis, composer_url: str, tmp_path: Path
         await catalog.sync_brands(s, load_brands(BRANDS_DIR)[0], NOW)
     settings = Settings(data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local')
     cutouts = CutoutEngine('sim', tmp_path / 'models', redis)
-    yield Services(db, redis, EventStore(db, redis), composer, ports, speed=0, settings=settings, cutouts=cutouts)
+    rag = RagEngine('sim', tmp_path / 'models', redis)
+    vectors = VectorStore(settings.chroma_url, database=TEST_CHROMA_DATABASE)
+    store = EventStore(db, redis)
+    yield Services(db, redis, store, composer, ports, 0, settings, cutouts, rag, vectors)
     await composer.aclose()
     await db.truncate_all()
 
@@ -495,6 +505,65 @@ async def test_run_task_returns_unfinished_when_the_wait_runs_out(queues: Queues
     done = await queues.run_task('write_back', wait=0.5, history_id='hist_x')
     assert (done.completed, done.result) == (False, None)
     assert loop.time() - started < 1.5
+
+
+@pytest.mark.parametrize(('mode', 'retriever'), [('bge', BgeRetriever), ('sim', SimRetriever)])
+async def test_build_services_picks_the_retriever_by_rag_mode(
+    mode: RagMode, retriever: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr('app.worker.settings', Settings(rag_mode=mode))
+    built = build_services()
+    try:
+        assert isinstance(built.ports.retriever, retriever)
+        assert built.rag.mode == mode
+        if isinstance(built.ports.retriever, BgeRetriever):
+            assert built.ports.retriever.engine is built.rag
+            assert built.ports.retriever.store is built.vectors
+            assert built.ports.retriever.locks is built.locks
+    finally:
+        await built.composer.aclose()
+        await built.redis.aclose()
+        await built.db.dispose()
+
+
+class StateRecorder:
+    def __init__(self) -> None:
+        self.states: list[object] = []
+
+    async def __call__(self, message: dict[str, object]) -> None:
+        self.states.append(message['state'])
+
+
+async def test_rag_warm_up_checks_the_files_then_syncs_every_brand(
+    services: Services, chroma: VectorStore, redis: Redis
+) -> None:
+    encoder, recorder = FakeEncoder(), StateRecorder()
+    services.rag = RagEngine('bge', Path('models'), redis, models=[], load=lambda _: encoder, on_state=recorder)
+    services.vectors = chroma
+    await warm_up_rag(services)
+    # 先回報 standby（模型檔已核對）；同步需要向量化時才載入
+    assert recorder.states == ['standby', 'loading', 'ready']
+    assert await chroma.brands() == ['misty-isle', 'selune']
+    async with services.db.session() as s:
+        assert len(await chroma.metadata('selune')) == len(await catalog.list_chunks(s, 'selune'))
+
+
+async def test_rag_warm_up_in_sim_mode_only_reports_the_state(services: Services, redis: Redis) -> None:
+    services.vectors = VectorStore('http://127.0.0.1:9')
+    await warm_up_rag(services)
+    raw = await redis.get('rag:model')
+    assert raw is not None and json.loads(raw) == {'model': 'sim', 'state': 'sim', 'error': None}
+
+
+async def test_rag_warm_up_logs_errors_without_raising(
+    services: Services, redis: Redis, caplog: pytest.LogCaptureFixture
+) -> None:
+    services.rag = RagEngine('bge', Path('models'), redis, models=[], load=lambda _: FakeEncoder())
+    services.vectors = VectorStore('http://127.0.0.1:9')
+    with caplog.at_level('ERROR', logger='app.worker'):
+        await warm_up_rag(services)
+    assert 'RAG 模型準備或品牌同步失敗' in caplog.text
+    assert '向量庫（Chroma）無法連線' in caplog.text
 
 
 async def collect_ingest(services: Services, task_id: str, name: str, text: str) -> list[dict[str, Any]]:

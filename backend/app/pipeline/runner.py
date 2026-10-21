@@ -63,6 +63,8 @@ PHASE_MS = {
 }
 #: 取消旗標最多隔多久檢查一次（秒）
 CANCEL_CHECK_INTERVAL = 0.25
+#: Rerank 後進入 Prompt 的切塊數（ragRefs）；真實版召回 8 筆，模擬版只有 5 筆
+PROMPT_REFS = 5
 
 
 class JobCancelled(Exception):
@@ -189,7 +191,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
     await run.pace(PHASE_MS['retrieve_start'] - PHASE_MS['parse'])
     await run.status('retrieving', 0)
     await run.log('rag', f'embed query（bge-m3）→ similarity_search(collection="{brand.id}_ci")')
-    query, hits = await ports.retriever.retrieve(brand, product, inp)
+    query, hits = await ports.retriever.retrieve(brand, product, inp, run)
     await run.pace(PHASE_MS['retrieved'] - PHASE_MS['retrieve_start'])
     await run.emit(RagRetrievedEvent(type='rag.retrieved', query=query, hits=hits))
     await run.log('rag', f'召回 {len(hits)} 筆品牌規範')
@@ -197,7 +199,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
     await run.pace(PHASE_MS['reranked'] - PHASE_MS['retrieved'])
     await run.emit(RagRerankedEvent(type='rag.reranked', hits=ranked))
     await run.log('rag', f'✓ BGE Reranker 重新排序：{" > ".join(h.tag for h in ranked)}', 'ok')
-    rag_refs = [h.chunk_id for h in ranked]
+    rag_refs = [h.chunk_id for h in ranked[:PROMPT_REFS]]
 
     round = 1
     pending = list(ctx.templates)
@@ -314,7 +316,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
             requery_hits = await ports.retriever.requery(brand, requery)
             await run.emit(RagRetrievedEvent(type='rag.retrieved', query=requery, hits=requery_hits))
             for hit in requery_hits:
-                await run.log('rag', f're-query → {hit.chunk_id}（{hit.vector_score}）', 'ok')
+                await run.log('rag', f're-query → {hit.chunk_id}（{hit.vector_score:.3f}）', 'ok')
             rag_refs += [h.chunk_id for h in requery_hits if h.chunk_id not in rag_refs]
             requeried = True
             await run.pace(PHASE_MS['rewrite'] / 2)

@@ -29,6 +29,7 @@ from app.db.session import Database
 from app.events import EventStore
 from app.pipeline.sim import SimAgent, sim_ports
 from app.queues import Queues
+from app.rag.engine import RagEngine
 from app.rag.store import VectorStore
 from app.settings import REPO_ROOT, Settings, settings
 from app.worker import Services as WorkerServices
@@ -137,7 +138,11 @@ class LiveApi:
         composer = ComposerClient(self.composer_url)
         ports = sim_ports(composer, first_round_fail=True, force_all_fail=False)
         cutouts = CutoutEngine('sim', s.settings.data_dir / 'models', s.redis)
-        worker_services = WorkerServices(s.db, s.redis, s.store, composer, ports, speed, s.settings, cutouts)
+        rag = RagEngine('sim', s.settings.data_dir / 'models', s.redis)
+        vectors = VectorStore(settings.chroma_url, database=TEST_CHROMA_DATABASE)
+        worker_services = WorkerServices(
+            s.db, s.redis, s.store, composer, ports, speed, s.settings, cutouts, rag, vectors
+        )
         workers = build_workers(worker_services, s.queues)
         started = [asyncio.create_task(w.start()) for w in workers]
         try:

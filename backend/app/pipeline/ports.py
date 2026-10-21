@@ -64,7 +64,11 @@ class RunContext(Protocol):
 
 
 class Retriever(Protocol):
-    async def retrieve(self, brand: Brand, product: Product, job_input: JobInput) -> tuple[str, list[RagHit]]: ...
+    async def retrieve(
+        self, brand: Brand, product: Product, job_input: JobInput, run: RunContext
+    ) -> tuple[str, list[RagHit]]:
+        """回傳查詢字串與召回的切塊。run 用來在等候模型準備時送出 log。"""
+        ...
 
     async def rerank(self, query: str, hits: list[RagHit]) -> list[RagHit]: ...
 

@@ -50,7 +50,9 @@ def seed_of(spec: PromptSpec) -> int:
 
 
 class SimRetriever:
-    async def retrieve(self, brand: Brand, product: Product, job_input: JobInput) -> tuple[str, list[RagHit]]:
+    async def retrieve(
+        self, brand: Brand, product: Product, job_input: JobInput, run: RunContext
+    ) -> tuple[str, list[RagHit]]:
         hits: list[RagHit] = []
         for tag, score in zip(VECTOR_ORDER, VECTOR_SCORES, strict=True):
             chunk = next((c for c in brand.guideline_chunks if c.tag == tag and not c.id.endswith('-alt')), None)

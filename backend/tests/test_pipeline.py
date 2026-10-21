@@ -1,10 +1,12 @@
-"""任務流程的行為：重試只針對未通過的模板、需人工審核、取消、失敗、已不在排隊時不執行。
+"""任務流程的行為：重試只針對未通過的模板、需人工審核、取消、失敗、已不在排隊時不執行、Prompt 只用前 5 筆切塊、
+RAG（模型或 Chroma）無法使用時任務失敗。
 
 外部服務用測試替身（不需要 composer）。
 """
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,10 +31,16 @@ from app.contract import (
 )
 from app.db.session import Database
 from app.events import EventStore
-from app.pipeline.ports import Ports, ReviewResult, Rewrite, RunContext, SpecRequest
-from app.pipeline.runner import run_job
+from app.pipeline.ports import Ports, Retriever, ReviewResult, Rewrite, RunContext, SpecRequest
+from app.pipeline.runner import PROMPT_REFS, run_job
 from app.pipeline.sim import SimRetriever
+from app.rag.encoder import Encoder
+from app.rag.engine import RagEngine
+from app.rag.retriever import BgeRetriever
+from app.rag.store import VectorStore
+from app.rag.sync import BrandLocks
 from app.repo import catalog, jobs
+from tests.fake_encoder import FakeEncoder, fake_engine
 from tests.fixtures import BRANDS_DIR, load_fixture
 
 NOW = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
@@ -105,6 +113,24 @@ class EmptyRetriever(SimRetriever):
         return []
 
 
+class EightHits(EmptyRetriever):
+    """召回 8 筆，Rerank 把順序整個反過來。"""
+
+    async def retrieve(
+        self, brand: Brand, product: Product, job_input: JobInput, run: RunContext
+    ) -> tuple[str, list[RagHit]]:
+        hits = [
+            RagHit(
+                chunk_id=f'selune#c{i}', source='ci.md', section='§1', tag='general', text=f'第 {i} 條', vector_score=1
+            )
+            for i in range(8)
+        ]
+        return '查詢', hits
+
+    async def rerank(self, query: str, hits: list[RagHit]) -> list[RagHit]:
+        return [h.model_copy(update={'rerank_score': (i + 1) / 10}) for i, h in reversed(list(enumerate(hits)))]
+
+
 @pytest.fixture
 async def store(db: Database, redis: Redis) -> AsyncIterator[EventStore]:
     data = load_fixture('timelines/selune-retry.json')
@@ -126,8 +152,10 @@ async def messages(db: Database) -> list[dict[str, Any]]:
     return [m for m in snap.events if m['type'] != 'log']
 
 
-def ports(agent: FakeAgent, reviewer: FakeReviewer, image: FakeImage | None = None) -> Ports:
-    return Ports(retriever=EmptyRetriever(), agent=agent, image=image or FakeImage(), reviewer=reviewer)
+def ports(
+    agent: FakeAgent, reviewer: FakeReviewer, image: FakeImage | None = None, retriever: Retriever | None = None
+) -> Ports:
+    return Ports(retriever=retriever or EmptyRetriever(), agent=agent, image=image or FakeImage(), reviewer=reviewer)
 
 
 async def test_retries_only_the_templates_that_failed(store: EventStore, db: Database) -> None:
@@ -180,3 +208,50 @@ async def test_does_nothing_when_the_job_is_no_longer_queued(store: EventStore, 
     before = await messages(db)
     await run_job(JOB, db, store, ports(FakeAgent(), FakeReviewer({})), speed=0)
     assert await messages(db) == before
+
+
+async def test_only_the_top_five_reranked_chunks_go_into_the_prompt(store: EventStore, db: Database) -> None:
+    agent = FakeAgent()
+    await run_job(JOB, db, store, ports(agent, FakeReviewer({1: {'ig-post', 'story'}}), retriever=EightHits()), speed=0)
+    events = await messages(db)
+    (reranked,) = [m for m in events if m['type'] == 'rag.reranked']
+    # 事件送出全部 8 筆；Prompt 只用前 5 筆
+    assert [h['chunkId'] for h in reranked['hits']] == [f'selune#c{i}' for i in range(7, -1, -1)]
+    assert PROMPT_REFS == 5
+    assert [r.rag_refs for r in agent.requests] == [[f'selune#c{i}' for i in range(7, 2, -1)]] * 2
+
+
+async def failure(db: Database) -> tuple[str, str]:
+    """任務失敗的原因，以及失敗時的階段（最後一個 job.status 之前的那個）。"""
+    events = await messages(db)
+    stages = [m['stage'] for m in events if m['type'] == 'job.status']
+    (failed,) = [m for m in events if m['type'] == 'job.failed']
+    assert stages[-1] == 'failed'
+    return failed['reason'], stages[-2]
+
+
+async def test_fails_the_job_when_chroma_is_unreachable(store: EventStore, db: Database, redis: Redis) -> None:
+    retriever = BgeRetriever(db, VectorStore('http://127.0.0.1:9'), fake_engine(redis, FakeEncoder()), BrandLocks())
+    await run_job(JOB, db, store, ports(FakeAgent(), FakeReviewer({}), retriever=retriever), speed=0)
+    reason, stage = await failure(db)
+    assert reason.startswith('向量庫（Chroma）無法連線（http://127.0.0.1:9）：')
+    assert stage == 'retrieving'
+
+
+async def test_fails_the_job_when_the_rag_models_cannot_be_prepared(
+    store: EventStore, db: Database, redis: Redis, chroma: VectorStore, tmp_path: Path
+) -> None:
+    def broken(models_dir: Path) -> Encoder:
+        raise RuntimeError('模型檔損毀')
+
+    engine = RagEngine('bge', tmp_path, redis, models=[], load=broken)
+    retriever = BgeRetriever(db, chroma, engine, BrandLocks())
+    await run_job(JOB, db, store, ports(FakeAgent(), FakeReviewer({}), retriever=retriever), speed=0)
+    reason, stage = await failure(db)
+    assert (reason, stage) == ('RAG 模型準備失敗：模型檔損毀', 'retrieving')
+    async with db.session() as s:
+        snap = await jobs.get_job(s, JOB)
+    assert snap is not None
+    # 等候模型時先送出「RAG 模型準備中」
+    logs = [m['message'] for m in snap.events if m['type'] == 'log' and m['source'] == 'rag']
+    assert 'RAG 模型準備中' in logs

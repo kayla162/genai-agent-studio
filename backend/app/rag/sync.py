@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from itertools import batched
 
-from app.contract import RagChunk
+from app.contract import RagChunk, RagHit
 from app.db.session import Database
 from app.rag.engine import RagEngine
 from app.rag.store import VectorRecord, VectorStore
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 UPSERT_BATCH = 32
 
 
-def index_text(chunk: RagChunk) -> str:
-    """向量化的文字：章節名稱也帶有語意，例如「§2.1 色彩系統」。"""
+def index_text(chunk: RagChunk | RagHit) -> str:
+    """向量化（以及 Rerank）的文字：章節名稱也帶有語意，例如「§2.1 色彩系統」。"""
     return f'{chunk.section}：{chunk.text}'
 
 

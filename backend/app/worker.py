@@ -3,6 +3,7 @@
 - jobs 佇列：run_job（生圖任務，一次一個）
 - tasks 佇列：ingest（品牌文件上傳）、write_back（選定海報回寫成歷史案例），最多同時兩個
 - cutouts 佇列：cutout（商品照去背，一次一個）
+- 啟動時在背景準備模型：去背模型下載並載入；RAG 模型下載並核對（第一次檢索時才載入），再把品牌同步到 Chroma
 - 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務與去背中的商品重新放回佇列；
   去背中的商品在執行期間也會定時補排（寫入佇列時出錯、紀錄遺失的商品不會一直卡在去背中）
 """
@@ -14,7 +15,7 @@ import logging
 import os
 import signal
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,10 @@ from app.pipeline.ports import Ports
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
 from app.queues import Queues, ingest_channel
+from app.rag.engine import RagEngine
+from app.rag.retriever import BgeRetriever
+from app.rag.store import VectorStore
+from app.rag.sync import BrandLocks, sync_all
 from app.repo import catalog, history
 from app.settings import Settings, settings
 
@@ -74,6 +79,12 @@ class Services:
     speed: float
     settings: Settings
     cutouts: CutoutEngine
+    #: RAG 模型；模式（bge／sim）以它為準
+    rag: RagEngine
+    #: Chroma（模擬模式不使用，也不會連線）
+    vectors: VectorStore
+    #: 寫入 Chroma 前要取得的品牌鎖（同步、上傳、回寫共用）
+    locks: BrandLocks = field(default_factory=BrandLocks)
 
     async def pace(self, ms: float) -> None:
         if self.speed > 0:
@@ -81,14 +92,32 @@ class Services:
 
 
 def build_services() -> Services:
+    """RAG_MODE=bge 時檢索換成 BgeRetriever；Agent、生圖與審查仍是模擬版（Plan 6、7 換成真實版）。"""
     db = Database(settings.database_url)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     composer = ComposerClient(settings.composer_url)
+    rag = RagEngine(settings.rag_mode, settings.models_dir, redis)
+    vectors = VectorStore(settings.chroma_url)
+    locks = BrandLocks()
     ports = sim_ports(
         composer, first_round_fail=settings.sim_first_round_fail, force_all_fail=settings.sim_force_all_fail
     )
+    if settings.rag_mode == 'bge':
+        ports = replace(ports, retriever=BgeRetriever(db, vectors, rag, locks))
     cutouts = CutoutEngine(settings.cutout_model, settings.models_dir, redis)
-    return Services(db, redis, EventStore(db, redis), composer, ports, settings.sim_speed, settings, cutouts)
+    store = EventStore(db, redis)
+    return Services(db, redis, store, composer, ports, settings.sim_speed, settings, cutouts, rag, vectors, locks)
+
+
+async def warm_up_rag(services: Services) -> None:
+    """worker 啟動時在背景：下載並核對 RAG 模型檔（不載入），再依序同步所有品牌到 Chroma。
+    失敗只記錄（模型狀態已寫到 Redis），檢索與上傳時會再試；模擬模式只回報狀態。"""
+    try:
+        await services.rag.prepare_files()
+        if services.rag.mode == 'bge':
+            await sync_all(services.db, services.vectors, services.rag, services.locks)
+    except Exception:
+        logger.exception('RAG 模型準備或品牌同步失敗')
 
 
 async def cutout(services: Services, product_id: str, photo_url: str) -> None:
@@ -273,8 +302,9 @@ async def main() -> None:
     queues = Queues(settings.redis_url)
     await queues.connect()
     await recover(services, queues)
-    # 第一次啟動時下載模型（約 1 GB）；在背景進行，不擋住生圖與文件上傳
+    # 第一次啟動時下載模型（去背約 1 GB、RAG 約 1.2 GB）；在背景進行，不擋住生圖與文件上傳
     warming = asyncio.create_task(services.cutouts.warm_up())
+    rag_warming = asyncio.create_task(warm_up_rag(services))
     requeueing = asyncio.create_task(requeue_cutouts_periodically(services, queues))
     workers = build_workers(services, queues)
     stop_on_signals(workers)
@@ -282,6 +312,7 @@ async def main() -> None:
         await asyncio.gather(*(w.start() for w in workers))
     finally:
         warming.cancel()
+        rag_warming.cancel()
         requeueing.cancel()
         await queues.disconnect()
         await services.composer.aclose()
