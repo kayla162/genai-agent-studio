@@ -2,7 +2,7 @@
 # 映像檔取自 AWS 的 Docker 官方映像鏡像（public.ecr.aws/docker/library），不需要登入 Docker Hub。
 #
 #   docker compose up -d --build     整套服務：瀏覽器開 http://127.0.0.1:3000
-#   docker compose up -d postgres redis   只開資料庫與佇列（在本機用 uv、npm 開發與測試）
+#   docker compose up -d postgres redis chroma   只開資料庫、佇列與向量庫（在本機用 uv、npm 開發與測試）
 name: genai-agent
 
 # api 與 worker 共用：同一個映像檔，設定來自 .env（可省略）；容器之間的位址與容器內的路徑固定在這裡
@@ -15,6 +15,7 @@ x-backend: &backend
     DATABASE_URL: postgresql+asyncpg://genai:genai@postgres:5432/genai
     REDIS_URL: redis://redis:6379/0
     COMPOSER_URL: http://composer:3900
+    CHROMA_URL: http://chroma:8000
     BRANDS_DIR: /app/brands
     DATA_DIR: /app/data
     LOCAL_PHOTOS_DIR: /app/assets/products
@@ -54,6 +55,20 @@ services:
       retries: 30
     restart: unless-stopped
 
+  # RAG 向量庫：每個品牌一個 collection。資料以 PostgreSQL 為準，volume 遺失時 worker 會自動重建
+  chroma:
+    image: ghcr.io/chroma-core/chroma:1.5.9
+    # 8001：8000 已給 api；本機開發與測試連 127.0.0.1:8001，容器之間仍用 chroma:8000
+    ports: ['127.0.0.1:8001:8000']
+    volumes: ['chroma:/data']
+    healthcheck:
+      # 映像檔裡沒有 curl：以 bash 的 /dev/tcp 讀 heartbeat
+      test: ['CMD', 'bash', '-c', "exec 3<>/dev/tcp/127.0.0.1/8000 && printf 'GET /api/v2/heartbeat HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
   # 版型與模擬邏輯（直接執行 web/src/lib 的 TypeScript）；只給 api 與 worker 使用，不對外開放
   composer:
     build:
@@ -82,7 +97,7 @@ services:
       timeout: 3s
       retries: 30
 
-  # 生圖任務、文件上傳、去背與回寫；等 api 完成 migration 後才啟動
+  # 生圖任務、文件上傳、去背與回寫；等 api 完成 migration、chroma 健康後才啟動
   worker:
     <<: *backend
     command: ['python', '-m', 'app.worker']
@@ -91,10 +106,11 @@ services:
       - ./brands:/app/brands:ro
       - ./assets/products:/app/assets/products:ro
       - ./data:/app/data
-      # 去背模型（BiRefNet）：第一次啟動時下載，約 1 GB
+      # 去背模型（BiRefNet，約 1 GB）與 RAG 模型（BGE-M3＋Reranker，約 1.2 GB）：第一次啟動時下載
       - models:/app/models
     depends_on:
       api: { condition: service_healthy }
+      chroma: { condition: service_healthy }
 
   # live 版前端：nginx 提供靜態輸出，/api、/files、/ws、/docs 轉給 api
   web:
@@ -110,3 +126,4 @@ volumes:
   postgres:
   redis:
   models:
+  chroma:

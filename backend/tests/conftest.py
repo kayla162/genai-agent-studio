@@ -1,6 +1,7 @@
-"""資料庫測試需要 docker compose 的 postgres（docker compose up -d postgres redis）。
+"""資料庫測試需要 docker compose 的 postgres、redis 與 chroma（docker compose up -d postgres redis chroma）。
 
 每次測試開始時重建 genai_test 資料庫並跑 migration；每個測試結束後清空所有資料表。
+Chroma 使用另一個 database genai_test；每個測試結束後刪除所有 collection。
 """
 
 import asyncio
@@ -28,6 +29,7 @@ from app.db.session import Database
 from app.events import EventStore
 from app.pipeline.sim import SimAgent, sim_ports
 from app.queues import Queues
+from app.rag.store import VectorStore
 from app.settings import REPO_ROOT, Settings, settings
 from app.worker import Services as WorkerServices
 from app.worker import build_workers
@@ -35,6 +37,8 @@ from app.worker import build_workers
 TEST_DATABASE = 'genai_test'
 #: 測試使用 Redis 的第 15 個資料庫，開始時清空
 TEST_REDIS_URL = settings.redis_url.rsplit('/', 1)[0] + '/15'
+#: 測試使用 Chroma 的另一個 database（default_tenant 之下）
+TEST_CHROMA_DATABASE = 'genai_test'
 
 
 @pytest.fixture(scope='session')
@@ -60,6 +64,27 @@ async def redis() -> AsyncIterator[Redis]:
     await client.flushdb()
     yield client
     await client.aclose()
+
+
+@pytest.fixture(scope='session')
+async def chroma_store() -> AsyncIterator[VectorStore]:
+    """建立 Chroma 的 genai_test database（已經有時沿用），並刪除上次留下的 collection。"""
+    async with httpx.AsyncClient(base_url=settings.chroma_url) as http:
+        res = await http.post('/api/v2/tenants/default_tenant/databases', json={'name': TEST_CHROMA_DATABASE})
+        # 409：database 已經存在
+        if res.status_code != 409:
+            res.raise_for_status()
+    store = VectorStore(settings.chroma_url, database=TEST_CHROMA_DATABASE)
+    for brand_id in await store.brands():
+        await store.drop(brand_id)
+    yield store
+
+
+@pytest.fixture
+async def chroma(chroma_store: VectorStore) -> AsyncIterator[VectorStore]:
+    yield chroma_store
+    for brand_id in await chroma_store.brands():
+        await chroma_store.drop(brand_id)
 
 
 @pytest.fixture(scope='session')

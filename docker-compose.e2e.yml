@@ -1,6 +1,6 @@
 # live 模式 E2E 專用（web 的 npm run e2e:live 會自動啟動與移除）：
 #   docker compose -p genai-agent-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait
-# 獨立的專案名稱與 volume，不影響平常使用的資料庫、上傳檔與商品照；只開放 web（127.0.0.1:3200）。
+# 獨立的專案名稱與 volume，不影響平常使用的資料庫、向量庫、上傳檔與商品照；只開放 web（127.0.0.1:3200）。
 x-e2e-backend: &e2e-backend
   environment:
     SIM_SPEED: '1'
@@ -8,6 +8,8 @@ x-e2e-backend: &e2e-backend
     SIM_FORCE_ALL_FAIL: 'false'
     # 模擬去背：不下載約 1 GB 的模型
     CUTOUT_MODEL: sim
+    # 模擬檢索：不下載約 1.2 GB 的 RAG 模型，也不寫入 Chroma
+    RAG_MODE: sim
   volumes: !override
     - ./brands:/app/brands:ro
     - e2e-photos:/app/assets/products:ro
@@ -18,6 +20,9 @@ services:
     ports: !reset []
   redis:
     ports: !reset []
+  chroma:
+    ports: !reset []
+    volumes: !override ['e2e-chroma:/data']
   api:
     <<: *e2e-backend
     ports: !reset []
@@ -29,3 +34,4 @@ services:
 volumes:
   e2e-data:
   e2e-photos:
+  e2e-chroma:

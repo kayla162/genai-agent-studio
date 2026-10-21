@@ -73,22 +73,32 @@ def _chunk_row(brand_id: str, chunk: RagChunk, origin: str, position: int, now: 
     )
 
 
-async def _chunks(session: AsyncSession, brand_id: str) -> list[RagChunk]:
+async def list_chunks(session: AsyncSession, brand_id: str) -> list[tuple[RagChunk, str]]:
+    """品牌的全部切塊與各自的 origin（config、alt、upload、history），依列出的順序。"""
     rows = await session.scalars(
         select(BrandChunkRow)
         .where(BrandChunkRow.brand_id == brand_id)
         .order_by(_ORIGIN_ORDER, BrandChunkRow.created_at, BrandChunkRow.position)
     )
     return [
-        RagChunk.model_validate({'id': r.id, 'source': r.source, 'section': r.section, 'tag': r.tag, 'text': r.text})
+        (
+            RagChunk.model_validate(
+                {'id': r.id, 'source': r.source, 'section': r.section, 'tag': r.tag, 'text': r.text}
+            ),
+            r.origin,
+        )
         for r in rows
     ]
 
 
 async def _brand(session: AsyncSession, row: BrandRow) -> Brand:
-    return Brand.model_validate(
-        {**row.config, 'guidelineChunks': [c.to_json() for c in await _chunks(session, row.id)]}
-    )
+    chunks = [c.to_json() for c, _ in await list_chunks(session, row.id)]
+    return Brand.model_validate({**row.config, 'guidelineChunks': chunks})
+
+
+async def active_brand_ids(session: AsyncSession) -> list[str]:
+    """設定檔仍在的品牌（RAG 同步的對象）。"""
+    return list(await session.scalars(select(BrandRow.id).where(BrandRow.active).order_by(BrandRow.id)))
 
 
 async def list_brands(session: AsyncSession) -> list[Brand]:
