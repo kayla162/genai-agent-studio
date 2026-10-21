@@ -1,5 +1,5 @@
 import type {
-  ApiOptions, Brand, BrandDocument, ChannelTemplate, Copy, DashboardStats, HistoryEntry, IngestEvent, JobInput, JobMessage,
+  ApiOptions, Brand, ChannelTemplate, Copy, DashboardStats, HistoryEntry, IngestEvent, JobInput, JobMessage,
   JobSummary, LocalPhoto, ParsedBrief, Product, ProductPhoto, RagChunk, SystemStatus,
 } from '@/types/contract';
 import type { ApiClient, JobSnapshot, ProductDraft } from '../client';
@@ -138,10 +138,11 @@ export class HttpApiClient implements ApiClient {
     return this.request('GET', '/api/brands');
   }
 
-  async ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
-    const res = await this.send(`/api/brands/${q(brandId)}/documents`, {
-      method: 'POST', body: JSON.stringify(doc), headers: { 'content-type': 'application/json' },
-    });
+  /** 以 multipart 上傳原檔（欄位 file）；檔案的問題在開始串流之前就以 HTTP 400 回應 */
+  async ingestBrandDocument(brandId: string, file: File, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const res = await this.send(`/api/brands/${q(brandId)}/documents`, { method: 'POST', body: form });
     let chunks: RagChunk[] = [];
     for await (const line of readLines(res)) {
       const message = JSON.parse(line) as IngestLine;

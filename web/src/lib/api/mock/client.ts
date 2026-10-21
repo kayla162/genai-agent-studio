@@ -1,5 +1,5 @@
 import type {
-  ApiOptions, BrandDocument, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent, JobEvent,
+  ApiOptions, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry, IngestEvent, JobEvent,
   JobInput, JobMessage, JobStage, JobSummary, LocalPhoto, Product, ProductCutout, ProductPhoto, RagChunk, Render, SystemStatus,
   TemplateId,
 } from '@/types/contract';
@@ -98,6 +98,9 @@ export function makeJobId(now: Date, rand: () => number = Math.random): string {
 const CUTOUT_MS = 1200;
 const PENDING_CUTOUT: ProductCutout = { model: 'BiRefNet-general', status: 'pending', url: null, error: null };
 const DONE_CUTOUT: ProductCutout = { ...PENDING_CUTOUT, status: 'done' };
+
+/** 示範模式在瀏覽器內讀取文字檔；PDF 要由後端抽出文字層 */
+const TEXT_DOCUMENT = /\.(md|markdown|txt)$/i;
 
 const makeId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
@@ -254,8 +257,10 @@ export class MockApiClient implements ApiClient {
     });
   }
 
-  async ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
+  async ingestBrandDocument(brandId: string, file: File, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
     getBrandById(brandId);
+    if (!TEXT_DOCUMENT.test(file.name)) throw new Error('示範模式只能讀取 .md、.txt');
+    const doc = { name: file.name, text: await file.text() };
     const chunks = chunkDocument(brandId, doc);
     if (!chunks.length) throw new Error('文件沒有可用的文字內容');
     await this.sleep(400);

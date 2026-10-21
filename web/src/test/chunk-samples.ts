@@ -1,10 +1,10 @@
-import type { BrandDocument } from '@/types/contract';
+import type { TextDocument } from '@/lib/rag/chunk';
 
 /**
  * 切塊一致性的範例（contracts/fixtures/chunks.json）：涵蓋 lib/rag/chunk.ts 的每個分支，
  * 後端 app/rag/chunking.py 必須切出完全相同的結果。特殊字元以跳脫序列寫出，方便看出測的是什麼。
  */
-export interface ChunkSample extends BrandDocument {
+export interface ChunkSample extends TextDocument {
   brandId: string;
   maxChars?: number;
 }

@@ -6,7 +6,7 @@ import type { Brand, IngestEvent, RagChunk } from '@/types/contract';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { getApiClient } from '@/lib/api';
+import { API_MODE, getApiClient } from '@/lib/api';
 import { useAppStore } from '@/lib/store/app';
 import { cn } from '@/lib/utils';
 import { TAG_LABEL } from './chunk-list';
@@ -43,17 +43,22 @@ function StepRow({ n, title, active, done, children }: { n: number; title: strin
   );
 }
 
-/** 上傳品牌文件（.md／.txt），展示 chunking → embedding → 寫入 Chroma 的過程 */
+/** 可選的檔案：live 由後端抽出文字（PDF 讀文字層）；示範模式在瀏覽器內讀取，只能讀文字檔 */
+const ACCEPT = '.md,.markdown,.txt,.pdf,text/plain,text/markdown,application/pdf';
+const FORMATS = API_MODE === 'live'
+  ? '支援 .md、.txt 與 .pdf（PDF 需有文字層，掃描檔請先轉成文字）。'
+  : '示範模式支援 .md 與 .txt（PDF 需要 live 模式）。';
+
+/** 上傳品牌文件（.md／.txt／.pdf），展示 chunking → embedding → 寫入 Chroma 的過程 */
 export function DocIngest({ brand }: { brand: Brand }) {
   const input = useRef<HTMLInputElement>(null);
   const loadBrands = useAppStore((s) => s.loadBrands);
   const [ingest, setIngest] = useState<Ingest | null>(null);
 
   const run = async (file: File) => {
-    const text = await file.text();
     setIngest({ status: 'running', source: file.name, chunks: [], embedded: [], stored: null, error: null });
     try {
-      await getApiClient().ingestBrandDocument(brand.id, { name: file.name, text }, (e) => setIngest((s) => (s ? reduce(s, e) : s)));
+      await getApiClient().ingestBrandDocument(brand.id, file, (e) => setIngest((s) => (s ? reduce(s, e) : s)));
       setIngest((s) => (s ? { ...s, status: 'done' } : s));
       await loadBrands();
     } catch (err) {
@@ -68,7 +73,7 @@ export function DocIngest({ brand }: { brand: Brand }) {
     <Card>
       <CardHeader>
         <CardTitle>上傳品牌文件</CardTitle>
-        <CardDescription>支援 .md 與 .txt。Markdown 的 # 標題會成為切塊的段落名稱；同名文件重新上傳會取代舊的切塊。</CardDescription>
+        <CardDescription>{FORMATS}Markdown 的 # 標題會成為切塊的段落名稱；同名文件重新上傳會取代舊的切塊。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <Button variant="outline" disabled={ingest?.status === 'running'} onClick={() => input.current?.click()}>
@@ -78,7 +83,7 @@ export function DocIngest({ brand }: { brand: Brand }) {
         <input
           ref={input}
           type="file"
-          accept=".md,.txt,text/plain,text/markdown"
+          accept={ACCEPT}
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];

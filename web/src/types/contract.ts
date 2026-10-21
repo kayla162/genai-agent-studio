@@ -248,7 +248,6 @@ export interface JobSummary {
 }
 
 /* ---------- 品牌文件上傳（chunking → embedding → 寫入 Chroma） ---------- */
-export interface BrandDocument { name: string; text: string }
 export type IngestEvent =
   | { type: 'ingest.chunked'; source: string; chunks: RagChunk[] }
   | { type: 'ingest.embedded'; chunkId: string; index: number; total: number; dims: number; preview: number[] }

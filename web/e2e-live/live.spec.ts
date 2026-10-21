@@ -1,5 +1,6 @@
+import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { compose } from './stack';
+import { compose, REPO_ROOT } from './stack';
 
 // 對 docker compose 啟動的整套服務測試：任務由 worker 執行，事件經 nginx 的 WebSocket 送到前端
 
@@ -70,7 +71,7 @@ test('取消執行中的任務', async ({ page }) => {
   expect((await job(page, jobId)).summary).toMatchObject({ stage: 'cancelled', finished: true });
 });
 
-test('上傳品牌文件：切塊 → 向量化 → 寫入，知識庫列出新的切塊', async ({ page }) => {
+test('上傳品牌文件（Markdown 與 PDF）：切塊 → 向量化 → 寫入，知識庫列出新的切塊', async ({ page }) => {
   await page.goto('/brands');
   await page.locator('input[type="file"]').setInputFiles({
     name: 'e2e_ci.md',
@@ -78,9 +79,14 @@ test('上傳品牌文件：切塊 → 向量化 → 寫入，知識庫列出新�
     buffer: Buffer.from('# 色彩更新\n主色維持 #2F4A44。\n\n# Logo\n- 深色背景使用反白 Logo'),
   });
   await expect(page.getByText('collection「selune_ci」新增 2 筆')).toBeVisible();
-  const brands: { id: string; guidelineChunks: { source: string }[] }[] = await (await page.request.get('/api/brands')).json();
-  const selune = brands.find((b) => b.id === 'selune')!;
-  expect(selune.guidelineChunks.filter((c) => c.source === 'e2e_ci.md')).toHaveLength(2);
+  // 重新整理後再上傳，才不會看到上一份的完成訊息。PDF 由 api 以 pypdf 抽出文字層（兩頁，各成一塊）
+  await page.reload();
+  await page.locator('input[type="file"]').setInputFiles(path.join(REPO_ROOT, 'backend', 'tests', 'data', 'ci-sample.pdf'));
+  await expect(page.getByText('collection「selune_ci」新增 2 筆')).toBeVisible();
+  const brands: { id: string; guidelineChunks: { source: string; section: string }[] }[] = await (await page.request.get('/api/brands')).json();
+  const chunks = brands.find((b) => b.id === 'selune')!.guidelineChunks;
+  expect(chunks.filter((c) => c.source === 'e2e_ci.md')).toHaveLength(2);
+  expect(chunks.filter((c) => c.source === 'ci-sample.pdf').map((c) => c.section)).toEqual(['ci-sample', 'ci-sample']);
 });
 
 test('上傳商品照到後端並建立商品', async ({ page }) => {

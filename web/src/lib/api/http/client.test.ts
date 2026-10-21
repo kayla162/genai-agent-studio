@@ -141,21 +141,31 @@ describe('HttpApiClient.ingestBrandDocument', () => {
     { type: 'ingest.stored', collection: 'selune_ci', count: 1 },
   ];
 
-  it('reports each NDJSON line and returns the new chunks', async () => {
-    const { api, call } = setup(() => ndjson(progress));
+  const file = (name = 'a.md', text = '# 色彩\n主色') => new File([text], name, { type: 'text/markdown' });
+
+  it('uploads the file as multipart, reports each NDJSON line and returns the new chunks', async () => {
+    const { api, fetch, call } = setup(() => ndjson(progress));
     const seen: IngestEvent[] = [];
-    expect(await api.ingestBrandDocument('selune', { name: 'a.md', text: '# 色彩\n主色' }, (e) => seen.push(e))).toEqual([chunk]);
+    expect(await api.ingestBrandDocument('selune', file(), (e) => seen.push(e))).toEqual([chunk]);
     expect(seen).toEqual(progress);
-    expect([call(0).method, call(0).url, call(0).body]).toEqual([
-      'POST', 'http://api.test/api/brands/selune/documents', { name: 'a.md', text: '# 色彩\n主色' },
-    ]);
+    expect([call(0).method, call(0).url]).toEqual(['POST', 'http://api.test/api/brands/selune/documents']);
+    const form = call(0).body as FormData;
+    expect([...form.keys()]).toEqual(['file']);
+    const sent = form.get('file') as File;
+    expect([sent.name, await sent.text()]).toEqual(['a.md', '# 色彩\n主色']);
+    // 不可自己設定 content-type：multipart 的 boundary 由 fetch 產生
+    expect(fetch.mock.calls[0][1]?.headers).toBeUndefined();
   });
 
-  it('throws the error line, or when the stream ends early', async () => {
-    let reply = () => ndjson([{ error: { code: 'invalid', message: '文件沒有可用的文字內容' } }]);
+  it('throws the 400 sent before streaming, the error line, or when the stream ends early', async () => {
+    const NO_TEXT = 'PDF 沒有可讀取的文字（可能是掃描檔），請先轉成文字';
+    let reply = () => Response.json({ error: { code: 'invalid', message: NO_TEXT } }, { status: 400 });
     const { api } = setup(() => reply());
-    await expect(api.ingestBrandDocument('selune', { name: 'a.md', text: ' ' }, () => {})).rejects.toThrow('文件沒有可用的文字內容');
+    const pdf = new File(['%PDF-1.7'], 'scan.pdf', { type: 'application/pdf' });
+    await expect(api.ingestBrandDocument('selune', pdf, () => {})).rejects.toMatchObject({ code: 'invalid', status: 400, message: NO_TEXT });
+    reply = () => ndjson([{ error: { code: 'unavailable', message: '向量庫（Chroma）無法連線：連線被拒' } }]);
+    await expect(api.ingestBrandDocument('selune', file(), () => {})).rejects.toMatchObject({ code: 'unavailable' });
     reply = () => ndjson(progress.slice(0, 2));
-    await expect(api.ingestBrandDocument('selune', { name: 'a.md', text: 'x' }, () => {})).rejects.toThrow('文件上傳的進度中斷');
+    await expect(api.ingestBrandDocument('selune', file(), () => {})).rejects.toThrow('文件上傳的進度中斷');
   });
 });

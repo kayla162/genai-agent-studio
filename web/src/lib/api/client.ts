@@ -1,5 +1,5 @@
 import type {
-  ApiOptions, Brand, BrandDocument, ChannelTemplate, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry,
+  ApiOptions, Brand, ChannelTemplate, ConnectionState, Copy, DashboardStats, DemoOptions, HistoryEntry,
   IngestEvent, JobInput, JobMessage, JobSummary, LocalPhoto, ParsedBrief, Product, ProductPhoto, RagChunk, SystemStatus,
 } from '@/types/contract';
 
@@ -32,8 +32,11 @@ export interface ApiClient {
   getSystemStatus(): Promise<SystemStatus>;
   /** 包含使用者上傳文件產生的切塊 */
   listBrands(): Promise<Brand[]>;
-  /** 上傳品牌文件：切塊 → 向量化 → 寫入知識庫，過程以 onEvent 回報；回傳新增的切塊 */
-  ingestBrandDocument(brandId: string, doc: BrandDocument, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]>;
+  /**
+   * 上傳品牌文件（.md、.txt、.pdf）：切塊 → 向量化 → 寫入知識庫，過程以 onEvent 回報；回傳新增的切塊。
+   * live 由後端抽出文字（PDF 讀文字層）；mock 只能讀 .md、.txt
+   */
+  ingestBrandDocument(brandId: string, file: File, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]>;
   listTemplates(): Promise<ChannelTemplate[]>;
   listProducts(brandId: string): Promise<Product[]>;
   saveProduct(draft: ProductDraft): Promise<Product>;

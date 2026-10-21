@@ -1,5 +1,8 @@
-import type { BrandDocument, RagChunk, RagTag } from '@/types/contract';
+import type { RagChunk, RagTag } from '@/types/contract';
 import { hashString, mulberry32 } from '@/lib/core/num';
+
+/** 要切塊的文件：檔名（切塊的 source，也是第一個標題之前的 section）與文字 */
+export interface TextDocument { name: string; text: string }
 
 /** bge-m3 的向量維度 */
 export const EMBED_DIMS = 1024;
@@ -53,7 +56,7 @@ function pack(text: string, maxChars: number): string[] {
  * 段落再依句子裝塊。第二階段改由後端切塊（backend/app/rag/chunking.py），輸出格式不變；
  * 修改這裡要同步修改後端，並執行 `npm run fixtures`（contracts/fixtures/chunks.json）。
  */
-export function chunkDocument(brandId: string, doc: BrandDocument, { maxChars = 180 } = {}): RagChunk[] {
+export function chunkDocument(brandId: string, doc: TextDocument, { maxChars = 180 } = {}): RagChunk[] {
   const docKey = hashString(doc.name).toString(36);
   let section = doc.name.replace(/\.[^.]+$/, '');
   const pieces: { section: string; text: string }[] = [];

@@ -104,12 +104,13 @@ describe('product photos and cutout', () => {
 });
 
 describe('brand documents', () => {
-  const DOC = { name: 'ci_update.md', text: ['# 色彩更新', '新增輔助色「霧粉」#E8C7C8。', '', '# Logo', '深色背景使用反白 Logo。'].join('\n') };
+  const TEXT = ['# 色彩更新', '新增輔助色「霧粉」#E8C7C8。', '', '# Logo', '深色背景使用反白 Logo。'].join('\n');
+  const file = (text = TEXT, name = 'ci_update.md', type = 'text/markdown') => new File([text], name, { type });
 
   it('reports chunking, embedding and storing, then lists the new chunks on the brand', async () => {
     const api = new MockApiClient();
     const seen: string[] = [];
-    const pending = api.ingestBrandDocument('selune', DOC, (e) => seen.push(e.type));
+    const pending = api.ingestBrandDocument('selune', file(), (e) => seen.push(e.type));
     await vi.advanceTimersByTimeAsync(1_300);
     const chunks = await pending;
     expect(seen).toEqual(['ingest.chunked', 'ingest.embedded', 'ingest.embedded', 'ingest.stored']);
@@ -122,19 +123,33 @@ describe('brand documents', () => {
   it('replaces chunks when the same document is uploaded again', async () => {
     const api = new MockApiClient();
     api.demo.set({ speed: 4 });
-    const first = api.ingestBrandDocument('selune', DOC, () => {});
+    const first = api.ingestBrandDocument('selune', file(), () => {});
     await vi.advanceTimersByTimeAsync(400);
     await first;
-    const second = api.ingestBrandDocument('selune', { ...DOC, text: '只剩一段。' }, () => {});
+    const second = api.ingestBrandDocument('selune', file('只剩一段。'), () => {});
     await vi.advanceTimersByTimeAsync(400);
     await second;
     const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
     expect(selune.guidelineChunks.filter((c) => c.source === 'ci_update.md').map((c) => c.text)).toEqual(['只剩一段。']);
   });
 
-  it('rejects documents without text', async () => {
+  it('reads .markdown and .txt files whatever the case of the extension', async () => {
     const api = new MockApiClient();
-    await expect(api.ingestBrandDocument('selune', { name: 'a.txt', text: '  ' }, () => {})).rejects.toThrow('文件沒有可用的文字內容');
+    api.demo.set({ speed: 4 });
+    for (const name of ['notes.markdown', 'NOTES.TXT']) {
+      const pending = api.ingestBrandDocument('selune', file('主色維持 #B76E79。', name, 'text/plain'), () => {});
+      await vi.advanceTimersByTimeAsync(300);
+      expect((await pending).map((c) => [c.source, c.tag])).toEqual([[name, 'color']]);
+    }
+  });
+
+  it('rejects PDFs and other formats, and documents without text', async () => {
+    const api = new MockApiClient();
+    const pdf = file('%PDF-1.7', 'ci.pdf', 'application/pdf');
+    await expect(api.ingestBrandDocument('selune', pdf, () => {})).rejects.toThrow('示範模式只能讀取 .md、.txt');
+    await expect(api.ingestBrandDocument('selune', file('x', 'ci.docx', ''), () => {})).rejects.toThrow('示範模式只能讀取 .md、.txt');
+    await expect(api.ingestBrandDocument('selune', file('  ', 'a.txt'), () => {})).rejects.toThrow('文件沒有可用的文字內容');
+    expect((await api.listBrands()).find((b) => b.id === 'selune')!.guidelineChunks.some((c) => c.id.includes('#doc-'))).toBe(false);
   });
 });
 
