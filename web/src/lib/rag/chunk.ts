@@ -50,7 +50,8 @@ function pack(text: string, maxChars: number): string[] {
 
 /**
  * 把品牌文件切成 RAG 切塊：Markdown 標題（#）成為之後段落的 section，空行分段，
- * 段落再依句子裝塊。第二階段改由後端切塊，輸出格式不變。
+ * 段落再依句子裝塊。第二階段改由後端切塊（backend/app/rag/chunking.py），輸出格式不變；
+ * 修改這裡要同步修改後端，並執行 `npm run fixtures`（contracts/fixtures/chunks.json）。
  */
 export function chunkDocument(brandId: string, doc: BrandDocument, { maxChars = 180 } = {}): RagChunk[] {
   const docKey = hashString(doc.name).toString(36);

@@ -6,7 +6,9 @@ import { sampleJobs } from '@/lib/api/mock/samples';
 import { buildTimeline } from '@/lib/api/mock/scenario';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString, mulberry32 } from '@/lib/core/num';
+import { chunkDocument, embedPreview } from '@/lib/rag/chunk';
 import { dashboardStats } from '@/lib/stats/dashboard';
+import { CHUNK_SAMPLES, PREVIEW_SAMPLES } from './chunk-samples';
 
 /**
  * 給後端（Python）一致性測試的固定測資，寫在 repo 根目錄的 contracts/fixtures/。
@@ -128,6 +130,13 @@ export function goldenFixtures(): Record<string, unknown> {
         const rng = mulberry32(seed);
         return [seed, Array.from({ length: 5 }, () => rng())];
       }),
+    },
+    'chunks.json': {
+      documents: CHUNK_SAMPLES.map((d) => {
+        const chunks = chunkDocument(d.brandId, d, { maxChars: d.maxChars });
+        return { ...d, chunks, previews: chunks.map((c) => embedPreview(c.text)) };
+      }),
+      previews: PREVIEW_SAMPLES.map((s) => ({ ...s, values: embedPreview(s.text, s.n) })),
     },
   };
   for (const s of SCENARIOS) {

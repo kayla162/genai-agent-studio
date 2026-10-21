@@ -6,7 +6,7 @@ describe('contracts/fixtures', () => {
   it('matches what the TypeScript code produces (run `npm run fixtures` after changing it)', () => {
     const fixtures = goldenFixtures();
     expect(Object.keys(fixtures).sort()).toEqual([
-      'brands.json', 'rng.json', 'stats.json',
+      'brands.json', 'chunks.json', 'rng.json', 'stats.json',
       'timelines/misty-first-pass.json', 'timelines/selune-needs-review.json', 'timelines/selune-retry.json',
     ]);
     for (const [file, data] of Object.entries(fixtures)) {

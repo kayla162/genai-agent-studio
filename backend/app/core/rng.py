@@ -16,6 +16,21 @@ def hash_string(s: str) -> int:
     return h
 
 
+_BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz'
+
+
+def to_base36(n: int) -> str:
+    """整數的 36 進位表示（同 JS 的 n.toString(36)：小寫，負數加 -）。"""
+    if n < 0:
+        return '-' + to_base36(-n)
+    digits = ''
+    while True:
+        n, r = divmod(n, 36)
+        digits = _BASE36[r] + digits
+        if n == 0:
+            return digits
+
+
 class Mulberry32:
     """可重現的偽隨機數產生器（同一 seed 產生同一序列，回傳 [0, 1) 的浮點數）。"""
 
