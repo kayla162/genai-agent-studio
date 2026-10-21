@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brands import LoadedBrand, load_brands
 from app.contract import FilePhoto, Price, ProductDraft, RagChunk
-from app.db.models import ProductRow
+from app.db.models import BrandChunkRow, ProductRow
 from app.db.session import Database
 from app.repo import catalog
 from app.settings import BACKEND_DIR
@@ -44,6 +44,14 @@ async def test_syncs_brands_from_config_files(session: AsyncSession) -> None:
     assert [b.to_json() for b in await catalog.list_brands(session)] == fixture
     assert (await catalog.get_brand(session, 'selune')) is not None
     assert (await catalog.get_brand(session, 'nope')) is None
+
+
+async def test_case_study_chunks_are_config_chunks(session: AsyncSession) -> None:
+    await catalog.sync_brands(session, demo_brands(), T0)
+    rows = await session.scalars(select(BrandChunkRow).where(BrandChunkRow.brand_id == 'selune'))
+    origins = {r.id: r.origin for r in rows}
+    assert (origins['selune#history'], origins['selune#case-1'], origins['selune#case-2']) == ('config',) * 3
+    assert origins['selune#law-alt'] == 'alt'
 
 
 async def test_resyncing_replaces_config_chunks_and_hides_removed_brands(session: AsyncSession) -> None:

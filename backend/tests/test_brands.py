@@ -78,3 +78,62 @@ def test_logo_and_style_images_resolve_inside_the_brands_folder(tmp_path: Path) 
     assert b.logo_path == tmp_path / 'assets' / 'logo.png'
     assert b.style_images == [tmp_path / 'assets' / 'mood.jpg']
     assert len(b.source_hash) == 64
+
+
+CASES = """caseStudies:
+- {id: c1, title: 週年慶 IG 貼文, channel: IG 貼文, ctr: 4, notes: 柔光漸層}
+- {id: c2, title: 夏季主圖, channel: 電商主圖, ctr: 3.5, notes: 水珠}"""
+
+
+def test_case_studies_become_history_chunks_before_the_law_alt_chunk(tmp_path: Path) -> None:
+    template = (BRANDS_DIR / '_template.yaml').read_text(encoding='utf-8')
+    write(tmp_path / 'my-brand.yaml', template.replace('caseStudies: []', CASES))
+    loaded, errors = load_brands(tmp_path)
+    assert errors == []
+    chunks = [c.model_dump() for c in loaded[0].brand.guideline_chunks]
+    assert [c['id'] for c in chunks] == [
+        'my-brand#color',
+        'my-brand#logo',
+        'my-brand#law',
+        'my-brand#layout',
+        'my-brand#case-1',
+        'my-brand#case-2',
+        'my-brand#law-alt',
+    ]
+    assert chunks[4:6] == [
+        {
+            'id': 'my-brand#case-1',
+            'source': 'my-brand.yaml',
+            'section': '週年慶 IG 貼文',
+            'tag': 'history',
+            'text': 'IG 貼文素材，CTR 4%：柔光漸層',
+        },
+        {
+            'id': 'my-brand#case-2',
+            'source': 'my-brand.yaml',
+            'section': '夏季主圖',
+            'tag': 'history',
+            'text': '電商主圖素材，CTR 3.5%：水珠',
+        },
+    ]
+
+
+def test_guideline_keys_cannot_take_the_generated_prefixes(tmp_path: Path) -> None:
+    template = (BRANDS_DIR / '_template.yaml').read_text(encoding='utf-8')
+    write(tmp_path / 'my-brand.yaml', template.replace('{key: layout,', '{key: case-1,'))
+    loaded, errors = load_brands(tmp_path)
+    assert loaded == []
+    assert [e.message for e in errors] == [
+        'guidelines：Value error, key 不可以 doc-、hist-、case- 開頭（保留給上傳的手冊、歷史回寫與歷史案例）：case-1'
+    ]
+
+
+def test_the_source_hash_follows_the_converted_content(tmp_path: Path) -> None:
+    """轉換規則改變（例如 Plan 5 加上歷史案例切塊）時，既有資料庫的品牌也會重新寫入切塊。"""
+    template = (BRANDS_DIR / '_template.yaml').read_text(encoding='utf-8')
+    write(tmp_path / 'my-brand.yaml', template)
+    before = load_brands(tmp_path)[0][0].source_hash
+    write(tmp_path / 'my-brand.yaml', '# 只改註解\n' + template)
+    assert load_brands(tmp_path)[0][0].source_hash == before
+    write(tmp_path / 'my-brand.yaml', template.replace('caseStudies: []', CASES))
+    assert load_brands(tmp_path)[0][0].source_hash != before

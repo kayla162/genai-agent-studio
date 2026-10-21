@@ -3,6 +3,7 @@ import type { JobEvent, JobInput, JobMessage, ProductCutout } from '@/types/cont
 import type { ApiClient, ProductDraft } from '../client';
 import { getApiClient } from '../index';
 import { MAX_STORED_JOBS, MockApiClient, makeJobId } from './client';
+import { MISTY_ISLE } from './data';
 import { MemoryStore } from './store';
 
 const BRIEF = '週年慶主打買一送一，溫柔療癒';
@@ -115,7 +116,7 @@ describe('brand documents', () => {
     expect(chunks.map((c) => c.tag)).toEqual(['color', 'logo']);
     const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
     expect(selune.guidelineChunks.slice(-2).map((c) => c.id)).toEqual(chunks.map((c) => c.id));
-    expect((await api.listBrands()).find((b) => b.id === 'misty-isle')!.guidelineChunks).toHaveLength(7);
+    expect((await api.listBrands()).find((b) => b.id === 'misty-isle')!.guidelineChunks).toEqual(MISTY_ISLE.guidelineChunks);
   });
 
   it('replaces chunks when the same document is uploaded again', async () => {

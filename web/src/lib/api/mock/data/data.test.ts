@@ -16,6 +16,13 @@ describe.each(BRANDS)('brand $id', (brand) => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it('lists every case study as a chunk after the guidelines and before the law-alt chunk', () => {
+    const cases = brand.caseStudies.map((_, i) => `${brand.id}#case-${i + 1}`);
+    expect(brand.guidelineChunks.slice(-cases.length - 1).map((c) => c.id)).toEqual([...cases, `${brand.id}#law-alt`]);
+    // 模擬檢索取每個標籤的第一個切塊：history 仍是設定檔的成效摘要，mock 劇本不變
+    expect(brand.guidelineChunks.find((c) => c.tag === 'history')!.id).toBe(`${brand.id}#history`);
+  });
+
   it('has a two-line copy preset for every tone', () => {
     for (const tone of TONES) {
       expect(brand.copyPresets[tone].headline).toHaveLength(2);
@@ -29,6 +36,15 @@ describe.each(BRANDS)('brand $id', (brand) => {
       const text = brand.copyPresets[tone].headline.join('') + brand.copyPresets[tone].subhead;
       for (const word of brand.bannedWords) expect(text).not.toContain(word);
     }
+  });
+});
+
+describe('case-study chunks', () => {
+  it('follow the backend rule for the id, source, section, tag and text', () => {
+    expect(SELUNE.guidelineChunks.find((c) => c.id === 'selune#case-2')).toEqual({
+      id: 'selune#case-2', source: 'selune.yaml', section: '夏季保濕電商主圖', tag: 'history',
+      text: '電商主圖素材，CTR 3.1%：淺色背景 + 水珠，強調長效保濕',
+    });
   });
 });
 

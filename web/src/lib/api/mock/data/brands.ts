@@ -1,7 +1,22 @@
-import type { Brand } from '@/types/contract';
+import type { Brand, RagChunk } from '@/types/contract';
 import { deepFreeze } from '@/lib/core/freeze';
 
-export const SELUNE: Brand = deepFreeze({
+const isAlt = (c: RagChunk) => c.id.endsWith('#law-alt');
+
+/**
+ * 每個歷史案例也是一個切塊（與後端 app/brands.py 相同的規則，source 為品牌設定檔的檔名）。
+ * 排在 guidelines 之後、合規替代用語之前，與後端依 origin 列出的順序相同。
+ */
+function withCaseChunks(brand: Brand): Brand {
+  const cases: RagChunk[] = brand.caseStudies.map((c, i) => ({
+    id: `${brand.id}#case-${i + 1}`, source: `${brand.id}.yaml`, section: c.title, tag: 'history',
+    text: `${c.channel}素材，CTR ${c.ctr}%：${c.notes}`,
+  }));
+  const chunks = brand.guidelineChunks;
+  return { ...brand, guidelineChunks: [...chunks.filter((c) => !isAlt(c)), ...cases, ...chunks.filter(isAlt)] };
+}
+
+export const SELUNE: Brand = deepFreeze(withCaseChunks({
   id: 'selune',
   name: 'SÉLUNE 晞月',
   category: '美妝保養',
@@ -42,9 +57,9 @@ export const SELUNE: Brand = deepFreeze({
     minimal: { headline: ['少即是多', '純粹修護'], subhead: '5重玻尿酸・無香精・敏感肌適用*' },
   },
   logo: null,
-});
+}));
 
-export const MISTY_ISLE: Brand = deepFreeze({
+export const MISTY_ISLE: Brand = deepFreeze(withCaseChunks({
   id: 'misty-isle',
   name: '霧嶼咖啡 MISTY ISLE',
   category: '冷萃咖啡',
@@ -84,4 +99,4 @@ export const MISTY_ISLE: Brand = deepFreeze({
     playful: { headline: ['冰冰的', '剛剛好！'], subhead: '買二送一，辦公室續命必備' },
   },
   logo: null,
-});
+}));

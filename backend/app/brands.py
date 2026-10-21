@@ -3,11 +3,13 @@
 - 檔名必須與 id 相同；以底線開頭的檔案（_template.yaml）不匯入。
 - 某個檔案有錯時只略過那個品牌，錯誤會顯示在系統狀態。
 - 沒有 key 為 law-alt 的切塊時，依替代用語表自動產生「合規替代用語對照」。
+- 每個歷史案例（caseStudies）也是一個切塊：id 為 {品牌}#case-{序號}、tag 為 history。
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -31,10 +33,13 @@ from app.contract import (
     SamplePhoto,
     Tone,
 )
+from app.core.jsnum import js_number
 
 TONES: tuple[Tone, ...] = ('gentle', 'science', 'playful', 'minimal')
 #: Logo 圖檔支援的格式（與 app/api/files.py 提供的圖片格式相同）
 LOGO_TYPES = frozenset({'.png', '.jpg', '.jpeg', '.webp', '.svg'})
+#: 自動產生的切塊 id 前綴（上傳的手冊、歷史回寫、歷史案例），guidelines 的 key 不可使用
+GENERATED_PREFIXES = ('doc-', 'hist-', 'case-')
 
 
 class GuidelineConfig(Model):
@@ -85,11 +90,16 @@ class BrandConfig(Model):
 
     @field_validator('guidelines')
     @classmethod
-    def _unique_keys(cls, guidelines: list[GuidelineConfig]) -> list[GuidelineConfig]:
+    def _valid_keys(cls, guidelines: list[GuidelineConfig]) -> list[GuidelineConfig]:
         keys = [g.key for g in guidelines]
         duplicated = sorted({k for k in keys if keys.count(k) > 1})
         if duplicated:
             raise ValueError(f'key 重複：{"、".join(duplicated)}')
+        reserved = [k for k in keys if k.startswith(GENERATED_PREFIXES)]
+        if reserved:
+            raise ValueError(
+                f'key 不可以 doc-、hist-、case- 開頭（保留給上傳的手冊、歷史回寫與歷史案例）：{"、".join(reserved)}'
+            )
         return guidelines
 
 
@@ -99,7 +109,7 @@ class LoadedBrand:
     samples: list[Product]
     logo_path: Path | None
     style_images: list[Path]
-    #: 設定檔內容的 SHA-256；改變時重新寫入切塊
+    #: 轉換結果（品牌與示範商品）的 SHA-256：設定檔或轉換規則改變時都會不同，資料庫據此重新寫入切塊
     source_hash: str
 
 
@@ -145,8 +155,6 @@ def _load_file(directory: Path, path: Path) -> LoadedBrand:
     if logo_path is not None and logo_path.suffix.lower() not in LOGO_TYPES:
         raise BrandFileError(f'Logo 圖檔只支援 PNG、JPEG、WebP 與 SVG：{cfg.logo}')
     style_images = [_inside(directory, p, '參考圖') for p in cfg.style_images]
-    alt = _alt_guideline(cfg, path.name)
-    guidelines = [*cfg.guidelines, *([alt] if alt else [])]
 
     brand = Brand(
         id=cfg.id,
@@ -162,10 +170,7 @@ def _load_file(directory: Path, path: Path) -> LoadedBrand:
         replacements=cfg.replacements,
         claim_words=cfg.claim_words,
         disclaimer_phrase=cfg.disclaimer_phrase,
-        guideline_chunks=[
-            RagChunk(id=f'{cfg.id}#{g.key}', source=g.source, section=g.section, tag=g.tag, text=g.text)
-            for g in guidelines
-        ],
+        guideline_chunks=_chunks(cfg, path.name),
         case_studies=cfg.case_studies,
         copy_presets=cfg.copy_presets,
         logo=BrandLogo(url=f'/files/brands/{Path(cfg.logo).as_posix()}') if cfg.logo else None,
@@ -183,7 +188,8 @@ def _load_file(directory: Path, path: Path) -> LoadedBrand:
         )
         for s in cfg.samples
     ]
-    return LoadedBrand(brand, samples, logo_path, style_images, hashlib.sha256(raw).hexdigest())
+    converted = json.dumps([brand.to_json(), [p.to_json() for p in samples]], ensure_ascii=False, sort_keys=True)
+    return LoadedBrand(brand, samples, logo_path, style_images, hashlib.sha256(converted.encode()).hexdigest())
 
 
 def _describe(error: ValidationError) -> str:
@@ -198,6 +204,31 @@ def _inside(directory: Path, relative: str, what: str) -> Path:
     if not path.is_file():
         raise BrandFileError(f'{what}不存在：{relative}')
     return path
+
+
+def _chunks(cfg: BrandConfig, file_name: str) -> list[RagChunk]:
+    """順序與資料庫列出的相同（brand_chunks 先依 origin 排序）：guidelines、歷史案例，最後是合規替代用語。"""
+    alt = _alt_guideline(cfg, file_name)
+    chunks = [
+        RagChunk(id=f'{cfg.id}#{g.key}', source=g.source, section=g.section, tag=g.tag, text=g.text)
+        for g in [*cfg.guidelines, *([alt] if alt else [])]
+    ]
+    cases = [
+        RagChunk(
+            id=f'{cfg.id}#case-{i}',
+            source=file_name,
+            section=c.title,
+            tag='history',
+            text=f'{c.channel}素材，CTR {js_number(c.ctr)}%：{c.notes}',
+        )
+        for i, c in enumerate(cfg.case_studies, start=1)
+    ]
+    return [*(c for c in chunks if not is_alt(c)), *cases, *(c for c in chunks if is_alt(c))]
+
+
+def is_alt(chunk: RagChunk) -> bool:
+    """合規替代用語對照（origin alt）：只在 Query Rewriting 時檢索。"""
+    return chunk.id.endswith('#law-alt')
 
 
 def _alt_guideline(cfg: BrandConfig, file_name: str) -> GuidelineConfig | None:

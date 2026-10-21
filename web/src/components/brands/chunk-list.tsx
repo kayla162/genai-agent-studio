@@ -4,11 +4,24 @@ import { useState } from 'react';
 import type { RagChunk, RagTag } from '@/types/contract';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { CHUNK_KIND_LABEL, chunkKind, type ChunkKind } from '@/lib/rag/kind';
 import { cn } from '@/lib/utils';
 
 export const TAG_LABEL: Record<RagTag, string> = {
   color: '色彩', logo: 'Logo', law: '法規', layout: '版型', font: '字型', history: '歷史成效', general: '其他',
 };
+
+const KIND_STYLE: Record<ChunkKind, string> = {
+  upload: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  history: 'border-amber-200 bg-amber-50 text-amber-700',
+  case: 'border-sky-200 bg-sky-50 text-sky-700',
+  alt: '',
+};
+
+function KindBadge({ id }: { id: string }) {
+  const kind = chunkKind(id);
+  return kind && <Badge variant="outline" className={KIND_STYLE[kind]}>{CHUNK_KIND_LABEL[kind]}</Badge>;
+}
 
 /** CI 手冊切塊（Chroma 中的向量片段），可依標籤篩選 */
 export function ChunkList({ chunks }: { chunks: RagChunk[] }) {
@@ -41,8 +54,7 @@ export function ChunkList({ chunks }: { chunks: RagChunk[] }) {
                 <Badge variant="secondary">{TAG_LABEL[c.tag]}</Badge>
                 <span className="font-medium">{c.section}</span>
                 <span className="text-muted-foreground">{c.source}</span>
-                {c.id.includes('#doc-') && <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">新上傳</Badge>}
-                {c.id.endsWith('-alt') && <Badge variant="outline">Query Rewriting 專用</Badge>}
+                <KindBadge id={c.id} />
                 <span className="ml-auto font-mono text-[11px] text-muted-foreground">{c.id}</span>
               </div>
               <p className="text-sm leading-relaxed">{c.text}</p>

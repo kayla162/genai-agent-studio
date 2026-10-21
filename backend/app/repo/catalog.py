@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy import case, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.brands import LoadedBrand
+from app.brands import LoadedBrand, is_alt
 from app.contract import Brand, FilePhoto, Product, ProductCutout, ProductDraft, RagChunk
 from app.core.clock import iso, parse_iso
 from app.db.models import BrandChunkRow, BrandRow, ProductRow
@@ -40,7 +40,7 @@ async def sync_brands(session: AsyncSession, loaded: Sequence[LoadedBrand], now:
             delete(BrandChunkRow).where(BrandChunkRow.brand_id == brand.id, BrandChunkRow.origin.in_(('config', 'alt')))
         )
         for i, c in enumerate(brand.guideline_chunks):
-            origin = 'alt' if c.id.endswith('#law-alt') else 'config'
+            origin = 'alt' if is_alt(c) else 'config'
             session.add(_chunk_row(brand.id, c, origin, i, now))
         for product in item.samples:
             if await session.get(ProductRow, product.id) is None:
