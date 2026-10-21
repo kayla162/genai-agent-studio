@@ -125,7 +125,7 @@ GenAI Agent/
 | Docker（7 個容器＋WSL2） | 約 3–4 GB（不含去背）；去背時，兩個模型的記憶體上限（`.wslconfig`）都要設到約 10 GB 以上；`birefnet-general-lite` 較快、下載量較小，但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB，lite 在 Docker 內未實測），改用它解決不了記憶體不足；16 GB 的筆電請把上限調到約 10 GB（WSL2 預設是一半的記憶體，即 8 GB，不夠用） |
 | ComfyUI（SDXL 部分卸載到系統記憶體） | 約 6–8 GB |
 | 去背（BiRefNet，worker） | 平常約 2 GB，去背時約 7.6 GiB（Docker 實測） |
-| RAG 模型（BGE-M3＋Reranker，worker） | 載入後約增加 1.6–1.9 GB（Plan 5 驗收時於 Docker 實測並更新） |
+| RAG 模型（BGE-M3＋Reranker，worker） | 載入後約增加 1.7 GB（Docker 實測 1.75 GB）；與去背的尖峰相加約 10 GB，Docker 上限建議約 12 GB |
 
 合計偏緊。BGE 模型使用 ONNX int8，用到才載入；建議筆電升級到 32 GB。實際數字在 Plan 7 實測並記錄。
 

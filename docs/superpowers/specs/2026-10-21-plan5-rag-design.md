@@ -1,7 +1,7 @@
 # Plan 5：RAG（Chroma＋BGE-M3＋Reranker）設計規格
 
 - 日期：2026-10-21
-- 狀態：使用者已同意設計方向（2026-10-21）
+- 狀態：使用者已同意設計方向（2026-10-21）；細節依草稿實作（分支 `plan5-draft`）的結果補充
 - 相關：`2026-10-07-phase2-backend-design.md`（第二階段後端，§5.2、§13）。本規格補足 Plan 5 的細節，並修改第二階段規格的幾個地方（見第 10 節）。
 
 ## 1. 目標
@@ -32,7 +32,7 @@ Plan 4 的 RAG 全部是模擬版：
 | Rerank 4 對短句 | 約 0.15 秒 |
 | Rerank 20 對（各約 300 字） | 約 4.6 秒 |
 | 載入模型 | 每個約 0.7 秒（不含下載） |
-| 兩個模型都載入的記憶體峰值 | 預設 2.65 GB；關閉記憶體池（`enable_cpu_mem_arena=False`、`enable_mem_pattern=False`）1.93 GB |
+| 兩個模型都載入的記憶體峰值 | 預設 2.65 GB；關閉記憶體池（`enable_cpu_mem_arena=False`、`enable_mem_pattern=False`）1.93 GB（含約 0.33 GB 的 Python 基本用量） |
 | int8 與原版（fp32）比較 | 向量餘弦相似度平均 0.98；Rerank 的 logit 平均差 0.15；10 個查詢的第一名都相同 |
 
 **其他發現**：
@@ -69,13 +69,14 @@ Plan 4 的 RAG 全部是模擬版：
 | `encoder.py` | `Encoder` 介面：`embed(text) -> list[float]`、`rerank(query, passages) -> list[float]`。`OnnxEncoder` 載入兩個 ONNX 模型與共用的 tokenizer（截斷 512 token、`<pad>` 的 id 為 1） |
 | `engine.py` | `RagEngine`：下載、核對、按需載入，並把狀態寫到 Redis（模式與去背的 `CutoutEngine` 相同） |
 | `state.py` | Redis 鍵 `rag:model` 與狀態名稱（api 讀取，不必 import onnxruntime） |
+| `errors.py` | `RagError`（繼承 `Unavailable`，錯誤碼 `unavailable`，訊息為繁體中文） |
 | `store.py` | `VectorStore`：Chroma 的非同步 HTTP 客戶端（`chromadb-client`），負責 collection、upsert、刪除、查詢與指紋列表 |
 | `sync.py` | 比對 PostgreSQL 與 Chroma，並修正差異（見 4.4） |
 | `retriever.py` | `BgeRetriever`：實作 `Retriever` 介面（見 4.5、4.6） |
 | `history.py` | 由 `HistoryEntry` 組出歷史回寫切塊的文字（見 4.8） |
 
 **共用的模型下載**：去背的下載與核對（`backend/app/cutout/models.py` 的 `ModelFile`、`has_model`、`ensure_model`）抽到 `backend/app/modelfiles.py`，去背與 RAG 共用。
-- `ModelFile` 改成明確記錄檔名，因為 tokenizer 是 `.json`。
+- `ModelFile` 新增 `filename` 欄位，因為 tokenizer 是 `.json`；沒有指定時沿用 `{name}.onnx`，去背的模型清單不必修改。
 - 去背對外的行為與中文錯誤訊息不變。
 
 ### 4.2 模型清單
@@ -98,15 +99,15 @@ Plan 4 的 RAG 全部是模擬版：
 - **每個切塊**：
   - id 與 PostgreSQL 相同，例如 `selune#color`；
   - 文件為切塊文字；
-  - metadata 為 `brandId`、`tag`、`source`、`section`、`origin`，以及 `textHash`（向量化文字的 SHA-256 前 16 碼，供比對使用）。
+  - metadata 為 `brandId`、`tag`、`source`、`section`、`origin`，以及 `textHash`（向量化文字的 SHA-256 前 16 碼）。
 - **向量化的文字**：`{section}：{text}`。章節名稱也帶有語意，例如「§2.1 色彩系統」。
 - **測試**：使用同一個 Chroma 的另一個 database `genai_test`。這和 PostgreSQL 用 `genai_test`、Redis 用 DB 15 的做法相同。
 
 ### 4.4 資料同步（PostgreSQL → Chroma）
 
 `sync_brand(brand_id)`：
-1. 讀出 PostgreSQL 中該品牌的全部切塊，以及 Chroma 中各切塊的 `textHash`。
-2. 缺少或 `textHash` 不同的，逐筆向量化後 upsert。
+1. 讀出 PostgreSQL 中該品牌的全部切塊，以及 Chroma 中各切塊的 metadata。
+2. 缺少的、或 metadata 任何一項不同的（包括 `textHash`），逐筆向量化後 upsert，每 32 筆寫入一次。只比對 `textHash` 不夠：品牌設定檔只改了切塊的 tag 或 source 時，Chroma 也要更新，重新檢索的過濾條件就依賴 tag。
 3. Chroma 有、PostgreSQL 沒有的，刪除。
 
 沒有差異時，這個步驟只需要一次 Chroma 查詢與一次資料庫查詢，不會載入模型。
@@ -117,7 +118,8 @@ Plan 4 的 RAG 全部是模擬版：
 - **上傳手冊與歷史回寫**：先寫入 PostgreSQL，再寫入 Chroma。
 
 **一致性**：
-- 所有寫入 Chroma 的動作（同步、上傳、回寫）都要取得同一個品牌鎖（worker 行程內的 `asyncio.Lock`），避免同步時誤刪剛寫入的切塊。
+- 所有寫入 Chroma 的動作（同步、上傳、回寫）都要取得同一個品牌鎖（worker 行程內的 `asyncio.Lock`），避免同步時誤刪剛寫入的切塊。上傳與回寫在鎖外先向量化，鎖內只寫入，不會長時間擋住檢索。
+- Chroma 的每個呼叫限時 30 秒（chromadb 的連線預設沒有逾時）。
 - 寫入 Chroma 失敗時，PostgreSQL 的資料仍在，下一次同步會補上。
 
 ### 4.5 檢索（任務的 `retrieving` 階段）
@@ -125,23 +127,24 @@ Plan 4 的 RAG 全部是模擬版：
 1. 先同步該品牌（見 4.4）。
 2. 查詢字串為「品牌名｜商品名｜一句話需求｜賣點」。
    - 賣點取 `parsedBrief.sellingPoints`，沒有時改用商品的 `features`，以「、」連接。
+   - 空的部分省略，不留下多餘的「｜」。
    - 以 `rag.retrieved.query` 送出。
 3. 向量召回 8 筆（`where={'origin': {'$ne': 'alt'}}`）。
    - 向量分數為 cosine 相似度（`1 - distance`）。
    - `rag.retrieved` 送出這 8 筆。
-4. 逐筆 Rerank，分數為 sigmoid(logit)，依分數由高到低排序（同分時維持向量順序）。`rag.reranked` 送出這 8 筆。
+4. 逐筆 Rerank（passage 與向量化的文字相同，為「章節：內文」），分數為 sigmoid(logit)，依分數由高到低排序（同分時維持向量順序）。`rag.reranked` 送出這 8 筆。
 5. `ragRefs` 取 Rerank 後的前 5 筆。這條規則由流程統一處理，模擬版只有 5 筆，結果不變。
 
 **等候與錯誤**：
 - 品牌還沒有任何切塊時，送出空的結果，任務繼續。
-- 模型下載或載入期間，任務在 `retrieving` 階段等候，並送出 `log` 事件「RAG 模型準備中」。
+- 模型還沒載入時，先送出 `log` 事件「RAG 模型準備中」，再等候下載或載入。`Retriever.retrieve` 因此多一個 `run` 參數（與 `ImageEngine.render_round` 相同）；模擬版不使用它，事件不變。
 - 模型準備失敗或 Chroma 連不上時，任務失敗。原因以中文說明，例如「向量庫（Chroma）無法連線：…」。
 
 ### 4.6 Query Rewriting 的重新檢索
 
 - 觸發條件與事件順序不變，由 `LlmAgent.plan_rewrite` 決定是否重新檢索與查詢字串（Plan 5 仍是模擬版，Plan 6 換成 Gemini）。
 - 真實版：
-  - 以改寫後的查詢召回 4 筆（`where={'$or': [{'origin': 'alt'}, {'tag': 'law'}]}`）並 Rerank；
+  - 以改寫後的查詢召回 4 筆（`where={'$or': [{'origin': 'alt'}, {'tag': 'law'}]}`）並 Rerank，不再同步一次（任務開始時已同步）；
   - `rag.retrieved` 送出這 4 筆，每筆都帶 Rerank 分數；
   - 沒有出現在 `ragRefs` 中的，依序加入。
 
@@ -154,15 +157,19 @@ Plan 4 的 RAG 全部是模擬版：
 | 情況 | 錯誤 |
 |---|---|
 | 品牌不存在 | 404 `not_found` |
-| 副檔名不支援 | 400 `invalid`「只支援 .md、.txt、.pdf」 |
-| 超過 20 MB | 400 `invalid` |
+| 副檔名不支援（接受 `.md`、`.markdown`、`.txt`、`.pdf`） | 400 `invalid`「只支援 .md、.txt、.pdf」 |
+| 超過 20 MB | 400 `invalid`「檔案不可超過 20 MB」 |
 | 文字檔不是 UTF-8 | 400 `invalid`「文字檔需為 UTF-8 編碼」 |
-| PDF 有密碼 | 400 `invalid` |
+| PDF 有密碼，或以 AES 加密 | 400 `invalid`「PDF 有加密保護（密碼或權限限制），請先移除保護再上傳」。只有權限限制、沒有開啟密碼的 PDF 以空密碼開啟。AES 需要 `cryptography`，不安裝 |
+| PDF 損壞 | 400 `invalid`「PDF 無法讀取：…」 |
 | PDF 讀不到文字 | 400 `invalid`「PDF 沒有可讀取的文字（可能是掃描檔），請先轉成文字」 |
-| 文字超過 20 萬字 | 400 `invalid` |
+| 文字超過 20 萬字 | 400 `invalid`「文字超過 20 萬字（N 字），請分成幾份上傳」 |
 
 - 抽字在 api 以 `asyncio.to_thread` 執行。之後只把文字放進佇列，不傳原檔。
-- **逾時**：從「整體 120 秒」改為「120 秒沒有任何進度」。大份手冊向量化需要幾分鐘，只要持續有進度就不算逾時。
+- **康熙部首**：以微軟正黑體輸出的 PDF（Chromium、Office 都會），常把「月」「色」「用」等字記成外觀相同的康熙部首（U+2F00 起）。分類規則與向量都認不出這些字，所以抽字後只對這個範圍做 NFKC，轉回一般漢字；全形標點不受影響。
+- **PDF 的章節**：PDF 沒有 Markdown 標題，每一頁成為一段，章節為檔名。
+- 檔名去掉瀏覽器加上的 `C:\fakepath\`。
+- **逾時**：從「整體 120 秒」改為「120 秒沒有任何進度」（`INGEST_IDLE_TIMEOUT`），訊息為「文件處理逾時：120 秒沒有任何進度，請確認 worker 正在執行」。大份手冊向量化需要幾分鐘，只要持續有進度就不算逾時。
 
 **worker 的 `ingest`**：
 1. 以 Python 的 `chunk_document` 切塊，送出 `ingest.chunked`。
@@ -175,7 +182,7 @@ Plan 4 的 RAG 全部是模擬版：
 - 品牌不存在：`not_found`；
 - 沒有可用文字：`invalid`；
 - 模型準備失敗或 Chroma 無法連線：`unavailable`；
-- 其他：`internal`。
+- 其他：`internal`，訊息為「文件處理失敗：…」。
 - 訊息都是繁體中文。
 
 **模擬版**：同樣用 Python 的 `chunk_document` 切塊，`preview` 用 `embed_preview`，只寫入 PostgreSQL。原本 composer 的 `/sim/ingest` 改由 Python 處理，所以刪除。
@@ -188,14 +195,17 @@ Plan 4 的 RAG 全部是模擬版：
    - tag `history`、origin `history`；
    - source：`history/{jobId}`；
    - section：「{模板名稱}・{選定日期}」；
-   - 文字包含模板、標題與副標、賣點、正向提示詞的前 120 字、審查分數。
+   - 文字以商品名稱開頭（商品已刪除時省略），接著是模板、審查分數、標題與副標、賣點、正向提示詞的前 120 字，例如「極光玻尿酸修護精華 30ml・IG 貼文海報，審查 99 分。標題：…」；空的欄位省略，沒有分數時寫「未經審查評分」。
+   - 選定日期以設定的時區（`TIMEZONE`，預設 Asia/Taipei）計算。
 2. 寫入 PostgreSQL。以 id upsert，所以重跑不會產生重複的切塊。
 3. 真實版再向量化並 upsert 到 Chroma。
 4. 把 `writtenToRag` 設成 true。
 
 **API**：
 - 最多等 10 秒的規則不變。
-- 回寫失敗（SAQ 回報失敗或中止）時，回傳 `writtenToRag: false`，不再回 500。這時歷史紀錄已經建立，重送不會重複建立。
+- 回寫失敗（SAQ 回報失敗或中止）時，回傳 `writtenToRag: false`，不再回 500，前端也就不會重送。
+- 回寫以歷史紀錄的 id 為單位，可以重跑；「選定」本身每次都會建立一筆新的歷史紀錄。
+- `writtenToRag: false` 表示回寫沒有完成。切塊若已寫入 PostgreSQL，下一次檢索前的同步會補進 Chroma，但這個欄位維持 false。
 
 **mock**：`selectRender` 同樣在知識庫加上這個切塊。品牌知識庫頁面以「歷史回寫」標示這類切塊。
 
@@ -206,9 +216,15 @@ Plan 4 的 RAG 全部是模擬版：
 - source：品牌設定檔的檔名；
 - section：案例標題；
 - tag `history`、origin `config`；
-- 文字：「{通路}素材，CTR {ctr}%：{notes}」。
+- 文字：「{通路}素材，CTR {ctr}%：{notes}」。CTR 依 JavaScript 的數字格式，例如 4 寫成「4」而不是「4.0」。
 
-TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture 與 mock 的知識庫一致。這些切塊排在 guidelines 之後，模擬檢索選到的 history 切塊不變。
+**順序**：一般規範、歷史案例、`law-alt`。品牌設定檔載入的順序、API 列出的順序（origin `alt` 一律最後）與 TypeScript 的順序都相同。模擬檢索選到的 history 切塊不變。
+
+**保留的 key**：guidelines 的 key 不可以 `doc-`、`hist-`、`case-` 開頭，避免與系統產生的 id 重複。
+
+**`brands.source_hash`**：改為對轉換後的品牌與範例商品 JSON 計算，不再對 YAML 原文計算。這樣既有的資料庫不必修改 YAML 也會補上歷史案例切塊，之後轉換規則改變時也會自動重新同步。
+
+TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture 與 mock 的知識庫一致。
 
 ### 4.10 系統狀態
 
@@ -216,7 +232,8 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 
 - `chroma`「向量庫（Chroma）」：
   - 以 `GET {CHROMA_URL}/api/v2/heartbeat` 檢查，限時 3 秒；
-  - 正常時顯示網址，連不上時為 `error`。
+  - 正常時顯示網址；連不上時為 `error`「連不上 Chroma（網址）：…」，回應不是 200 時為「Chroma 回應 HTTP n（網址）」。
+  - `RAG_MODE=sim` 時不檢查，顯示 `sim`「模擬模式不使用向量庫」。
 - `rag`「RAG 模型（BGE-M3＋Reranker）」：讀 Redis 的 `rag:model`，狀態對應如下：
 
 | 狀態 | 顯示 | 說明 |
@@ -234,7 +251,8 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 
 - **`ApiClient.ingestBrandDocument(brandId, file: File, onEvent)`**：原本傳 `{ name, text }`，改為傳檔案。
   - `HttpApiClient` 以 `FormData` 上傳。
-  - `MockApiClient` 以 `file.text()` 讀取 `.md`、`.txt`。遇到 PDF 時回報「示範模式只能讀取 .md、.txt」。
+  - `MockApiClient` 以 `file.text()` 讀取 `.md`、`.markdown`、`.txt`；其他格式（包括 PDF）回報「示範模式只能讀取 .md、.txt」。
+  - `BrandDocument` 從合約移除；切塊使用的 `{ name, text }` 改名為 `TextDocument`，放在 `web/src/lib/rag/chunk.ts`。
 - **品牌知識庫**：
   - 檔案選擇加上 `.pdf`。
   - 依 id 標示切塊類型：`#doc-` 為「新上傳」、`#hist-` 為「歷史回寫」、`#case-` 為「歷史案例」、`-alt` 為「Query Rewriting 專用」。
@@ -271,7 +289,10 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 | `pypdf` | | |
 | `regex` | | 切塊需要 `\p{Script=Han}` |
 
-**記憶體**：RAG 模型載入後，worker 約增加 1.6–1.9 GB。驗收時在 Docker 內實測，並更新 README 與 `.env.example` 中 Docker 記憶體上限的建議。
+**記憶體**（2026-10-21 Docker 驗收實測）：
+- RAG 模型載入後，worker 約增加 1.7 GB（實測 1.75 GB；沒有載入時 worker 約 0.1 GB），向量化與 Rerank 時幾乎不再增加（峰值 1.81 GB）。
+- 與去背的尖峰（約 7.6 GiB）相加約 10 GB，所以 Docker 的記憶體上限建議約 12 GB；記憶體不夠時可以設 `RAG_MODE=sim`。
+- Chroma 本身約 20 MB。
 
 ## 7. 測試
 
@@ -289,7 +310,7 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 - **流程**：
   - `BgeRetriever` 搭配 `FakeEncoder` 與真的 Chroma，測試召回 8 筆、Rerank 排序、前 5 筆進入 `ragRefs`、重新檢索的過濾與合併；
   - parity 測試不變。
-- **API**：multipart 上傳的各種錯誤、進度串流、閒置逾時、回寫失敗時回傳 `writtenToRag: false`。
+- **API**：multipart 上傳的各種錯誤、進度串流、閒置逾時、回寫失敗時回傳 `writtenToRag: false`；以子行程確認 api 不會載入 onnxruntime、tokenizers、chromadb。
 - **前端**：`HttpApiClient` 以 `FormData` 上傳；mock 拒絕 PDF；知識庫的切塊標示。
 - **E2E**：
   - mock 照舊；
@@ -304,11 +325,11 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 
 ## 8. 併入的 Plan 4 延後項目
 
-1. **Redis 停止時**，任務的 WebSocket 改為每秒從資料庫讀取新事件，不中斷連線。
-2. **`HttpApiClient` 收到不是 JSON 的 5xx 回應**（例如 `next dev` 在後端停止時回的 500）時，視為連不上後端（`network`），連線狀態不再顯示「已連線」。
+1. **Redis 停止時**，任務的 WebSocket 改為每秒從資料庫讀取新事件，不中斷連線，直到任務結束（Redis 恢復後也不再切回）。
+2. **`HttpApiClient` 收到不是 JSON 的 5xx 回應**（例如 `next dev` 在後端停止時回的 500、nginx 的 502／504）時，視為連不上後端（`network`），連線狀態不再顯示「已連線」。後端自己的錯誤一律是 JSON，所以不受影響。
 3. **live E2E 的 `globalSetup`** 先執行 `down -v --remove-orphans`，清掉上次中斷留下的容器。
 4. **nginx** 設定 `resolver_timeout 2s`。
-5. **Alembic 的 `script.py.mako`**：產生的 migration 要能通過 ruff（不使用 `typing.Union`，import 依序排列）。
+5. **Alembic 的 `script.py.mako`**：產生的 migration 要能通過 ruff（不使用 `typing.Union`、import 依序排列、空的 migration 不 import 用不到的 `op`／`sa`）。自動產生的程式碼無法只靠範本通過 `ruff format`，所以 `alembic.ini` 加上 `post_write_hooks`（先 `ruff check --fix`，再 `ruff format`）。`alembic.ini` 必須維持 ASCII：Alembic 以系統編碼（Windows 為 cp950）讀取它，中文註解會讓 migration 失敗。
 6. **上傳的錯誤碼**（見 4.7）與**歷史回寫失敗不再回 500**（見 4.8）已在上面處理。
 
 ## 9. 驗收
@@ -331,7 +352,7 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 - **§5.8、§13**：「實際用量成本」從 Plan 5 移到 Plan 6。
 - **§7**：`ApiClient.ingestBrandDocument` 改為傳入 `File`。
 - **§8**：`POST /api/brands/{id}/documents` 改為 multipart。
-- **§3.4**：補上 RAG 模型約 1.6–1.9 GB；驗收後更新為實測數字。
+- **§3.4**：補上 RAG 模型約 1.7 GB（Docker 實測）。
 
 ## 11. 不做
 
@@ -340,3 +361,21 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 - **Word 檔**：不支援 `.docx`。
 - **閒置釋放**：模型閒置時不卸載。記憶體調整在 Plan 7 統一處理。
 - **知識庫編輯**：不提供刪除單一切塊或整份文件的介面。
+- **PDF 的章節判斷**：不從 PDF 的字級或版面推測標題。
+
+## 12. 驗收結果（2026-10-21，草稿分支，Docker 專案 `plan5-accept`）
+
+主機為 20 個邏輯 CPU，容器沒有限制 CPU，所以時間比第 2 節（4 顆 CPU）短。
+
+| 項目 | 結果 |
+|---|---|
+| 第一次啟動 | 下載 3 個模型檔（1.157 GB）約 117 秒；從 worker 啟動到「已載入」約 120 秒（啟動同步要向量化 17 個設定檔切塊，所以立即載入模型） |
+| 上傳 Markdown | 7 個切塊，平均每塊 93 毫秒；PostgreSQL 與 Chroma 的切塊數相同 |
+| 上傳 PDF（`ci-sample.pdf`） | 2 個切塊，每塊約 70 毫秒 |
+| 任務的檢索 | 召回 8 筆（不含替代用語），Rerank 分數 0.16–0.68；`ragRefs` 為 Rerank 前 5 筆；扣掉模擬的節奏，同步、查詢向量化與召回約 0.13 秒，Rerank 8 筆約 1.4 秒 |
+| Query Rewriting | 召回 4 筆 law 切塊並 Rerank，只加入新的 id |
+| 歷史回寫 | `writtenToRag: true`；下一個任務的召回與 Rerank 都把它排第一（Rerank 0.97） |
+| 重新啟動 worker | 沒有重新向量化：模型維持「待命」、worker 約 0.1 GB |
+| 刪除 chroma volume 後重新啟動 | 約 6.5 秒重建 27 個切塊，分數與重建前完全相同 |
+| 模型尚未載入的任務 | 送出「RAG 模型準備中」，檢索階段約 4.5 秒 |
+| 記憶體 | 見第 6 節 |
