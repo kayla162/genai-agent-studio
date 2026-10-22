@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 from PIL import Image
 from redis.asyncio import Redis
+from redis.asyncio.client import PubSub
 from saq.job import Status
 
 from app.adapters.composer import ComposerClient
@@ -582,6 +583,11 @@ async def collect_ingest(
     pubsub = services.redis.pubsub()
     await pubsub.subscribe(ingest_channel(task_id))
     await ingest(services, task_id, brand_id, name, text)
+    return await read_ingest(pubsub)
+
+
+async def read_ingest(pubsub: PubSub) -> list[dict[str, Any]]:
+    """讀到 ingest.stored 或錯誤為止（最多約 10 秒），再關閉 pubsub。"""
     messages: list[dict[str, Any]] = []
     for _ in range(50):
         raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.2)
@@ -722,6 +728,59 @@ async def test_ingest_reports_unexpected_errors_as_internal(
     assert await collect_ingest(services, 't1', 'a.md', '主色') == [
         {'error': {'code': 'internal', 'message': '文件處理失敗：RuntimeError: boom'}}
     ]
+
+
+def stuck_embedding(services: Services, redis: Redis, monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """真實版的上傳停在第一塊的向量化（不會結束）；回傳開始向量化時設定的 event。"""
+    services.rag = fake_engine(redis, FakeEncoder())
+    embedding = asyncio.Event()
+
+    async def stuck(text: str) -> list[float]:
+        embedding.set()
+        await asyncio.Event().wait()
+        raise AssertionError('向量化不會結束')
+
+    monkeypatch.setattr(services.rag, 'embed', stuck)
+    return embedding
+
+
+async def test_a_cancelled_ingest_publishes_an_error_then_stays_cancelled(
+    services: Services, redis: Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SAQ 的任務逾時（TASK_TIMEOUT）會取消 ingest：先發布錯誤（api 不必等閒置逾時），再讓 SAQ 照樣看到取消。"""
+    embedding = stuck_embedding(services, redis, monkeypatch)
+    pubsub = services.redis.pubsub()
+    await pubsub.subscribe(ingest_channel('t1'))
+    task = asyncio.create_task(ingest(services, 't1', 'misty-isle', 'ci_update.md', DOC))
+    await embedding.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    messages = await read_ingest(pubsub)
+    assert [m.get('type') for m in messages] == ['ingest.chunked', None]
+    message = '文件處理超過 10 分鐘而中止，請把文件分成幾份再上傳'
+    assert messages[-1] == {'error': {'code': 'unavailable', 'message': message}}
+
+
+async def test_a_cancelled_ingest_stays_cancelled_when_publishing_the_error_fails(
+    services: Services, redis: Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    embedding = stuck_embedding(services, redis, monkeypatch)
+    published: list[str] = []
+
+    async def publish(channel: str, message: str) -> int:
+        if 'error' in json.loads(message):
+            raise ConnectionError('Redis 已停止')
+        published.append(message)
+        return 0
+
+    monkeypatch.setattr(services.redis, 'publish', publish)
+    task = asyncio.create_task(ingest(services, 't1', 'misty-isle', 'ci_update.md', DOC))
+    await embedding.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert [json.loads(m)['type'] for m in published] == ['ingest.chunked']
 
 
 async def selected(services: Services) -> HistoryEntry:

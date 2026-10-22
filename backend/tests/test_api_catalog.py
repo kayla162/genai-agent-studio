@@ -23,7 +23,7 @@ from app.queues import cutout_key, ingest_channel
 from app.rag.chunking import chunk_document
 from app.rag.engine import RagEngine
 from app.rag.errors import RagError
-from app.rag.extract import MAX_BYTES, NO_TEXT
+from app.rag.extract import MAX_BYTES, MAX_CHUNKS, NO_TEXT
 from app.rag.state import STATE_KEY as RAG_STATE_KEY
 from app.repo import catalog
 from app.settings import Settings
@@ -138,6 +138,33 @@ async def test_ingest_rejects_bad_files_before_streaming(api: LiveApi) -> None:
     assert await api.services.queues.tasks.count('queued') == 0
 
 
+async def test_ingest_rejects_too_many_chunks_before_streaming(api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    """很多短段落（FAQ、詞彙表）字數不多，切塊卻可能上萬：切塊數在放入佇列之前就檢查，剛好 2,000 塊仍可上傳。"""
+    monkeypatch.setattr(catalog_api, 'INGEST_IDLE_TIMEOUT', 1)
+
+    def faq(n: int) -> str:
+        return '\n\n'.join(f'問題 {i}：請見說明。' for i in range(n))
+
+    assert MAX_CHUNKS == 2000
+    assert len(chunk_document('selune', 'faq.md', faq(2001))) == 2001
+    message = '切塊太多（2,001 塊，上限 2,000），請分成幾份上傳'
+    assert await upload_error(api, 'selune', {'file': ('faq.md', faq(2001).encode())}) == (
+        400,
+        {'code': 'invalid', 'message': message},
+    )
+    assert await api.services.queues.tasks.count('queued') == 0
+
+    queued: list[int] = []
+
+    async def no_worker(function: str, /, **kwargs: Any) -> None:
+        queued.append(len(chunk_document(kwargs['brand_id'], kwargs['name'], kwargs['text'])))
+
+    monkeypatch.setattr(api.services.queues, 'enqueue_task', no_worker)
+    lines = await ingest(api, 'selune', 'faq.md', faq(2000).encode())
+    assert queued == [2000]
+    assert [line['error']['code'] for line in lines] == ['unavailable']
+
+
 async def test_ingest_times_out_only_after_a_pause_in_progress(api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
     """閒置逾時：持續有進度時，總時間超過逾時也照常完成；沒有進度（沒有 worker）時才回報逾時。"""
     monkeypatch.setattr(catalog_api, 'INGEST_IDLE_TIMEOUT', 1)
@@ -167,7 +194,10 @@ async def test_ingest_times_out_only_after_a_pause_in_progress(api: LiveApi, mon
         pass
 
     monkeypatch.setattr(api.services.queues, 'enqueue_task', no_worker)
-    message = '文件處理逾時：1 秒沒有任何進度，請確認 worker 正在執行'
+    message = (
+        '文件處理逾時：1 秒沒有任何進度。第一次使用時 worker 可能仍在下載 RAG 模型，請稍後再試；'
+        '若持續發生，請確認 worker 正在執行'
+    )
     assert await ingest(api, 'selune', 'a.md', '# 色彩\n主色'.encode()) == [
         {'error': {'code': 'unavailable', 'message': message}}
     ]

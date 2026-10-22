@@ -37,8 +37,9 @@ from app.errors import Invalid, NotFound, Unavailable
 from app.files import product_folder
 from app.pipeline.runner import failure_reason
 from app.queues import ingest_channel
+from app.rag.chunking import chunk_document
 from app.rag.extract import MAX_BYTES as MAX_DOCUMENT_BYTES
-from app.rag.extract import check_type, document_name, extract_text
+from app.rag.extract import MAX_CHUNKS, check_type, document_name, extract_text
 from app.rag.state import STATE_KEY as RAG_STATE_KEY
 from app.repo import catalog
 from app.settings import Settings
@@ -219,7 +220,10 @@ async def _ingest_lines(services: ApiServices, task_id: str, brand_id: str, name
             message = json.loads(raw['data'])
             if 'error' in message or message['type'] == 'ingest.stored':
                 return
-        message = f'文件處理逾時：{INGEST_IDLE_TIMEOUT} 秒沒有任何進度，請確認 worker 正在執行'
+        message = (
+            f'文件處理逾時：{INGEST_IDLE_TIMEOUT} 秒沒有任何進度。第一次使用時 worker 可能仍在下載 RAG 模型，'
+            '請稍後再試；若持續發生，請確認 worker 正在執行'
+        )
         yield json.dumps({'error': {'code': 'unavailable', 'message': message}}, ensure_ascii=False) + '\n'
     finally:
         await pubsub.unsubscribe()
@@ -234,7 +238,8 @@ async def _ingest_lines(services: ApiServices, task_id: str, brand_id: str, name
 async def ingest_document(brand_id: str, file: UploadFile, services: Services) -> StreamingResponse:
     """上傳品牌手冊（multipart 的 file 欄位：.md、.txt、.pdf）：切塊 → 向量化 → 寫入知識庫，進度以 NDJSON 串流回報。
 
-    檔案的問題（格式、大小、編碼、PDF 加密或沒有文字）在開始串流之前就回應錯誤；之後只把文字放進佇列，不傳原檔。
+    檔案的問題（格式、大小、編碼、PDF 加密或沒有文字、切塊太多）在開始串流之前就回應錯誤；
+    之後只把文字放進佇列，不傳原檔。
     """
     async with services.db.session() as s:
         if await catalog.get_brand(s, brand_id) is None:
@@ -243,6 +248,10 @@ async def ingest_document(brand_id: str, file: UploadFile, services: Services) -
     check_type(name)
     data = await file.read(MAX_DOCUMENT_BYTES + 1)
     text = await asyncio.to_thread(extract_text, name, data)
+    # 切塊很快（20 萬字約幾十毫秒）；worker 會再切一次，這裡只檢查塊數，確保向量化在任務時限內完成
+    chunks = len(await asyncio.to_thread(chunk_document, brand_id, name, text))
+    if chunks > MAX_CHUNKS:
+        raise Invalid(f'切塊太多（{chunks:,} 塊，上限 {MAX_CHUNKS:,}），請分成幾份上傳')
     lines = _ingest_lines(services, secrets.token_hex(8), brand_id, name, text)
     # nginx 預設會先緩衝回應；關掉才能一行一行送到前端
     return StreamingResponse(lines, media_type='application/x-ndjson', headers={'X-Accel-Buffering': 'no'})

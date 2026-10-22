@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -50,7 +51,7 @@ from app.files import photo_path, product_folder
 from app.pipeline.ports import Ports
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
-from app.queues import Queues, ingest_channel
+from app.queues import TASK_TIMEOUT, Queues, ingest_channel
 from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
 from app.rag.history import history_chunk
@@ -168,12 +169,15 @@ def _remove_cutouts(written: Path, *, keep_written: bool) -> None:
 
 #: 上傳進度的訊息（一則 IngestEvent 或 { error }）發布到 ingest:{task_id}
 Send = Callable[[dict[str, Any]], Awaitable[None]]
+#: 上傳超過任務時限（TASK_TIMEOUT）被 SAQ 取消時的訊息
+INGEST_CANCELLED = f'文件處理超過 {TASK_TIMEOUT // 60} 分鐘而中止，請把文件分成幾份再上傳'
 
 
 async def ingest(services: Services, task_id: str, brand_id: str, name: str, text: str) -> None:
     """品牌手冊：切塊 → 向量化 → 寫入知識庫；每一步發布到 Redis 頻道 ingest:{task_id}，api 以 NDJSON 串流轉給前端。
 
-    錯誤碼：品牌不存在 not_found、沒有可用文字 invalid、模型準備失敗或 Chroma 無法連線 unavailable、其他 internal。
+    錯誤碼：品牌不存在 not_found、沒有可用文字 invalid、模型準備失敗或 Chroma 無法連線 unavailable、
+    超過任務時限被取消 unavailable（發布後仍把取消丟給 SAQ）、其他 internal。
     """
 
     async def send(message: dict[str, Any]) -> None:
@@ -190,6 +194,13 @@ async def ingest(services: Services, task_id: str, brand_id: str, name: str, tex
         await embed_and_write(services, brand_id, name, chunks, send)
         stored = IngestStoredEvent(type='ingest.stored', collection=collection_name(brand_id), count=len(chunks))
         await send(stored.to_json())
+    except asyncio.CancelledError:
+        # 超過任務時限時 SAQ 會取消這裡：先告訴前端（否則 api 要等到閒置逾時，訊息也不對），
+        # 再把取消往外丟給 SAQ。發布失敗（例如 Redis 停止）也不能吞掉取消
+        logger.warning('品牌文件上傳被取消：task_id=%s', task_id)
+        with contextlib.suppress(Exception):
+            await send({'error': {'code': 'unavailable', 'message': INGEST_CANCELLED}})
+        raise
     except Exception as error:  # noqa: BLE001 - 錯誤一律轉給前端
         logger.exception('品牌文件上傳失敗：task_id=%s', task_id)
         if isinstance(error, AppError):
