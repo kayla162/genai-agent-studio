@@ -3,6 +3,7 @@ import { boxMap } from '@/lib/compose/layout';
 import { areaRatio, verticalGap } from '@/lib/core/geometry';
 import { clamp, round1 } from '@/lib/core/num';
 import { deltaEHex } from './color';
+import { PRIMARY_MEASURE } from './measure';
 
 export function findBannedWords(texts: string[], banned: string[]): string[] {
   const joined = texts.join('\n');
@@ -36,11 +37,21 @@ export function claimTexts(copy: Pick<Copy, 'headline' | 'subhead' | 'features' 
   return [copy.headline.join(''), copy.subhead, copy.features.join('、'), [copy.badge.top, copy.badge.main].join('｜')];
 }
 
+/** 文案中出現的禁用詞（依詞庫順序），以及第一個含禁用詞的版面區塊；禁用詞檢查與 VLM 誇大用語共用 */
+export function bannedWordHits(spec: PromptSpec, brand: Brand): { words: string[]; target: LayoutElementId | null } {
+  const texts = copyTexts(spec);
+  const words = findBannedWords(texts.map((t) => t.text), brand.bannedWords);
+  return { words, target: texts.find((t) => words.some((w) => t.text.includes(w)))?.id ?? null };
+}
+
+/** 量測範圍內沒有佔比夠大的彩色時，主色檢查的說明 */
+export const NO_PRIMARY_MESSAGE = `未偵測到主色（主色區塊 < ${PRIMARY_MEASURE.minShare * 100}%）`;
+
 export interface RuleContext {
   brand: Brand;
   spec: PromptSpec;
-  /** 從生成圖中偵測到的主色（第二階段由影像分析取得） */
-  measuredPrimary: string;
+  /** 從海報量到的主色（measurePrimary）；量不到時為 null，主色檢查判定不通過 */
+  measuredPrimary: string | null;
   /** OCR 結果與文案的差異字數 */
   ocrDiffs?: number;
 }
@@ -50,11 +61,11 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: Ru
   const { width: W, height: H } = spec.canvas;
   const pct = (v: number) => `${round1(v * 100)}%`;
 
-  const texts = copyTexts(spec);
-  const banned = findBannedWords(texts.map((t) => t.text), brand.bannedWords);
-  const bannedTarget = texts.find((t) => banned.some((w) => t.text.includes(w)))?.id ?? null;
+  const { words: banned, target: bannedTarget } = bannedWordHits(spec, brand);
 
-  const dE = deltaEHex(measuredPrimary, brand.palette.primary);
+  const color = measuredPrimary === null
+    ? null
+    : { hex: measuredPrimary.toUpperCase(), dE: deltaEHex(measuredPrimary, brand.palette.primary) };
 
   const gap = verticalGap(B.logo, B.headline);
   const need = Math.round(B.logo.h * 0.5);
@@ -74,8 +85,8 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: Ru
     },
     {
       id: 'color_delta', name: '品牌主色色差', kind: 'rule', rule: `ΔE2000 ≤ ${brand.rules.maxDeltaE}`,
-      value: `ΔE ${round1(dE)} · 偵測主色 ${measuredPrimary.toUpperCase()}`,
-      status: dE <= brand.rules.maxDeltaE ? 'pass' : 'fail', target: 'canvas', ragRef: ragRefFor(brand, 'color'),
+      value: color ? `ΔE ${round1(color.dE)} · 偵測主色 ${color.hex}` : NO_PRIMARY_MESSAGE,
+      status: color && color.dE <= brand.rules.maxDeltaE ? 'pass' : 'fail', target: 'canvas', ragRef: ragRefFor(brand, 'color'),
     },
     {
       id: 'logo_clearance', name: 'Logo 淨空區', kind: 'rule', rule: `間距 ≥ 0.5 × Logo 高（${need}px）`,
