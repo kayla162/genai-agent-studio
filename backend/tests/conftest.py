@@ -2,6 +2,7 @@
 
 每次測試開始時重建 genai_test 資料庫並跑 migration；每個測試結束後清空所有資料表。
 Chroma 使用另一個 database genai_test；每個測試結束後刪除所有 collection。
+測試的 Settings 一律以 _env_file=None 建立：不讀 repo 的 .env（只用預設值與環境變數）。
 """
 
 import asyncio
@@ -31,21 +32,23 @@ from app.pipeline.sim import SimAgent, sim_ports
 from app.queues import Queues
 from app.rag.engine import RagEngine
 from app.rag.store import VectorStore
-from app.settings import REPO_ROOT, Settings, settings
+from app.settings import REPO_ROOT, Settings
 from app.worker import Services as WorkerServices
 from app.worker import build_workers
 from tests.fixtures import BRANDS_DIR
 
+#: 預設值加上環境變數，不讀 .env：開發用的 RAG_MODE=sim、REVIEW_MODE 或之後的 API key 都不會影響測試
+BASE_SETTINGS = Settings(_env_file=None)
 TEST_DATABASE = 'genai_test'
 #: 測試使用 Redis 的第 15 個資料庫，開始時清空
-TEST_REDIS_URL = settings.redis_url.rsplit('/', 1)[0] + '/15'
+TEST_REDIS_URL = BASE_SETTINGS.redis_url.rsplit('/', 1)[0] + '/15'
 #: 測試使用 Chroma 的另一個 database（default_tenant 之下）
 TEST_CHROMA_DATABASE = 'genai_test'
 
 
 @pytest.fixture(scope='session')
 async def db() -> AsyncIterator[Database]:
-    url = make_url(settings.database_url)
+    url = make_url(BASE_SETTINGS.database_url)
     admin = await asyncpg.connect(
         user=url.username, password=url.password, host=url.host, port=url.port, database='postgres'
     )
@@ -71,12 +74,12 @@ async def redis() -> AsyncIterator[Redis]:
 @pytest.fixture(scope='session')
 async def chroma_store() -> AsyncIterator[VectorStore]:
     """建立 Chroma 的 genai_test database（已經有時沿用），並刪除上次留下的 collection。"""
-    async with httpx.AsyncClient(base_url=settings.chroma_url) as http:
+    async with httpx.AsyncClient(base_url=BASE_SETTINGS.chroma_url) as http:
         res = await http.post('/api/v2/tenants/default_tenant/databases', json={'name': TEST_CHROMA_DATABASE})
         # 409：database 已經存在
         if res.status_code != 409:
             res.raise_for_status()
-    store = VectorStore(settings.chroma_url, database=TEST_CHROMA_DATABASE)
+    store = VectorStore(BASE_SETTINGS.chroma_url, database=TEST_CHROMA_DATABASE)
     for brand_id in await store.brands():
         await store.drop(brand_id)
     yield store
@@ -145,7 +148,7 @@ class LiveApi:
         ports = sim_ports(composer, first_round_fail=True, force_all_fail=False)
         cutouts = CutoutEngine('sim', s.settings.data_dir / 'models', s.redis)
         rag = RagEngine('sim', s.settings.data_dir / 'models', s.redis)
-        vectors = VectorStore(settings.chroma_url, database=TEST_CHROMA_DATABASE)
+        vectors = VectorStore(BASE_SETTINGS.chroma_url, database=TEST_CHROMA_DATABASE)
         worker_services = WorkerServices(
             s.db, s.redis, s.store, composer, ports, speed, s.settings, cutouts, rag, vectors
         )
@@ -163,14 +166,18 @@ class LiveApi:
 @pytest.fixture
 async def api(db: Database, redis: Redis, composer_url: str, tmp_path: Path) -> AsyncIterator[LiveApi]:
     """data/ 與本機資料夾指向 tmp_path；品牌設定檔使用只含示範品牌的 BRANDS_DIR（不讀 repo 的 brands/）。
-    RAG_MODE 固定為 bge：repo 的 .env 設了 RAG_MODE=sim（README 建議的開發方式）時，系統狀態的測試才不會失敗。"""
+    不讀 .env；RAG_MODE 仍固定為 bge：環境變數設了 RAG_MODE=sim 時，系統狀態的測試才不會失敗。"""
     await redis.flushdb()
     queues = Queues(TEST_REDIS_URL)
     await queues.connect()
     composer = ComposerClient(composer_url)
     agent = SimAgent(composer, first_round_fail=True, force_all_fail=False)
     test_settings = Settings(
-        data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=BRANDS_DIR, rag_mode='bge'
+        _env_file=None,
+        data_dir=tmp_path / 'data',
+        local_photos_dir=tmp_path / 'local',
+        brands_dir=BRANDS_DIR,
+        rag_mode='bge',
     )
     services = ApiServices(test_settings, db, redis, EventStore(db, redis), queues, composer, agent)
     await services.sync_brands()
