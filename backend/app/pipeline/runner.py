@@ -267,6 +267,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
                     render_id=x.render.id,
                     score=x.result.score,
                     passed=x.result.passed,
+                    image=None,
                 )
             )
 

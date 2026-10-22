@@ -36,6 +36,8 @@ describe('buildTimeline (default demo)', () => {
     const reviews = ofType(tl, 'review.completed');
     expect(reviews.filter((e) => e.round === 1).every((e) => !e.passed)).toBe(true);
     expect(reviews.filter((e) => e.round === 2).some((e) => e.passed)).toBe(true);
+    // mock 不在伺服器端繪製，沒有審查用海報
+    expect(reviews.every((e) => e.image === null)).toBe(true);
     expect(ofType(tl, 'rewrite.started')).toHaveLength(1);
     expect(ofType(tl, 'job.completed')).toHaveLength(1);
   });

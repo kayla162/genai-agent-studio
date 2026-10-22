@@ -49,6 +49,19 @@ describe('reduceJob (default demo: fail → rewrite → pass)', () => {
     expect(v.specs[specKey(2, 'story')].round).toBe(2);
   });
 
+  it('stores the review poster of review.completed on the candidate', () => {
+    // mock 與模擬模式沒有審查用海報
+    expect(v.renderIds.every((id) => v.renders[id].reviewImage === null)).toBe(true);
+    const id = v.renderIds[0];
+    const image = `/files/jobs/job_v/${id}.png`;
+    const next = reduceJob(v, { type: 'review.completed', round: 1, renderId: id, score: 88, passed: true, image });
+    expect(next.renders[id]).toMatchObject({ score: 88, passed: true, reviewImage: image });
+    expect(v.renders[id].reviewImage).toBeNull();
+    // 加上 image 欄位之前存下的事件沒有這個欄位
+    const legacy = { type: 'review.completed', round: 1, renderId: id, score: 70, passed: false } as unknown as JobEvent;
+    expect(reduceJob(next, legacy).renders[id]).toMatchObject({ score: 70, reviewImage: null });
+  });
+
   it('shows only the final round as candidates and selects the best render', () => {
     const c = finalCandidates(v);
     expect(c['ig-post']!.map((r) => [r.round, r.variant])).toEqual([[2, 0], [2, 1], [2, 2], [2, 3]]);
