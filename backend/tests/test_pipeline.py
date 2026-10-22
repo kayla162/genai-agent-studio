@@ -1,5 +1,5 @@
 """任務流程的行為：重試只針對未通過的模板、需人工審核、取消、失敗、已不在排隊時不執行、Prompt 只用前 5 筆切塊、
-RAG（模型或 Chroma）無法使用時任務失敗。
+RAG（模型或 Chroma）無法使用時任務失敗、審查用海報傳給審查並放進 review.completed。
 
 外部服務用測試替身（不需要 composer）。
 """
@@ -31,9 +31,18 @@ from app.contract import (
 )
 from app.db.session import Database
 from app.events import EventStore
-from app.pipeline.ports import Ports, Retriever, ReviewResult, Rewrite, RunContext, SpecRequest
+from app.pipeline.ports import (
+    ComposedPoster,
+    Ports,
+    PosterComposer,
+    Retriever,
+    ReviewResult,
+    Rewrite,
+    RunContext,
+    SpecRequest,
+)
 from app.pipeline.runner import PROMPT_REFS, run_job
-from app.pipeline.sim import SimRetriever
+from app.pipeline.sim import SimPosters, SimRetriever
 from app.rag.encoder import Encoder
 from app.rag.engine import RagEngine
 from app.rag.retriever import BgeRetriever
@@ -98,14 +107,23 @@ class FakeImage:
 
 
 class FakeReviewer:
-    """passing：每一輪會通過的模板。"""
+    """passing：每一輪會通過的模板。posters：收到的審查用海報（依候選 id）。"""
 
     def __init__(self, passing: dict[int, set[str]]) -> None:
         self.passing = passing
+        self.posters: dict[str, ComposedPoster | None] = {}
 
-    async def review(self, brand: Brand, render: Render, seed: int) -> ReviewResult:
+    async def review(self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None) -> ReviewResult:
+        self.posters[render.id] = poster
         ok = render.template_id in self.passing.get(render.round, set())
         return ReviewResult(checks=[] if ok else [CHECK], score=90 - render.variant if ok else 40, passed=ok)
+
+
+class FakePosters:
+    """每張候選都「畫」一張審查用海報（不呼叫 composer）。"""
+
+    async def compose(self, job_id: str, render: Render, product: Product, brand: Brand) -> ComposedPoster:
+        return ComposedPoster(url=f'/files/jobs/{job_id}/{render.id}.png', measured_primary=brand.palette.primary)
 
 
 class EmptyRetriever(SimRetriever):
@@ -153,9 +171,19 @@ async def messages(db: Database) -> list[dict[str, Any]]:
 
 
 def ports(
-    agent: FakeAgent, reviewer: FakeReviewer, image: FakeImage | None = None, retriever: Retriever | None = None
+    agent: FakeAgent,
+    reviewer: FakeReviewer,
+    image: FakeImage | None = None,
+    retriever: Retriever | None = None,
+    posters: PosterComposer | None = None,
 ) -> Ports:
-    return Ports(retriever=retriever or EmptyRetriever(), agent=agent, image=image or FakeImage(), reviewer=reviewer)
+    return Ports(
+        retriever=retriever or EmptyRetriever(),
+        agent=agent,
+        image=image or FakeImage(),
+        posters=posters or SimPosters(),
+        reviewer=reviewer,
+    )
 
 
 async def test_retries_only_the_templates_that_failed(store: EventStore, db: Database) -> None:
@@ -167,6 +195,41 @@ async def test_retries_only_the_templates_that_failed(store: EventStore, db: Dat
     completed = next(m for m in events if m['type'] == 'job.completed')
     assert completed['bestRenderIds'] == {'ig-post': f'{JOB}_r1_ig-post_v0', 'story': f'{JOB}_r2_story_v0'}
     assert events[-1] == {**events[-1], 'type': 'job.status', 'stage': 'done', 'round': 2}
+
+
+async def compose_logs(db: Database) -> list[str]:
+    async with db.session() as s:
+        snap = await jobs.get_job(s, JOB)
+    assert snap is not None
+    return [m['message'] for m in snap.events if m['type'] == 'log' and m['source'] == 'compose']
+
+
+async def test_review_posters_go_to_the_review_and_into_review_completed(store: EventStore, db: Database) -> None:
+    reviewer = FakeReviewer({1: {'ig-post'}, 2: {'story'}})
+    await run_job(JOB, db, store, ports(FakeAgent(), reviewer, posters=FakePosters()), speed=0)
+    events = await messages(db)
+    completed = [m for m in events if m['type'] == 'review.completed']
+    # 第 1 輪 2 個模板 × 2 張，第 2 輪重試 story 的 2 張
+    assert len(completed) == 6
+    for m in completed:
+        url = f'/files/jobs/{JOB}/{m["renderId"]}.png'
+        assert m['image'] == url
+        assert reviewer.posters[m['renderId']] == ComposedPoster(url=url, measured_primary='#B76E79')
+    assert await compose_logs(db) == [
+        '排版引擎疊加文字圖層（4 張）',
+        '✓ 伺服器端排版 4 張',
+        '排版引擎疊加文字圖層（2 張）',
+        '✓ 伺服器端排版 2 張',
+    ]
+
+
+async def test_simulated_posters_add_nothing_to_the_events(store: EventStore, db: Database) -> None:
+    reviewer = FakeReviewer({1: {'ig-post', 'story'}})
+    await run_job(JOB, db, store, ports(FakeAgent(), reviewer), speed=0)
+    completed = [m for m in await messages(db) if m['type'] == 'review.completed']
+    assert [m['image'] for m in completed] == [None] * 4
+    assert set(reviewer.posters.values()) == {None}
+    assert await compose_logs(db) == ['排版引擎疊加文字圖層（4 張）']
 
 
 async def test_asks_for_manual_review_after_the_last_retry(store: EventStore, db: Database) -> None:

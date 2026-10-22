@@ -5,10 +5,14 @@
 """
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.rag.state import RagMode
+
+#: 審查：composer（伺服器端繪製審查用海報、量主色、規則審查）或 sim（不畫圖，沿用 mock 的審查；測試與作品集 Demo）
+ReviewMode = Literal['composer', 'sim']
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -42,6 +46,10 @@ class Settings(BaseSettings):
     rag_mode: RagMode = 'bge'
     #: 向量庫（Docker 內為 http://chroma:8000）
     chroma_url: str = 'http://127.0.0.1:8001'
+
+    #: 審查：composer（預設；composer 繪製審查用海報存到 data/jobs/，量出主色後審查，分數不加抖動）
+    #: 或 sim（不畫圖，審查結果與前端 mock 相同）
+    review_mode: ReviewMode = 'composer'
 
     #: 模擬模式的播放速度（1 為 1× 時間軸，約 15 秒一個任務；0 為不等待）
     sim_speed: float = 1.0

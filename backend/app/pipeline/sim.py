@@ -1,7 +1,7 @@
 """模擬版的外部服務：行為與前端 mock 劇本相同（web/src/lib/api/mock/scenario.ts）。
 
 檢索與生圖在這裡實作；Agent 與審查透過 composer 沿用前端的 TypeScript
-（buildPromptSpec、applyFlaws、reviewRender、planFixes）。
+（buildPromptSpec、applyFlaws、reviewRender、planFixes）。排版不在伺服器端畫圖（前端依 spec 繪製）。
 """
 
 from app.adapters.composer import ComposerClient
@@ -22,7 +22,7 @@ from app.contract import (
     ReviewCheck,
     TemplateId,
 )
-from app.pipeline.ports import Ports, ReviewResult, Rewrite, RunContext, SpecRequest
+from app.pipeline.ports import ComposedPoster, Ports, ReviewResult, Rewrite, RunContext, SpecRequest
 
 #: 向量召回順序與 Rerank 後順序刻意不同，用來展示 BGE Reranker 的效果
 VECTOR_ORDER: list[RagTag] = ['layout', 'color', 'history', 'logo', 'law']
@@ -146,11 +146,20 @@ class SimImageEngine:
         }
 
 
+class SimPosters:
+    """不畫審查用海報：模擬模式的事件與 mock 完全相同（review.completed 的 image 為 null）。"""
+
+    async def compose(self, job_id: str, render: Render, product: Product, brand: Brand) -> None:
+        return None
+
+
 class SimReviewer:
+    """與 mock 相同的審查（reviewRender：假的主色量測與劇本式的 VLM 警告，分數依 seed 抖動）；忽略 poster。"""
+
     def __init__(self, composer: ComposerClient) -> None:
         self.composer = composer
 
-    async def review(self, brand: Brand, render: Render, seed: int) -> ReviewResult:
+    async def review(self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None) -> ReviewResult:
         return await self.composer.sim_review(render.spec, brand, render.variant, seed)
 
 
@@ -159,5 +168,6 @@ def sim_ports(composer: ComposerClient, *, first_round_fail: bool, force_all_fai
         retriever=SimRetriever(),
         agent=SimAgent(composer, first_round_fail=first_round_fail, force_all_fail=force_all_fail),
         image=SimImageEngine(),
+        posters=SimPosters(),
         reviewer=SimReviewer(composer),
     )

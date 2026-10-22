@@ -40,7 +40,8 @@ from app.cutout.segmenter import Segmenter, SimSegmenter
 from app.db.session import Database
 from app.errors import Unavailable
 from app.events import EventStore
-from app.pipeline.sim import SimRetriever, sim_ports
+from app.pipeline.review import ComposerPosters, ComposerReviewer
+from app.pipeline.sim import SimPosters, SimRetriever, SimReviewer, sim_ports
 from app.queues import Queues, TaskFailed, cutout_key, ingest_channel
 from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
@@ -50,7 +51,7 @@ from app.rag.state import RagMode
 from app.rag.store import VectorStore
 from app.rag.sync import SyncResult, chunk_metadata, index_text, sync_brand
 from app.repo import catalog, history, jobs
-from app.settings import Settings
+from app.settings import ReviewMode, Settings
 from app.worker import (
     RESTART_REASON,
     Services,
@@ -535,6 +536,32 @@ async def test_build_services_picks_the_retriever_by_rag_mode(
         await built.composer.aclose()
         await built.redis.aclose()
         await built.db.dispose()
+
+
+@pytest.mark.parametrize(
+    ('mode', 'posters', 'reviewer'),
+    [('composer', ComposerPosters, ComposerReviewer), ('sim', SimPosters, SimReviewer)],
+)
+async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
+    mode: ReviewMode, posters: type, reviewer: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr('app.worker.settings', Settings(_env_file=None, brands_dir=BRANDS_DIR, review_mode=mode))
+    built = build_services()
+    try:
+        assert isinstance(built.ports.posters, posters)
+        assert isinstance(built.ports.reviewer, reviewer)
+        if isinstance(built.ports.posters, ComposerPosters):
+            # 審查用海報寫到 worker 設定的 data/，與 /files 讀取的是同一個資料夾
+            assert built.ports.posters.composer is built.composer
+            assert built.ports.posters.settings is built.settings
+    finally:
+        await built.composer.aclose()
+        await built.redis.aclose()
+        await built.db.dispose()
+
+
+def test_review_mode_defaults_to_the_composer() -> None:
+    assert Settings(_env_file=None).review_mode == 'composer'
 
 
 class StateRecorder:
