@@ -49,7 +49,7 @@
 | 項目 | 需要的時間點 |
 |---|---|
 | Docker Desktop（WSL2） | Plan 4 |
-| Google AI Studio API key | Plan 6 |
+| Google AI Studio API key | Plan 6B |
 | 筆電上安裝 ComfyUI | Plan 7 |
 | Cloudflare 帳號 | Plan 8 |
 
@@ -246,8 +246,8 @@ GenAI Agent/
 
 - 直接 import `web/src/lib` 的 compose（scene、paint、art、layout）與 review（rules、color）。瀏覽器專用的 `render.ts` 由 composer 的 Node 版本（@napi-rs/canvas）取代。
 - **新增純函式**（以 Vitest 測試，前端也可以使用）：
-  - `measurePrimary`：排除商品與文字區塊，對飽和像素分群，取面積最大的顏色，再與品牌主色計算 ΔE2000。飽和度門檻與分群數在 Plan 6 以測試圖調整。
-  - `ocrDiffs`：每個文字元素在 VLM 轉錄結果中找最接近的片段，累計差異字數。
+  - `measurePrimary`：量標題、售價、徽章區塊內的品牌色元素（扣掉商品），以 Lab 直方圖找出佔比 ≥ 2% 的色塊，取與品牌主色 ΔE2000 最小者。原本「排除商品與文字區塊、取背景面積最大的顏色」的做法經實測不可行（程式背景是主色的淺色調），細節與實驗見 `2026-10-22-plan6a-server-compose-design.md` §2.2、§4.2。背景色系檢查留到 Plan 7。
+  - `ocrDiffs`：每個文字元素在 VLM 轉錄結果中找最接近的片段，累計差異字數（Plan 6B）。
 - **字型**：容器內放完整的 Noto Sans TC、Noto Serif TC（前端的 fontsource 套件是分段子集，不適合伺服器端）。
 - **已實測**：@napi-rs/canvas 1.0.10 支援 `ctx.filter`（blur）、`multiply` 與中文字型；SVG 要先轉成 Buffer 才能載入。
 
@@ -389,7 +389,8 @@ GenAI Agent/
 |---|---|---|
 | Plan 4：後端骨架與即時串流 | 目錄與 Docker Compose、PostgreSQL 與 Alembic、品牌 YAML（示範品牌轉檔與範本）、全部 REST 端點、WebSocket 補送、SAQ worker、composer 的 `/layout` 與 `/sim/*`、所有轉接器的模擬版、合約變更、`HttpApiClient` 與 live 模式調整、靜態輸出與 nginx、golden fixtures 機制 | live 模式以模擬資料跑完整流程 |
 | Plan 5：RAG | Chroma、BGE-M3 與 Reranker、切塊移植、文件上傳串流（含 PDF）、檢索與 Rerank、Query Rewriting 的重新檢索、歷史回寫（儀表板統計已在 Plan 4 移植；實際用量成本移到 Plan 6） | 檢索與知識庫是真的 |
-| Plan 6：Gemini Agent、伺服器端排版與 VLM 審查 | composer 的 `/render`、`/review`、`measurePrimary`、`ocrDiffs` 與字型；需求拆解、Prompt 構建（結構化輸出與程式護欄）、Query Rewriting、VLM 審查、用量紀錄（`job_usage`、單價設定、儀表板改用實際用量計算成本） | 文字與審查是真的，圖仍是程序化背景 |
+| Plan 6A：伺服器端排版與規則審查 | composer 的 `/render`、`/review`、`measurePrimary` 與字型；審查用海報存檔與顯示；`REVIEW_MODE` | 主色檢查與分數是真的，伺服器有審查用海報 |
+| Plan 6B：Gemini Agent 與 VLM 審查 | 需求拆解、Prompt 構建（結構化輸出與程式護欄，含文案缺字處理）、Query Rewriting、VLM 審查、`ocrDiffs`、用量紀錄（`job_usage`、單價設定、儀表板改用實際用量計算成本） | 文字與審查是真的，圖仍是程序化背景 |
 | Plan 7：ComfyUI 生圖 | 筆電實測與模型組合、workflow 與參數對照表、ComfyUI 連線程式（上傳、進度、輸出、取消）、讀取已去背的商品圖、`includesProduct` 繪製、雲端切換、安裝與模型授權文件 | 全部流程都是真的 |
 | Plan 8：作品集 Demo | Cloudflare Pages 部署、Access 名單設定步驟、README 架構圖與操作說明、展示影片腳本 | 名單內的人可以觀看 Demo |
 
