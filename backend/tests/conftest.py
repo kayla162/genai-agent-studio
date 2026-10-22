@@ -156,13 +156,14 @@ class LiveApi:
 
 @pytest.fixture
 async def api(db: Database, redis: Redis, composer_url: str, tmp_path: Path) -> AsyncIterator[LiveApi]:
-    """data/ 與本機資料夾指向 tmp_path；品牌設定檔使用 repo 的 brands/。"""
+    """data/ 與本機資料夾指向 tmp_path；品牌設定檔使用 repo 的 brands/。
+    RAG_MODE 固定為 bge：repo 的 .env 設了 RAG_MODE=sim（README 建議的開發方式）時，系統狀態的測試才不會失敗。"""
     await redis.flushdb()
     queues = Queues(TEST_REDIS_URL)
     await queues.connect()
     composer = ComposerClient(composer_url)
     agent = SimAgent(composer, first_round_fail=True, force_all_fail=False)
-    test_settings = Settings(data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local')
+    test_settings = Settings(data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', rag_mode='bge')
     services = ApiServices(test_settings, db, redis, EventStore(db, redis), queues, composer, agent)
     await services.sync_brands()
     server = uvicorn.Server(uvicorn.Config(create_app(services), host='127.0.0.1', port=0, log_level='warning'))
