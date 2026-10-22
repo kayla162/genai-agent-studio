@@ -9,11 +9,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from PIL import Image
 from pypdf import PdfWriter
 from saq.job import Status
 
+from app.adapters.composer import ComposerClient, ComposerHealth
 from app.api import catalog as catalog_api
 from app.brands import BrandLoadError
 from app.contract import ProductCutout
@@ -54,6 +56,9 @@ async def status_of(api: LiveApi) -> dict[str, dict[str, Any]]:
     return {c['id']: c for c in (await api.http.get('/api/status')).json()['components']}
 
 
+COMPOSER_LABEL = 'composer（排版、繪製與規則審查）'
+
+
 async def test_status_reports_each_component(api: LiveApi) -> None:
     status = await status_of(api)
     assert [(k, c['status']) for k, c in status.items()] == [
@@ -69,6 +74,13 @@ async def test_status_reports_each_component(api: LiveApi) -> None:
         ('cutout', 'error'),
     ]
     assert status['brands']['detail'] == '已載入 2 個品牌'
+    # composer 顯示 REVIEW_MODE（預設 composer）與啟動時註冊的海報字型
+    assert status['composer'] == {
+        'id': 'composer',
+        'label': COMPOSER_LABEL,
+        'status': 'ok',
+        'detail': f'REVIEW_MODE=composer・字型：Noto Sans TC、Noto Serif TC（{api.composer_url}）',
+    }
     # Chroma 正常時顯示網址；worker 還沒啟動，RAG 模型的狀態還沒有回報
     chroma_url = api.services.settings.chroma_url
     assert status['chroma'] == {'id': 'chroma', 'label': '向量庫（Chroma）', 'status': 'ok', 'detail': chroma_url}
@@ -86,6 +98,62 @@ async def test_status_reports_each_component(api: LiveApi) -> None:
         'status': 'error',
         'detail': '已載入 2 個品牌；略過 broken.yaml：palette.primary：必填',
     }
+
+
+async def test_status_shows_the_review_mode_and_a_composer_without_fonts(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = api.composer_url
+    sim = api.services.settings.model_copy(update={'review_mode': 'sim'})
+    monkeypatch.setattr(api.services, 'settings', sim)
+    assert (await status_of(api))['composer'] == {
+        'id': 'composer',
+        'label': COMPOSER_LABEL,
+        'status': 'sim',
+        'detail': f'REVIEW_MODE=sim：模擬審查，不繪製審查用海報（{url}）',
+    }
+    monkeypatch.undo()
+
+    # 舊版 composer 不回報字型：composer 模式畫不出審查用海報
+    async def no_fonts() -> ComposerHealth:
+        return ComposerHealth(fonts=[])
+
+    monkeypatch.setattr(api.services.composer, 'health', no_fonts)
+    composer = (await status_of(api))['composer']
+    assert (composer['status'], composer['detail']) == (
+        'error',
+        f'REVIEW_MODE=composer，但 composer 沒有回報海報字型，請重新建置 composer（{url}）',
+    )
+
+    async def down() -> None:
+        return None
+
+    monkeypatch.setattr(api.services.composer, 'health', down)
+    composer = (await status_of(api))['composer']
+    assert (composer['status'], composer['detail']) == ('error', f'連不上 composer（{url}）')
+
+
+async def test_composer_health_reads_the_fonts_and_tolerates_other_bodies() -> None:
+    bodies: list[httpx.Response] = [
+        httpx.Response(200, json={'status': 'ok', 'fonts': ['Noto Sans TC', 'Noto Serif TC']}),
+        httpx.Response(200, json={'status': 'ok'}),
+        httpx.Response(200, json=['ok']),
+        httpx.Response(200, text='ok'),
+        httpx.Response(503, json={'status': 'down'}),
+    ]
+    client = ComposerClient('http://composer.test')
+    await client.aclose()
+    client._client = httpx.AsyncClient(  # 換成假的連線，依序回應 bodies
+        base_url='http://composer.test', transport=httpx.MockTransport(lambda request: bodies.pop(0))
+    )
+    try:
+        assert await client.health() == ComposerHealth(fonts=['Noto Sans TC', 'Noto Serif TC'])
+        assert await client.health() == ComposerHealth(fonts=[])
+        assert await client.health() == ComposerHealth(fonts=[])
+        assert await client.health() == ComposerHealth(fonts=[])
+        assert await client.health() is None
+    finally:
+        await client.aclose()
 
 
 async def ingest(api: LiveApi, brand_id: str, name: str, data: bytes) -> list[dict[str, Any]]:
@@ -519,7 +587,9 @@ async def test_list_and_import_local_photos(api: LiveApi) -> None:
 
 
 def test_files_stay_inside_their_folders(tmp_path: Path) -> None:
-    settings = Settings(data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=tmp_path / 'brands')
+    settings = Settings(
+        _env_file=None, data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=tmp_path / 'brands'
+    )
     files = ['secret.png', 'data/uploads/a.png', 'local/b.jpg', 'brands/assets/logo.svg', 'brands/selune.yaml']
     for name in files:
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)

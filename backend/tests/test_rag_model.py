@@ -9,7 +9,7 @@ import pytest
 from app.rag.chunking import EMBED_DIMS
 from app.rag.encoder import OnnxEncoder
 from app.rag.models import MODELS
-from app.settings import settings
+from app.settings import Settings
 
 QUERY = 'SÉLUNE｜玻尿酸修護精華｜秋季保濕主打｜長效保濕'
 #: 品牌色彩、保濕合規、咖啡產地（與查詢無關）、秋季主視覺
@@ -20,18 +20,20 @@ PASSAGES = [
     '秋季檔期主視覺以暖色調與柔和光線呈現。',
 ]
 COFFEE = 2
+#: 不讀 .env（測試一律如此）；模型資料夾可用環境變數 MODELS_DIR 指定
+SETTINGS = Settings(_env_file=None)
 
 pytestmark = [
     pytest.mark.model,
     pytest.mark.skipif(
-        not all((settings.models_dir / m.filename).is_file() for m in MODELS), reason='需要 models/ 的 RAG 模型檔'
+        not all((SETTINGS.models_dir / m.filename).is_file() for m in MODELS), reason='需要 models/ 的 RAG 模型檔'
     ),
 ]
 
 
 @pytest.fixture(scope='module')
 def encoder() -> OnnxEncoder:
-    return OnnxEncoder(settings.models_dir)
+    return OnnxEncoder(SETTINGS.models_dir)
 
 
 def test_embeddings_are_normalized_1024_dims_and_repeatable(encoder: OnnxEncoder) -> None:

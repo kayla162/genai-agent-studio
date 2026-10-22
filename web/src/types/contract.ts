@@ -202,7 +202,8 @@ export type JobEvent =
   | { type: 'render.progress'; round: number; node: RenderNode; step: number; maxStep: number }
   | { type: 'render.completed'; round: number; renders: Render[] }
   | { type: 'review.check'; round: number; renderId: string; check: ReviewCheck }
-  | { type: 'review.completed'; round: number; renderId: string; score: number; passed: boolean }
+  /** image：審查用海報的網址（/files/jobs/{jobId}/{renderId}.png）；模擬模式與 mock 沒有繪製，為 null */
+  | { type: 'review.completed'; round: number; renderId: string; score: number; passed: boolean; image: string | null }
   | { type: 'rewrite.started'; round: number; templateId: TemplateId; reasons: CheckId[]; fixes: Fix[]; requery: boolean }
   | { type: 'job.completed'; jobId: string; bestRenderIds: Partial<Record<TemplateId, string>> }
   | { type: 'job.needs_review'; jobId: string; reason: string }

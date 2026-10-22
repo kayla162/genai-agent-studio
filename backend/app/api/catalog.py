@@ -108,10 +108,18 @@ async def _workers(services: ApiServices) -> str:
     return f'{len(info["workers"])} 個 worker；排隊 {info["queued"]}、執行中 {info["active"]}'
 
 
-async def _composer(services: ApiServices) -> str:
-    if not await services.composer.health():
-        raise Unavailable(f'連不上 composer（{services.composer.base_url}）')
-    return services.composer.base_url
+async def _composer(services: ApiServices) -> str | tuple[ComponentState, str]:
+    """composer 的 /health 與 REVIEW_MODE（api 與 worker 讀同一個設定）。
+    composer 模式需要海報字型：沒有回報字型（舊版映像檔）時顯示 error，任務會在繪製審查用海報時失敗。"""
+    url = services.composer.base_url
+    health = await services.composer.health()
+    if health is None:
+        raise Unavailable(f'連不上 composer（{url}）')
+    if services.settings.review_mode == 'sim':
+        return 'sim', f'REVIEW_MODE=sim：模擬審查，不繪製審查用海報（{url}）'
+    if not health.fonts:
+        raise Invalid(f'REVIEW_MODE=composer，但 composer 沒有回報海報字型，請重新建置 composer（{url}）')
+    return f'REVIEW_MODE=composer・字型：{"、".join(health.fonts)}（{url}）'
 
 
 async def _brands(services: ApiServices) -> str:
@@ -145,7 +153,7 @@ async def get_status(services: Services) -> SystemStatus:
         _probe('db', 'PostgreSQL', _db(services)),
         _probe('redis', 'Redis（佇列與事件推送）', _redis(services)),
         _probe('worker', 'worker（SAQ）', _workers(services)),
-        _probe('composer', 'composer（排版與模擬邏輯）', _composer(services)),
+        _probe('composer', 'composer（排版、繪製與規則審查）', _composer(services)),
         _probe('brands', '品牌設定檔', _brands(services)),
         _probe('chroma', '向量庫（Chroma）', _chroma(services)),
         _probe('rag', 'RAG 模型（BGE-M3＋Reranker）', _rag_model(services)),

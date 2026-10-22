@@ -15,7 +15,7 @@ uv sync
 |---|---|
 | `uv run uvicorn app.api.main:app --port 8000 --reload` | api（啟動時執行 migration 並匯入 `brands/*.yaml`） |
 | `uv run python -m app.worker` | worker（啟動時把中斷的任務標記失敗，排隊中的重新放回佇列；在背景準備去背與 RAG 模型，再把品牌同步到 Chroma） |
-| `uv run pytest` | 測試：重建 PostgreSQL 的 `genai_test` 資料庫、使用 Redis 第 15 號資料庫與 Chroma 的 `genai_test` database（需要 `docker compose up -d postgres redis chroma`），並在 3902 埠啟動 composer（需要 `web/` 已 `npm ci`） |
+| `uv run pytest` | 測試：重建 PostgreSQL 的 `genai_test` 資料庫、使用 Redis 第 15 號資料庫與 Chroma 的 `genai_test` database（需要 `docker compose up -d postgres redis chroma`），並在 3902 埠啟動 composer（需要 `web/` 已 `npm ci` 與 `npm run fonts`；composer 缺少字型就結束，測試立即失敗並提示）。測試不讀 `.env`（設定一律以 `_env_file=None` 建立），環境變數仍然有效 |
 | `uv run pytest -m model` | 只跑真模型的測試（標記 `model`）：repo 根目錄的 `models/` 有模型檔時才執行，否則略過。去背模型的測試另外需要以 `CUTOUT_TEST_PHOTO` 指定一張商品照（例如 `CUTOUT_TEST_PHOTO=../data/uploads/xxx.jpg uv run pytest -m model`） |
 | `uv run ruff check . && uv run ruff format --check .` | lint 與格式 |
 | `uv run mypy` | 型別檢查（strict） |
@@ -26,6 +26,8 @@ uv sync
 | 變數 | 預設 | 說明 |
 |---|---|---|
 | `RAG_MODE` | `bge` | `bge`：BGE-M3＋Reranker＋Chroma；`sim`：模擬檢索（固定的召回與 Rerank 順序，不下載模型、不連 Chroma；測試與 live E2E 使用） |
+| `REVIEW_MODE` | `composer` | `composer`：composer 繪製審查用海報（存到 `data/jobs/`），量出主色後審查，分數不加抖動；`sim`：不畫圖，審查結果與前端 mock 相同（parity 測試與作品集 Demo）。live E2E 使用 `composer` |
+| `COMPOSER_URL` | `http://127.0.0.1:3900` | Docker 內為 `http://composer:3900`。`REVIEW_MODE=composer` 時 composer 要有海報字型（在 `web/` 執行 `npm run fonts`） |
 | `CHROMA_URL` | `http://127.0.0.1:8001` | Docker 內為 `http://chroma:8000` |
 | `MODELS_DIR` | repo 根目錄的 `models/` | 去背與 RAG 的模型檔（Docker 為 `models` volume） |
 
@@ -35,6 +37,12 @@ PowerShell 不能在指令前加環境變數，例如改用模擬檢索執行 wo
 $env:RAG_MODE='sim'; uv run python -m app.worker
 ```
 
+本機的 worker 預設是 `REVIEW_MODE=composer`，每張候選都會呼叫 composer 的 `/render`。先在 `web/` 執行 `npm run fonts` 與 `npm run composer`（缺少字型時 composer 會結束）；不需要審查用海報時改用模擬審查（api 也要設定同一個值，系統狀態才會一致）：
+
+```powershell
+$env:REVIEW_MODE='sim'; uv run python -m app.worker
+```
+
 ## API
 
 - 文件：http://127.0.0.1:8000/docs
@@ -42,10 +50,11 @@ $env:RAG_MODE='sim'; uv run python -m app.worker
 - `WS /ws/jobs/{id}?after={seq}`：先補送 `seq` 大於 `after` 的事件，再轉送即時事件；任務結束且事件送完後以 1000 關閉，任務不存在時以 4404 關閉。Redis 停止或訂閱失敗時不中斷，改為每秒從資料庫讀取新事件，直到任務結束。
 - `POST /api/brands/{id}/documents`：multipart，欄位 `file`（`.md`、`.markdown`、`.txt` 為 UTF-8；`.pdf` 以 pypdf 抽出文字層）。api 先檢查副檔名、大小（20 MB）、編碼、PDF 是否加密或沒有文字、文字長度（20 萬字），有錯直接回 400，不開始串流；之後以 NDJSON 串流回報切塊、向量化與寫入的進度。120 秒沒有任何進度時回報逾時（大份手冊只要持續有進度就不算逾時）。
 - `POST /api/jobs/{id}/select`：寫入歷史紀錄後，由 worker 回寫成歷史切塊，最多等 10 秒；逾時、失敗或被中止時 `writtenToRag` 為 false（不回 500，歷史紀錄已經建立）。
-- `GET /api/status`：各服務的狀態，每項最多等 3 秒。RAG 的兩項：
+- `GET /api/status`：各服務的狀態，每項最多等 3 秒。composer 與 RAG 的兩項：
 
 | 元件 | 狀態 |
 |---|---|
+| composer（排版、繪製與規則審查） | `GET {COMPOSER_URL}/health`：`REVIEW_MODE=composer` 時顯示載入的海報字型與網址，composer 沒有回報字型（舊的映像檔）時為「異常」，提示重新建置；`REVIEW_MODE=sim` 時為「模擬」（模擬審查，不繪製審查用海報）；連不上為「異常」 |
 | 向量庫（Chroma） | `GET {CHROMA_URL}/api/v2/heartbeat`：正常時顯示網址，連不上為「異常」；`RAG_MODE=sim` 時不檢查，顯示「模擬模式不使用向量庫」 |
 | RAG 模型（BGE-M3＋Reranker） | 讀 Redis 的 `rag:model`（worker 回報）：模擬、下載中（約 1.2 GB）、已就緒（第一次檢索時載入）、載入中、已載入、失敗（原因）；worker 還沒回報時為「worker 尚未回報」 |
 
@@ -56,7 +65,16 @@ $env:RAG_MODE='sim'; uv run python -m app.worker
 3. 每則事件在同一個交易中鎖定任務列並取得下一個 `seq`，commit 後發布到 Redis 頻道 `job:{id}`；結束任務的 `job.status` 一定是最後一則。
 4. 取消：排隊中的直接取消；執行中的設定旗標，worker 在步驟之間停止。
 
-外部服務都經過 `app/pipeline/ports.py` 的介面。檢索由 `app/rag/retriever.py` 的 `BgeRetriever` 實作（`RAG_MODE=sim` 時改用模擬版）；Agent、生圖與審查仍由 `app/pipeline/sim.py` 的模擬版實作（Agent 與審查透過 composer 沿用前端 mock 的 TypeScript），之後的計畫換成 Gemini 與 ComfyUI。
+外部服務都經過 `app/pipeline/ports.py` 的介面。檢索由 `app/rag/retriever.py` 的 `BgeRetriever` 實作（`RAG_MODE=sim` 時改用模擬版）；排版與審查由 `app/pipeline/review.py` 的 `ComposerPosters` 與 `ComposerReviewer` 實作（`REVIEW_MODE=sim` 時改用模擬版）；Agent 與生圖仍由 `app/pipeline/sim.py` 的模擬版實作（Agent 透過 composer 沿用前端 mock 的 TypeScript），Plan 6B 與 Plan 7 換成 Gemini 與 ComfyUI。
+
+## 審查（REVIEW_MODE=composer）
+
+- **排版**：`composing` 階段對每張候選呼叫 `PosterComposer.compose`。worker 以 `resolve_file` 讀商品圖（去背圖以 normal 合成，否則原圖以 multiply 合成，與前端的 `productImage` 相同）與 Logo，長邊超過 2048 px 或 EXIF 方向不是正向的圖先以 Pillow 轉正、縮小，再以 base64 送到 composer 的 `/render`（請求上限 30 MB）。composer 以前端的 `scene.ts` 與 `paint.ts` 在伺服器端繪製，回傳 PNG 與量到的主色；worker 把 PNG 存到 `data/jobs/{jobId}/{renderId}.png`（由 `/files/jobs/…` 提供，每張約 0.3–1 MB，不會自動清理），記錄「✓ 伺服器端排版 N 張」。示範商品不送圖檔，由 composer 自己畫；Logo 圖檔不存在或無法讀取時改畫向量標誌並記錄警告。
+- **審查**：`ComposerReviewer` 以量到的主色呼叫 `/review`：7 項規則加 3 項 VLM，分數為 `scoreChecks(checks, 0)`，不加抖動。VLM 三項在 Plan 6B 之前依內容判斷（誇大用語看禁用詞、遮擋看 Logo 是否與標題重疊、品質一律通過），說明加上「（模擬，Plan 6B 改用 Gemini）」。`review.completed` 的 `image` 是審查用海報的網址（模擬版為 `null`）。
+- **主色量測**（`web/src/lib/review/measure.ts`）：範圍是 `headline`、`price`、`badge` 三個區塊的聯集扣掉 `product`；4×4 像素一格取平均、轉 Lab，濾掉彩度低於門檻（10 與品牌主色 C* 的一半取小）的格子，以 Lab 直方圖找出佔比 2% 以上的色塊，取與品牌主色 ΔE2000 最小的一個。最小 ΔE 超過 `rules.maxDeltaE` 時，改回報彩度最高的色塊，說明文字顯示實際用錯的顏色；沒有色塊時判定不通過，說明為「未偵測到主色（主色區塊 < 2%）」。
+- **限制**：主色檢查只確認排版上的品牌色元素，不檢查背景。程式產生的背景依品牌色繪製；Plan 7 換成 AI 生成的照片背景時，再新增「背景色系」檢查。
+- **錯誤**：composer 無法連線或回傳錯誤時任務失敗，原因為「排版服務（composer）無法繪製海報：…」或「…無法審查海報：…」；找不到或讀不到上傳的商品圖時為「無法繪製審查用海報：找不到商品圖（網址）」或「…商品圖無法讀取（網址）：…」。
+- **模擬版**（`REVIEW_MODE=sim`）：`SimPosters` 不畫圖，`SimReviewer` 呼叫 composer 的 `/sim/review`，事件與前端 mock 完全相同（parity 測試只多比對 `image: null`）。
 
 ## RAG
 
@@ -73,8 +91,8 @@ $env:RAG_MODE='sim'; uv run python -m app.worker
 ```
 app/
 ├─ api/            FastAPI：main.py（入口與錯誤格式）、catalog、jobs、files、services
-├─ pipeline/       任務流程（runner）、外部服務介面（ports）、模擬版（sim）
-├─ adapters/       composer 用戶端
+├─ pipeline/       任務流程（runner）、外部服務介面（ports）、審查用海報與審查（review）、模擬版（sim）
+├─ adapters/       composer 用戶端（版型、/render、/review、/sim/*、/health）
 ├─ cutout/         商品照去背：前後處理（processing）、BiRefNet 與模擬版（segmenter）、模型清單（models）、狀態鍵（state）、準備與狀態（engine）
 ├─ rag/            RAG：切塊（chunking）、抽字（extract：Markdown、純文字、PDF）、模型清單（models）、ONNX 推論（encoder）、
 │                  準備與狀態（engine、state）、錯誤（errors）、Chroma 用戶端（store）、PostgreSQL → Chroma 同步（sync）、
@@ -87,7 +105,7 @@ app/
 ├─ errors.py       領域錯誤（AppError 與子類別）；api 轉成 { error: { code, message } }
 ├─ templates.py    通路模板（與 web/src/lib/compose/templates.ts 相同）
 ├─ events.py       事件保存與推送、WebSocket 串流
-├─ files.py        /files/... 網址與資料夾的對應（api 提供檔案、worker 讀取商品照）
+├─ files.py        /files/... 網址與資料夾的對應（api 提供檔案、worker 讀取商品照與寫入審查用海報）
 ├─ queues.py       SAQ 佇列
 ├─ worker.py       worker 的任務、啟動時復原與模型準備
 ├─ modelfiles.py   模型檔的下載與核對（去背與 RAG 共用）

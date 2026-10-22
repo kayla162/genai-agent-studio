@@ -8,6 +8,7 @@ Next.js 16（App Router，靜態輸出）+ TypeScript + Tailwind CSS v4 + shadcn
 ## 需求
 
 - Node.js 24、npm 11
+- composer 與伺服器端繪製海報的測試需要海報字型：執行一次 `npm run fonts`（見下方「海報字型」）
 
 ## 開始
 
@@ -40,10 +41,11 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 |---|---|
 | `npm run dev` | 開發伺服器 |
 | `npm run build` | 靜態輸出到 `out/` |
-| `npm run test` | Vitest 單元測試（含 composer） |
+| `npm run test` | Vitest 單元測試（含 composer）；需要字型的測試（字型註冊、伺服器端繪製海報、3 個品牌 × 5 個模板的主色量測）在沒有字型時略過並提示 |
 | `npm run e2e` | mock 模式 E2E（建置後在 3100 埠提供靜態輸出；第一次要先執行 `npx playwright install chromium`） |
-| `npm run e2e:live` | live 模式 E2E（以 docker compose 啟動獨立的整套服務，3200 埠，測完移除；開始前先移除上次中斷留下的容器與資料。RAG 用模擬版，不下載模型） |
-| `npm run composer` | composer（3900 埠）：後端使用的版型與模擬邏輯 |
+| `npm run e2e:live` | live 模式 E2E（以 docker compose 啟動獨立的整套服務，3200 埠，測完移除；開始前先移除上次中斷留下的容器與資料。RAG 與去背用模擬版，不下載模型；審查用 `REVIEW_MODE=composer`，確認審查用海報） |
+| `npm run composer` | composer（3900 埠）：後端使用的版型、審查用海報的繪製、規則審查與模擬邏輯；啟動時註冊海報字型，缺少時印出原因並結束 |
+| `npm run fonts` | 下載海報字型到 `composer/fonts/`（或 `npm run fonts -- <資料夾>`、`POSTER_FONTS_DIR`），核對大小與 SHA-256；已存在且相符的檔案會略過 |
 | `npm run fixtures` | 產生 `../contracts/fixtures/`（後端的一致性測試使用） |
 | `npm run typecheck` | 型別檢查（含路由型別） |
 | `npm run lint` | ESLint |
@@ -57,7 +59,7 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 | 工作台 | `/queue` | 批次佇列：多商品 × 多模板 |
 | 工作台 | `/history` | 歷史紀錄：篩選、收藏、以相同設定重做 |
 | 工作台 | `/brands` | 品牌知識庫：CI、禁用詞、RAG 切塊（標示新上傳、歷史回寫、歷史案例、Query Rewriting 專用）、上傳文件（live：`.md`、`.txt`、`.pdf`；mock：`.md`、`.txt`） |
-| Agent 透視 | `/agent` | 任務透視：流程節點、WebSocket 事件串流、JSON Prompt 與注入參數、RAG Rerank、合規報告與 BBox 疊圖、重試 diff |
+| Agent 透視 | `/agent` | 任務透視：流程節點、WebSocket 事件串流、JSON Prompt 與注入參數、RAG Rerank、合規報告與 BBox 疊圖（live 的 `REVIEW_MODE=composer` 可切換「預覽／審查用海報」；主色檢查旁顯示量到的主色色塊）、重試 diff |
 | Agent 透視 | `/dashboard` | 成效儀表板：通過率、平均重試次數、平均耗時、每張成本、各檢查項失敗分布、Rerank 對命中率的影響 |
 
 ## 資料保存
@@ -67,6 +69,16 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 - 每則事件都帶序號（`seq`）與時間戳（`ts`）。Agent 透視用來顯示事件串流與各節點耗時；儀表板依此統計耗時。
 - 自己的商品照可放在 repo 根目錄的 `assets/products/`（已在 `.gitignore`，不會上傳 GitHub），live 模式下到「商品庫」一鍵匯入，檔名即商品名稱。
 - 字型使用 `@fontsource-variable` 自帶的 Noto Sans／Serif TC，執行時不連外部網路。
+- live 模式的審查用海報（`REVIEW_MODE=composer`）由 worker 存在 repo 根目錄的 `data/jobs/{任務 id}/{候選 id}.png`，事件 `review.completed` 的 `image` 是它的網址（`/files/jobs/…`）；mock 與 `REVIEW_MODE=sim` 為 `null`，合規報告不顯示切換。
+
+## 海報字型（composer）
+
+composer 以 `@napi-rs/canvas`（版本固定 `1.0.13`）在伺服器端繪製海報，字型與前端相同：Google Fonts 的 Noto Sans TC 與 Noto Serif TC 可變字重 TTF（一個檔案涵蓋所有字重），固定在 `google/fonts` 的一個 commit。授權為 SIL Open Font License 1.1，授權文字（`OFL-NotoSansTC.txt`、`OFL-NotoSerifTC.txt`）和字型放在一起。
+
+- **本機**：`npm run fonts` 依 `composer/fonts.lock.json`（檔名、網址、位元組數、SHA-256）下載到 `composer/fonts/`（約 29 MB，已在 `.gitignore` 與 `.dockerignore`），核對不符時不留下檔案並以中文說明原因。
+- **Docker**：`Dockerfile` 的 `fonts` 階段以 `ADD --checksum=sha256:…` 下載同一組檔案，composer 映像檔放在 `/usr/local/share/poster-fonts`，並設定 `POSTER_FONTS_DIR`。`composer/dockerfile.test.ts` 確認 Dockerfile 的網址與 SHA-256 和清單一致。
+- **字型資料夾**：`POSTER_FONTS_DIR`，沒有設定時為 `composer/fonts/`。composer 啟動時先清空所有字型（包含系統字型：電腦上可能裝了字高不同的另一版 Noto Sans TC），再註冊這兩個檔案；`GET /health` 回報已註冊的字型。
+- **涵蓋範圍**：Big5 常用字與次常用字、全形標點；不含簡體專用字與 emoji，這些字在審查用海報上會畫成方塊。
 
 ## Demo 控制台（只有 mock 模式）
 
@@ -84,7 +96,7 @@ src/
 │  ├─ api/              ApiClient 介面；mock/（MockApiClient、劇本、示範資料與示範任務、IndexedDB）；http/（HttpApiClient、WebSocket 重新連線）
 │  ├─ agent/            Prompt 構建、修正策略、版本差異、流程節點狀態、事件摘要、透視用的資料整理
 │  ├─ compose/          版型、排版引擎（scene）、程序化素材（art）、Canvas 繪製（paint／render）
-│  ├─ review/           規則型合規審查、ΔE2000、文案重新檢查
+│  ├─ review/           規則型合規審查（rules）、ΔE2000（color）、從像素量測品牌主色（measure）、依內容判斷的 VLM 檢查（vlm）、文案重新檢查（recheck）
 │  ├─ jobs/             事件 → 畫面狀態（reducer）
 │  ├─ stats/            成效儀表板統計與成本估算
 │  ├─ export/           檔名、zip、下載
@@ -95,9 +107,11 @@ src/
 │  └─ store/            Zustand stores
 ├─ test/                測試共用的資料（fixtures）、golden fixtures 的產生（golden）與切塊的範例文件（chunk-samples）
 └─ types/contract.ts    前後端資料約定
-composer/               Node 服務：版型與模擬邏輯（/layout、/sim/brief、/sim/prompt、/sim/review、/sim/fixes），由後端呼叫
-scripts/                產生 fixtures、提供靜態輸出（Playwright 使用）
-e2e/                    Playwright（mock）：主流程（含匯出 zip）、Agent 透視重試 diff、儀表板、手機寬度
-e2e-live/               Playwright（live）：主流程、重新整理後接續、API 重新啟動後重新連線、取消、文件（Markdown 與 PDF）與商品照上傳
-Dockerfile、nginx.conf  live 版（nginx）與 composer 的映像檔
+composer/               Node 服務，由後端呼叫：版型（/layout）、審查用海報（/render，poster.ts）、規則審查（/review）、
+                        模擬邏輯（/sim/brief、/sim/prompt、/sim/review、/sim/fixes）、狀態與字型（/health）；
+                        字型註冊（fonts.ts）、字型清單（fonts.lock.json）、下載的字型（fonts/，不進 git）
+scripts/                產生 fixtures、提供靜態輸出（Playwright 使用）、下載海報字型（fetch-fonts.mjs）
+e2e/                    Playwright（mock）：主流程（含匯出 zip）、Agent 透視重試 diff 與合規報告、儀表板、手機寬度
+e2e-live/               Playwright（live）：主流程（含審查用海報）、重新整理後接續、API 重新啟動後重新連線、取消、文件（Markdown 與 PDF）與商品照上傳
+Dockerfile、nginx.conf  live 版（nginx）與 composer 的映像檔（建置時下載並核對海報字型）
 ```

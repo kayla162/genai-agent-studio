@@ -4,7 +4,6 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { FileDown, ListOrdered, LoaderCircle, Network, Pause, Play, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Render } from '@/types/contract';
 import { EmptyState } from '@/components/common/empty-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,7 +12,7 @@ import { Progress } from '@/components/ui/progress';
 import { getApiClient } from '@/lib/api';
 import { getTemplate } from '@/lib/compose/templates';
 import { exportPosterZip } from '@/lib/export/posters';
-import { defaultSelection, jobProgress, STAGE_LABEL } from '@/lib/jobs/view';
+import { defaultSelection, jobProgress, STAGE_LABEL, type Candidate } from '@/lib/jobs/view';
 import { useAppStore } from '@/lib/store/app';
 import { isFinished, useQueueStore, type QueueItem, type QueueStatus } from '@/lib/store/queue';
 import { cn } from '@/lib/utils';
@@ -42,7 +41,7 @@ function QueueRow({ item }: { item: QueueItem }) {
     try {
       const api = getApiClient();
       const product = (await api.listProducts(item.brandId)).find((p) => p.id === item.productId) ?? null;
-      const renders = Object.values(defaultSelection(view)).map((id) => view.renders[id!]).filter((r): r is Render => !!r);
+      const renders = Object.values(defaultSelection(view)).map((id) => view.renders[id!]).filter((r): r is Candidate => !!r);
       await exportPosterZip(brand, product, renders.map((render) => ({ render, copy: render.spec.copy })));
       for (const r of renders) await api.selectRender(view.jobId, r.id, r.spec.copy);
       toast.success(`已匯出「${item.productName}」${renders.length} 張海報`, { description: '已寫入歷史紀錄並標記已回寫 RAG。' });

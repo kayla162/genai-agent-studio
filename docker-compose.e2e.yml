@@ -10,6 +10,8 @@ x-e2e-backend: &e2e-backend
     CUTOUT_MODEL: sim
     # 模擬檢索：不下載約 1.2 GB 的 RAG 模型，也不寫入 Chroma
     RAG_MODE: sim
+    # 真正的審查：composer 繪製審查用海報（不受 .env 的 REVIEW_MODE 影響）
+    REVIEW_MODE: composer
   volumes: !override
     - ./brands:/app/brands:ro
     - e2e-photos:/app/assets/products:ro

@@ -89,8 +89,26 @@ class ImageEngine(Protocol):
     ) -> dict[tuple[TemplateId, int], RenderBackground]: ...
 
 
+@dataclass(frozen=True)
+class ComposedPoster:
+    """伺服器端繪製的審查用海報。"""
+
+    #: 審查用海報的網址（/files/jobs/{jobId}/{renderId}.png）
+    url: str
+    #: 從海報像素量到的品牌主色（小寫 #rrggbb）；量不到時為 None
+    measured_primary: str | None
+
+
+class PosterComposer(Protocol):
+    async def compose(self, job_id: str, render: Render, product: Product, brand: Brand) -> ComposedPoster | None:
+        """繪製一張候選的審查用海報並存檔；模擬版不畫圖，回傳 None。"""
+        ...
+
+
 class Reviewer(Protocol):
-    async def review(self, brand: Brand, render: Render, seed: int) -> ReviewResult: ...
+    async def review(self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None) -> ReviewResult:
+        """poster 是排版階段繪製的審查用海報（模擬版為 None）。"""
+        ...
 
 
 @dataclass(frozen=True)
@@ -98,4 +116,5 @@ class Ports:
     retriever: Retriever
     agent: Agent
     image: ImageEngine
+    posters: PosterComposer
     reviewer: Reviewer

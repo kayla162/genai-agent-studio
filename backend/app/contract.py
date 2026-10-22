@@ -429,6 +429,8 @@ class ReviewCompletedEvent(Model):
     render_id: str
     score: int
     passed: bool
+    #: 審查用海報的網址（/files/jobs/{jobId}/{renderId}.png）；模擬模式與 mock 沒有繪製，為 None
+    image: str | None
 
 
 class RewriteStartedEvent(Model):

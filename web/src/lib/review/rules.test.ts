@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { ReviewCheck } from '@/types/contract';
 import { SELUNE, MISTY_ISLE } from '@/lib/api/mock/data';
 import { makeSpec } from '@/test/fixtures';
-import { findBannedWords, hasClaim, ragRefFor, runRuleChecks, scoreChecks } from './rules';
+import {
+  bannedWordHits, findBannedWords, hasClaim, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks, scoreChecks,
+} from './rules';
 
 const byId = (checks: ReviewCheck[], id: ReviewCheck['id']) => checks.find((c) => c.id === id)!;
 
@@ -15,6 +17,14 @@ describe('text rules', () => {
   it('detects effect claims', () => {
     expect(hasClaim(['醒來透亮發光'], SELUNE.claimWords)).toBe(true);
     expect(hasClaim(['一口清醒'], MISTY_ISLE.claimWords)).toBe(false);
+  });
+
+  it('bannedWordHits returns the banned words and the first block that contains one', () => {
+    const spec = makeSpec();
+    expect(bannedWordHits(spec, SELUNE)).toEqual({ words: [], target: null });
+    spec.copy.features = ['醫療級配方'];
+    spec.copy.disclaimer = '永久有效';
+    expect(bannedWordHits(spec, SELUNE)).toEqual({ words: ['醫療級', '永久'], target: 'features' });
   });
 
   it('ragRefFor skips the law-alt chunk', () => {
@@ -44,6 +54,35 @@ describe('runRuleChecks', () => {
     const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#E0458A' }), 'color_delta');
     expect(c.status).toBe('fail');
     expect(c.value).toContain('#E0458A');
+  });
+
+  it('fails the color check when no primary could be measured, leaving the other rules alone', () => {
+    const spec = makeSpec();
+    const none = runRuleChecks({ brand: SELUNE, spec, measuredPrimary: null });
+    expect(byId(none, 'color_delta')).toEqual({
+      id: 'color_delta', name: '品牌主色色差', kind: 'rule', rule: 'ΔE2000 ≤ 5',
+      value: '未偵測到主色（主色區塊 < 2%）', status: 'fail', target: 'canvas', ragRef: 'selune#color',
+    });
+    expect(NO_PRIMARY_MESSAGE).toBe('未偵測到主色（主色區塊 < 2%）');
+    const measured = runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' });
+    expect(none.filter((c) => c.id !== 'color_delta')).toEqual(measured.filter((c) => c.id !== 'color_delta'));
+  });
+
+  it('reports the measured primary in upper case with its ΔE', () => {
+    const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#b76f7a' }), 'color_delta');
+    expect(c).toMatchObject({ status: 'pass', value: 'ΔE 0.3 · 偵測主色 #B76F7A' });
+  });
+
+  it('measuredPrimaryOf reads the measured primary back from the colour check, for the swatch', () => {
+    const checks = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#e0458a' });
+    expect(measuredPrimaryOf(byId(checks, 'color_delta'))).toBe('#E0458A');
+    expect(byId(checks, 'color_delta').status).toBe('fail');
+    // 量不到主色、其他檢查的說明，都沒有色塊
+    const none = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: null });
+    expect(measuredPrimaryOf(byId(none, 'color_delta'))).toBeNull();
+    expect(checks.filter((c) => c.id !== 'color_delta').map(measuredPrimaryOf)).toEqual(Array(checks.length - 1).fill(null));
+    expect(measuredPrimaryOf({ id: 'banned_words', value: '偵測主色 #B76F7A' })).toBeNull();
+    expect(measuredPrimaryOf({ id: 'color_delta', value: 'ΔE 2 · 偵測主色 #B76F7' })).toBeNull();
   });
 
   it('fails logo clearance when the logo is pushed into the headline', () => {

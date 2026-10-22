@@ -24,6 +24,9 @@
 # production
 /build
 
+# composer 伺服器端繪圖用的字型（npm run fonts 下載，約 29 MB）
+/composer/fonts/
+
 # misc
 .DS_Store
 *.pem
