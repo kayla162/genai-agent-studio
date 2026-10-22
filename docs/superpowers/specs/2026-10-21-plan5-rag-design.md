@@ -164,12 +164,14 @@ Plan 4 的 RAG 全部是模擬版：
 | PDF 損壞 | 400 `invalid`「PDF 無法讀取：…」 |
 | PDF 讀不到文字 | 400 `invalid`「PDF 沒有可讀取的文字（可能是掃描檔），請先轉成文字」 |
 | 文字超過 20 萬字 | 400 `invalid`「文字超過 20 萬字（N 字），請分成幾份上傳」 |
+| 切塊超過 2,000 | 400 `invalid`「切塊太多（N 塊，上限 2,000），請分成幾份上傳」 |
 
 - 抽字在 api 以 `asyncio.to_thread` 執行。之後只把文字放進佇列，不傳原檔。
+- **切塊上限**（`MAX_CHUNKS = 2000`）：api 抽字後先以 `chunk_document` 切塊，只檢查塊數（worker 會再切一次）。20 萬字的一般文章約 1,170 塊，但很多短段落的文件（FAQ、詞彙表、行距大的 PDF）可能切出上萬塊。2,000 塊在 4 顆 CPU 上約每秒 4.8 塊，約 420 秒，在任務時限 600 秒之內。
 - **康熙部首**：以微軟正黑體輸出的 PDF（Chromium、Office 都會），常把「月」「色」「用」等字記成外觀相同的康熙部首（U+2F00 起）。分類規則與向量都認不出這些字，所以抽字後只對這個範圍做 NFKC，轉回一般漢字；全形標點不受影響。
 - **PDF 的章節**：PDF 沒有 Markdown 標題，每一頁成為一段，章節為檔名。
 - 檔名去掉瀏覽器加上的 `C:\fakepath\`。
-- **逾時**：從「整體 120 秒」改為「120 秒沒有任何進度」（`INGEST_IDLE_TIMEOUT`），訊息為「文件處理逾時：120 秒沒有任何進度，請確認 worker 正在執行」。大份手冊向量化需要幾分鐘，只要持續有進度就不算逾時。
+- **逾時**：從「整體 120 秒」改為「120 秒沒有任何進度」（`INGEST_IDLE_TIMEOUT`），訊息為「文件處理逾時：120 秒沒有任何進度。第一次使用時 worker 可能仍在下載 RAG 模型，請稍後再試；若持續發生，請確認 worker 正在執行」。大份手冊向量化需要幾分鐘，只要持續有進度就不算逾時。
 
 **worker 的 `ingest`**：
 1. 以 Python 的 `chunk_document` 切塊，送出 `ingest.chunked`。
@@ -183,6 +185,7 @@ Plan 4 的 RAG 全部是模擬版：
 - 沒有可用文字：`invalid`；
 - 模型準備失敗或 Chroma 無法連線：`unavailable`；
 - 其他：`internal`，訊息為「文件處理失敗：…」。
+- 超過任務時限（`TASK_TIMEOUT` 600 秒）被 SAQ 取消：`unavailable`「文件處理超過 10 分鐘而中止，請把文件分成幾份再上傳」。發布後仍把 `CancelledError` 往外丟，讓 SAQ 看到取消；發布失敗（例如 Redis 停止）時也一樣。
 - 訊息都是繁體中文。
 
 **模擬版**：同樣用 Python 的 `chunk_document` 切塊，`preview` 用 `embed_preview`，只寫入 PostgreSQL。原本 composer 的 `/sim/ingest` 改由 Python 處理，所以刪除。
@@ -251,6 +254,7 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 
 - **`ApiClient.ingestBrandDocument(brandId, file: File, onEvent)`**：原本傳 `{ name, text }`，改為傳檔案。
   - `HttpApiClient` 以 `FormData` 上傳。
+  - `HttpApiClient` 在上傳之前拒絕超過 20 MB 的檔案（`invalid`「檔案不可超過 20 MB」，與後端的 `MAX_BYTES` 相同），不送出請求；nginx 的 `client_max_body_size` 回的 HTML 413 轉成 `invalid`「檔案太大，超過伺服器允許的上傳大小」（商品照上傳也適用）。
   - `MockApiClient` 以 `file.text()` 讀取 `.md`、`.markdown`、`.txt`；其他格式（包括 PDF）回報「示範模式只能讀取 .md、.txt」。
   - `BrandDocument` 從合約移除；切塊使用的 `{ name, text }` 改名為 `TextDocument`，放在 `web/src/lib/rag/chunk.ts`。
 - **品牌知識庫**：
@@ -290,7 +294,7 @@ TypeScript 的示範品牌資料以相同規則產生，所以 golden fixture �
 | `regex` | | 切塊需要 `\p{Script=Han}` |
 
 **記憶體**（2026-10-21 Docker 驗收實測）：
-- RAG 模型載入後，worker 約增加 1.7 GB（實測 1.75 GB；沒有載入時 worker 約 0.1 GB），向量化與 Rerank 時幾乎不再增加（峰值 1.81 GB）。
+- RAG 模型載入後，worker 約增加 1.7 GB（實測 1.75 GB；沒有載入時 worker 約 0.1 GB，為去背用模擬版時的實測），向量化與 Rerank 時幾乎不再增加（峰值 1.81 GB）。
 - 與去背的尖峰（約 7.6 GiB）相加約 10 GB，所以 Docker 的記憶體上限建議約 12 GB；記憶體不夠時可以設 `RAG_MODE=sim`。
 - Chroma 本身約 20 MB。
 

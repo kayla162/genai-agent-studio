@@ -51,9 +51,9 @@ docker compose up -d --build
 - API 文件：http://127.0.0.1:3000/docs
 - 停止：`docker compose down`（資料保留在 volume；加上 `-v` 會清空資料庫與 `chroma` 向量庫，也會刪除 `models` volume，下次啟動要重新下載約 1 GB 的去背模型與約 1.2 GB 的 RAG 模型）
 - 設定：複製 `.env.example` 成 `.env` 後修改（模擬速度、首輪是否刻意失誤、去背模型、RAG 模式等），再 `docker compose up -d`
-- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）。兩個模型的 Docker 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，WSL2 則改 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦請把上限調到約 10 GB，WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。
-- RAG（`RAG_MODE=bge`，預設）：worker 第一次啟動時下載 BGE-M3、bge-reranker-v2-m3 與共用的 tokenizer（int8 ONNX，合計約 1.2 GB，存在 `models` volume），核對後先不載入，第一次檢索時才載入並常駐。系統狀態的「RAG 模型」依序顯示下載中、已就緒（第一次檢索時載入）、載入中、已載入。下載或載入期間送出的任務會在「檢索」階段等候。
-- RAG 的記憶體：模型載入後 worker 約再多用 1.7 GB（Docker 實測 1.75 GB；沒有載入時約 0.1 GB）。與去背的尖峰相加約 10 GB，Docker 的記憶體上限請比上面的建議再多留約 2 GB（例如 12 GB）。記憶體不夠時可以設 `RAG_MODE=sim`，改用模擬檢索（不下載模型、不寫入 Chroma）。
+- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）。兩個模型的 Docker 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，WSL2 則改 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦只用去背時請把上限調到約 10 GB（同時使用 RAG 見下面的「RAG 的記憶體」），WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。
+- RAG（`RAG_MODE=bge`，預設）：worker 第一次啟動時下載 BGE-M3、bge-reranker-v2-m3 與共用的 tokenizer（int8 ONNX，合計約 1.2 GB，存在 `models` volume），核對後先不載入：worker 啟動時的同步發現索引有差異（例如第一次啟動或 Chroma 重建）時就會載入；沒有差異時，第一次檢索才載入。載入後常駐。系統狀態的「RAG 模型」依序顯示下載中、已就緒（第一次檢索時載入）、載入中、已載入。下載或載入期間送出的任務會在「檢索」階段等候。
+- RAG 的記憶體：模型載入後 worker 約再多用 1.7 GB（Docker 實測 1.75 GB；沒有載入時約 0.1 GB，為去背用模擬版時的實測）。與去背的尖峰相加約 10 GB，Docker 的記憶體上限請比上面的建議再多留約 2 GB（例如 12 GB）。16 GB 的電腦同時使用去背與 RAG 時，Docker 上限請設約 12 GB；不夠時改用 `RAG_MODE=sim`，也就是模擬檢索（不下載模型、不寫入 Chroma）。
 - Chroma：`chroma` 服務（`127.0.0.1:8001`，容器之間為 `chroma:8000`），資料存在 `chroma` volume，worker 等它健康後才啟動。
 
 自己的資料：
@@ -101,11 +101,13 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 
 `$env:` 只在該視窗有效；同一個視窗接著要跑 `npm run e2e` 或 `npm run build`（mock）的話，先執行 `Remove-Item Env:NEXT_PUBLIC_API_MODE, Env:API_PROXY_URL`。
 
-本機的 worker 把模型下載到 repo 根目錄的 `models/`（已在 `.gitignore`），第一次啟動時下載約 1.2 GB 的 RAG 模型。不想下載的話，api 與 worker 都改用模擬檢索（`.env` 的 `RAG_MODE=sim`，或在兩個視窗都設定）：
+本機的 worker 把模型下載到 repo 根目錄的 `models/`（已在 `.gitignore`），第一次啟動時下載約 1.2 GB 的 RAG 模型。不想下載的話，api 與 worker 都改用模擬檢索（`.env` 的 `RAG_MODE=sim`，api 與 worker 都會讀到；或在兩個視窗都設定）：
 
 ```powershell
 $env:RAG_MODE='sim'; uv run python -m app.worker
 ```
+
+注意：`docker compose` 也讀同一個 `.env`。寫在 `.env` 的話，回到 Docker 版之前要先刪掉這一行，否則 Docker 的 api 與 worker 也會改用模擬檢索。
 
 開啟 http://127.0.0.1:3000（前端）；API 文件在 http://127.0.0.1:8000/docs。開發結束後，停掉本機的服務，再 `docker compose up -d` 回到 Docker 版。
 

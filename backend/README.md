@@ -16,7 +16,7 @@ uv sync
 | `uv run uvicorn app.api.main:app --port 8000 --reload` | api（啟動時執行 migration 並匯入 `brands/*.yaml`） |
 | `uv run python -m app.worker` | worker（啟動時把中斷的任務標記失敗，排隊中的重新放回佇列；在背景準備去背與 RAG 模型，再把品牌同步到 Chroma） |
 | `uv run pytest` | 測試：重建 PostgreSQL 的 `genai_test` 資料庫、使用 Redis 第 15 號資料庫與 Chroma 的 `genai_test` database（需要 `docker compose up -d postgres redis chroma`），並在 3902 埠啟動 composer（需要 `web/` 已 `npm ci`） |
-| `uv run pytest -m model` | 只跑真模型的測試（標記 `model`）：repo 根目錄的 `models/` 有模型檔時才執行，否則略過 |
+| `uv run pytest -m model` | 只跑真模型的測試（標記 `model`）：repo 根目錄的 `models/` 有模型檔時才執行，否則略過。去背模型的測試另外需要以 `CUTOUT_TEST_PHOTO` 指定一張商品照（例如 `CUTOUT_TEST_PHOTO=../data/uploads/xxx.jpg uv run pytest -m model`） |
 | `uv run ruff check . && uv run ruff format --check .` | lint 與格式 |
 | `uv run mypy` | 型別檢查（strict） |
 | `uv run alembic revision --autogenerate -m "說明"` | 新增 migration（產生後自動以 ruff 修正與排版，見 `alembic.ini` 的 `post_write_hooks`） |
@@ -63,7 +63,7 @@ $env:RAG_MODE='sim'; uv run python -m app.worker
 - **切塊**：品牌設定檔的 guidelines 與 `caseStudies`、上傳的手冊、選定的海報（歷史回寫）都存在 PostgreSQL 的 `brand_chunks`。切塊規則是前端 `web/src/lib/rag/chunk.ts` 的 Python 移植（`app/rag/chunking.py`），以 golden fixture（`contracts/fixtures/chunks.json`）確認兩邊結果完全相同。
 - **向量庫**：Chroma 每個品牌一個 collection `{brandId}_ci`（cosine），切塊 id 與 PostgreSQL 相同，向量化的文字為「章節：內容」。PostgreSQL 為準：worker 啟動時（模型核對完成後）與每次檢索前比對兩邊，補上缺少或內容不同的、刪除多餘的，沒有差異時不載入模型。所有寫入 Chroma 的動作都取得同一個品牌鎖。
 - **模型**：BGE-M3 與 bge-reranker-v2-m3 的 int8 ONNX，共用一個 tokenizer（合計約 1.2 GB，網址固定 commit、核對 SHA-256）。worker 啟動時下載並核對，第一次向量化或 Rerank 時才載入，之後常駐；推論在專用的單一執行緒逐筆計算（批次大小 1），不與去背共用。
-- **記憶體**：模型載入後 worker 約再多用 1.7 GB（Docker 實測 1.75 GB；沒有載入時約 0.1 GB）。
+- **記憶體**：模型載入後 worker 約再多用 1.7 GB（Docker 實測 1.75 GB；沒有載入時約 0.1 GB，為去背用模擬版時的實測）。
 - **檢索**：查詢為「品牌名｜商品名｜一句話需求｜賣點」；向量召回 8 筆（不含合規替代用語）→ 逐筆 Rerank（分數為 sigmoid，很小，只看排名）→ 前 5 筆進入 Prompt。Query Rewriting 時以改寫後的查詢召回 4 筆（合規替代用語與法規切塊）並 Rerank。模型準備中時任務在「檢索」階段等候；模型準備失敗或 Chroma 連不上時任務失敗，原因以中文說明。
 - **上傳**：worker 切塊、逐塊向量化，再把 PostgreSQL 與 Chroma 中同一個檔名的切塊換成新的。錯誤碼：品牌不存在 `not_found`、沒有可用文字 `invalid`、模型或 Chroma 無法使用 `unavailable`、其他 `internal`。
 - **歷史回寫**：選定的海報寫成切塊 `{brandId}#hist-{historyId}`（以 id upsert，重跑不會重複），寫入 PostgreSQL 後再寫入 Chroma；寫入 Chroma 失敗時，下一次同步會補上。

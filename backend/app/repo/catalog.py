@@ -13,7 +13,7 @@ from app.contract import Brand, FilePhoto, Product, ProductCutout, ProductDraft,
 from app.core.clock import iso, parse_iso
 from app.db.models import BrandChunkRow, BrandRow, ProductRow
 
-#: 列出切塊的順序：設定檔、合規替代用語、上傳的手冊、回寫的歷史案例
+#: 列出切塊的順序：設定檔、合規替代用語、上傳的手冊、回寫的歷史切塊
 _ORIGIN_ORDER = case(
     {'config': 0, 'alt': 1, 'upload': 2, 'history': 3},
     value=BrandChunkRow.origin,
