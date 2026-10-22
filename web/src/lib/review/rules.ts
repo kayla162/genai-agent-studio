@@ -47,6 +47,15 @@ export function bannedWordHits(spec: PromptSpec, brand: Brand): { words: string[
 /** 量測範圍內沒有佔比夠大的彩色時，主色檢查的說明 */
 export const NO_PRIMARY_MESSAGE = `未偵測到主色（主色區塊 < ${PRIMARY_MEASURE.minShare * 100}%）`;
 
+/** 主色檢查說明中量到的顏色：`ΔE 0.3 · 偵測主色 #B76F7A`（hex 為大寫） */
+const MEASURED_PRIMARY_LABEL = '偵測主色';
+const MEASURED_PRIMARY_PATTERN = new RegExp(`${MEASURED_PRIMARY_LABEL} (#[0-9A-F]{6})$`);
+
+/** 主色檢查（color_delta）說明文字裡量到的主色（#RRGGBB）；其他檢查或量不到主色時為 null。審查面板依此畫出色塊。 */
+export function measuredPrimaryOf(check: Pick<ReviewCheck, 'id' | 'value'>): string | null {
+  return check.id === 'color_delta' ? (MEASURED_PRIMARY_PATTERN.exec(check.value)?.[1] ?? null) : null;
+}
+
 export interface RuleContext {
   brand: Brand;
   spec: PromptSpec;
@@ -85,7 +94,7 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: Ru
     },
     {
       id: 'color_delta', name: '品牌主色色差', kind: 'rule', rule: `ΔE2000 ≤ ${brand.rules.maxDeltaE}`,
-      value: color ? `ΔE ${round1(color.dE)} · 偵測主色 ${color.hex}` : NO_PRIMARY_MESSAGE,
+      value: color ? `ΔE ${round1(color.dE)} · ${MEASURED_PRIMARY_LABEL} ${color.hex}` : NO_PRIMARY_MESSAGE,
       status: color && color.dE <= brand.rules.maxDeltaE ? 'pass' : 'fail', target: 'canvas', ragRef: ragRefFor(brand, 'color'),
     },
     {

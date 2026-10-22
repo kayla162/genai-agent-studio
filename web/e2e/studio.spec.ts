@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import JSZip from 'jszip';
 
-test('一句話需求 → 生成 → 第一輪失敗並重試 → 選圖 → 改價格 → 匯出 zip → Agent 透視看重試 diff', async ({ page }) => {
+test('一句話需求 → 生成 → 第一輪失敗並重試 → 選圖 → 改價格 → 匯出 zip → Agent 透視看重試 diff 與合規報告', async ({ page }) => {
   await page.goto('/studio');
 
   // Demo 控制台：4× 播放（預設強制首輪失敗）
@@ -55,4 +55,10 @@ test('一句話需求 → 生成 → 第一輪失敗並重試 → 選圖 → 改
   await expect(diff).toContainText('#E0458A');
   await expect(diff).toContainText('#B76E79');
   await expect(page.getByText('第 1 輪 → 第 2 輪・IG 貼文')).toBeVisible();
+
+  // 合規報告：mock 沒有審查用海報，不顯示「預覽／審查用海報」切換；主色檢查旁有量到的主色色塊
+  await page.getByRole('tab', { name: '合規報告' }).click();
+  await expect(page.getByText('BBox 疊圖')).toBeVisible();
+  await expect(page.getByRole('radiogroup', { name: '預覽／審查用海報' })).toHaveCount(0);
+  await expect(page.locator('[title^="偵測主色 #"]')).toBeVisible();
 });

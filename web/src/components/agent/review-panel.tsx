@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { ShieldCheck } from 'lucide-react';
 import type { CheckStatus, JobInput, Product, Render } from '@/types/contract';
 import { EmptyState } from '@/components/common/empty-state';
@@ -12,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { getApiClient } from '@/lib/api';
 import { overlayFor } from '@/lib/agent/inspect';
 import { getTemplate } from '@/lib/compose/templates';
@@ -20,6 +22,13 @@ import { useAppStore } from '@/lib/store/app';
 
 const STATUS_COLOR: Record<CheckStatus | 'none', string> = { fail: '#dc2626', warn: '#d97706', pass: '#059669', none: '#64748b' };
 const LEGEND: [CheckStatus | 'none', string][] = [['fail', '未通過'], ['warn', '警告'], ['pass', '通過'], ['none', '無檢查']];
+
+/** 疊圖的底圖：瀏覽器即時繪製的預覽，或 worker 存下的審查用海報（伺服器端繪製，主色依它量測） */
+type PosterSource = 'preview' | 'review';
+const POSTER_SOURCES: { id: PosterSource; label: string }[] = [
+  { id: 'preview', label: '預覽' },
+  { id: 'review', label: '審查用海報' },
+];
 
 /** 海報上疊出版面 BBox，依指向該元素的檢查結果上色 */
 function BBoxOverlay({ render }: { render: Render }) {
@@ -76,6 +85,7 @@ export function ReviewPanel({ view, input }: { view: JobView; input: JobInput | 
   const reviewed = view.renderIds.map((id) => view.renders[id]).filter((r) => r.score !== null);
   const [picked, setPicked] = useState<string | null>(null);
   const [showBoxes, setShowBoxes] = useState(true);
+  const [source, setSource] = useState<PosterSource>('preview');
   const fallback = Object.values(view.bestRenderIds)[0] ?? reviewed.at(-1)?.id ?? null;
   const render = (picked && view.renders[picked]) || (fallback ? view.renders[fallback] : null);
   const brandId = render?.spec.brandId ?? input?.brandId ?? '';
@@ -86,6 +96,10 @@ export function ReviewPanel({ view, input }: { view: JobView; input: JobInput | 
     return <EmptyState icon={ShieldCheck} title="尚未審查">候選完成合規審查後，這裡會顯示 BBox 疊圖與每一項檢查。</EmptyState>;
   }
   const best = Object.values(view.bestRenderIds).includes(render.id);
+  // 模擬模式（REVIEW_MODE=sim、mock）沒有審查用海報：不顯示切換，一律用預覽
+  const reviewImage = render.reviewImage;
+  const showReview = source === 'review' && reviewImage !== null;
+  const { width: W, height: H } = render.spec.canvas;
 
   return (
     <div className="space-y-4">
@@ -109,8 +123,38 @@ export function ReviewPanel({ view, input }: { view: JobView; input: JobInput | 
             <CardDescription>LLM 輸出的版面座標；顏色依指向該元素的檢查結果，外框代表整張圖的檢查（主色色差）。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            {reviewImage && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  value={showReview ? 'review' : 'preview'}
+                  onValueChange={(v) => v && setSource(v as PosterSource)}
+                  aria-label="預覽／審查用海報"
+                >
+                  {POSTER_SOURCES.map((s) => (
+                    <ToggleGroupItem key={s.id} value={s.id} className="px-3">{s.label}</ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+                <p className="text-xs text-muted-foreground">
+                  {showReview ? '伺服器端繪製並存檔的 PNG，主色色差依這張圖的像素量測。' : '瀏覽器即時繪製的預覽。'}
+                </p>
+              </div>
+            )}
             <div className="relative overflow-hidden rounded-lg border">
-              <PosterCanvas render={render} copy={render.spec.copy} product={product} brand={brand} pixelWidth={720} />
+              {showReview ? (
+                <Image
+                  src={reviewImage}
+                  alt={`${render.spec.copy.headline.join(' ')} 審查用海報`}
+                  width={W}
+                  height={H}
+                  unoptimized
+                  className="block h-auto w-full bg-muted"
+                />
+              ) : (
+                <PosterCanvas render={render} copy={render.spec.copy} product={product} brand={brand} pixelWidth={720} />
+              )}
               {showBoxes && <BBoxOverlay render={render} />}
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs">

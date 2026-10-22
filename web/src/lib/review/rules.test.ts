@@ -3,7 +3,7 @@ import type { ReviewCheck } from '@/types/contract';
 import { SELUNE, MISTY_ISLE } from '@/lib/api/mock/data';
 import { makeSpec } from '@/test/fixtures';
 import {
-  bannedWordHits, findBannedWords, hasClaim, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks, scoreChecks,
+  bannedWordHits, findBannedWords, hasClaim, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks, scoreChecks,
 } from './rules';
 
 const byId = (checks: ReviewCheck[], id: ReviewCheck['id']) => checks.find((c) => c.id === id)!;
@@ -71,6 +71,18 @@ describe('runRuleChecks', () => {
   it('reports the measured primary in upper case with its ΔE', () => {
     const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#b76f7a' }), 'color_delta');
     expect(c).toMatchObject({ status: 'pass', value: 'ΔE 0.3 · 偵測主色 #B76F7A' });
+  });
+
+  it('measuredPrimaryOf reads the measured primary back from the colour check, for the swatch', () => {
+    const checks = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#e0458a' });
+    expect(measuredPrimaryOf(byId(checks, 'color_delta'))).toBe('#E0458A');
+    expect(byId(checks, 'color_delta').status).toBe('fail');
+    // 量不到主色、其他檢查的說明，都沒有色塊
+    const none = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: null });
+    expect(measuredPrimaryOf(byId(none, 'color_delta'))).toBeNull();
+    expect(checks.filter((c) => c.id !== 'color_delta').map(measuredPrimaryOf)).toEqual(Array(checks.length - 1).fill(null));
+    expect(measuredPrimaryOf({ id: 'banned_words', value: '偵測主色 #B76F7A' })).toBeNull();
+    expect(measuredPrimaryOf({ id: 'color_delta', value: 'ΔE 2 · 偵測主色 #B76F7' })).toBeNull();
   });
 
   it('fails logo clearance when the logo is pushed into the headline', () => {

@@ -53,6 +53,12 @@ class RenderedPoster:
     primary_share: float
 
 
+@dataclass(frozen=True)
+class ComposerHealth:
+    #: composer 啟動時註冊的海報字型（字型家族名稱）；舊版 composer 沒有回報時為空
+    fonts: list[str]
+
+
 def _error_message(res: httpx.Response) -> str:
     """composer 的錯誤回應是 { error: { code, message } }；不是時（例如經過代理）改用狀態碼與內文開頭。"""
     try:
@@ -86,11 +92,19 @@ class ComposerClient:
     async def _post(self, path: str, body: dict[str, Any]) -> Any:
         return (await self._send(path, body)).json()
 
-    async def health(self) -> bool:
+    async def health(self) -> ComposerHealth | None:
+        """GET /health：{ status, fonts }。連不上或不是 200 時為 None。"""
         try:
-            return (await self._client.get('/health')).status_code == 200
+            res = await self._client.get('/health')
         except httpx.HTTPError:
-            return False
+            return None
+        if res.status_code != 200:
+            return None
+        try:
+            fonts = res.json().get('fonts')
+        except (ValueError, AttributeError):
+            fonts = None
+        return ComposerHealth(fonts=[str(f) for f in fonts] if isinstance(fonts, list) else [])
 
     async def layout(self, template_id: TemplateId) -> list[LayoutBox]:
         return [LayoutBox.model_validate(b) for b in await self._post('/layout', {'templateId': template_id})]
