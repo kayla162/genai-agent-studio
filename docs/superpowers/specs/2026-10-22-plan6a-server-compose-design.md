@@ -33,8 +33,8 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
   - 1.0.12 起，`ctx.font` 的字重會自動對應可變字型的 `wght` 軸。1.0.10、1.0.11 會畫成細體再加假粗體，不能用。
   - 前端 `paint.ts` 用到的 `letterSpacing`、`filter: blur`、`multiply`、`shadowBlur`、`measureText` 都與瀏覽器一致。
 - **效能**：
-  - 1080×1350 的海報約 50 毫秒畫完並編碼成 PNG，檔案約 0.3 MB。misty-isle 的 SVG 模糊濾鏡較慢，最多約 250 毫秒。
-  - 字型用到時才讀取，Alpine 上只多用約 10–15 MB 記憶體。
+  - 實測（草稿，模板原尺寸）：繪製中位數 41 毫秒，PNG 編碼才是大宗（中位數 126 毫秒）；`renderPoster` 整體中位數 188 毫秒、最長 517 毫秒（misty-isle 的 SVG 模糊濾鏡）。PNG 約 0.25–0.95 MB。
+  - 字型用到時才讀取，本身只多用約 10–15 MB；但 composer 畫過海報後（Skia 與畫布快取）約 220 MiB，Docker 驗收的峰值約 290 MiB（閒置時約 50 MiB）。
 - **跨平台**：
   - Windows 與 Alpine 的反鋸齒不同，像素不會完全相同，但 `measureText` 的寬度相同。
   - 這台 Windows 裝了另一版系統 Noto Sans TC，字型高度和我們的檔案不同。所以 composer 先清空系統字型，再註冊我們的檔案。
@@ -59,7 +59,7 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
 | 3 個示範品牌，加 3 個壓力測試品牌（深灰 #222222、淺粉 #F2C4CE、薄荷 #BFE3D0） | 180 張全部通過，ΔE 最大 1.5 | 180 張全部不通過，ΔE 最小 11.8 |
 | PNG、JPEG q75、±8 雜訊、JPEG q60 加 ±12 雜訊 | 同上 | 同上 |
 
-量一張海報約 7 毫秒（中位數）。
+量一張海報約 15 毫秒（中位數）。
 
 ## 3. 已確認的決定
 
@@ -87,7 +87,7 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
 |---|---|
 | `fonts.ts` | `registerPosterFonts(dir)`：先 `GlobalFonts.removeAll()`，再以 `Noto Sans TC`、`Noto Serif TC` 註冊兩個字型檔，任一失敗就丟出錯誤 |
 | `poster.ts` | `renderPoster(input) -> { png: Buffer, measured: MeasuredPrimary }`。用 `composePoster` 與 `paintScene` 繪製；以 `@napi-rs/canvas` 的 `loadImage` 載入圖片（SVG 先轉成 Buffer）；繪製完成後以 `getImageData` 量主色 |
-| `fonts.lock.json`、`scripts/fetch-fonts.mjs` | 字型網址、位元組數、SHA-256；下載並核對到 `web/composer/fonts/`（不進 git）。Dockerfile 與本機共用同一份清單 |
+| `fonts.lock.json`（與 `web/scripts/fetch-fonts.mjs`） | 字型網址、位元組數、SHA-256；`npm run fonts` 下載並核對到 `web/composer/fonts/`（不進 git，也列在 `.dockerignore`）。Dockerfile 的網址與 SHA 由測試確認與清單一致 |
 
 **端點**：
 
@@ -102,8 +102,9 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
   - 範例商品依 `productImage` 產生 SVG；
   - 上傳商品使用去背圖或原圖，`blend` 規則與前端相同。
 - **Logo**：沒有圖檔時畫向量標誌，與前端相同。
-- **啟動**：伺服器啟動時就註冊字型，失敗就結束行程。`/health` 回報字型已載入。
-- **請求大小**：`/render` 的請求本文上限 30 MB，超過時回 400。
+- **圖片錯誤**：非範例商品缺少商品圖、或任何圖片無法解碼時回 400（審查用海報是紀錄，不像前端預覽可以默默略過）。
+- **啟動**：伺服器啟動時就註冊字型，失敗就以結束代碼 1 結束並提示執行 `npm run fonts`。`/health` 回傳 `{ status, fonts }`。
+- **請求大小**：請求本文上限 30 MB，超過時回 400（錯誤碼 `too_large`）。worker 送圖前會把長邊大於 2048 像素的圖縮小，所以實際請求遠小於上限。
 
 ### 4.2 主色量測（`web/src/lib/review/measure.ts`，純函式，前端也可使用）
 
@@ -119,7 +120,7 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
    - 峰值顏色是它周圍 3×3×3 格內所有取樣的 Lab 平均；佔比是這些取樣數除以總取樣數。
 6. **候選**：佔比 ≥ 2% 的峰值。
 7. **選擇**：與品牌主色 ΔE2000（`deltaEHex`）最小的候選。同分時取佔比大者，再取索引小者。
-8. **顯示**：最小 ΔE 超過門檻時，改為回報候選中彩度最高的顏色。判定不變，但說明文字會顯示實際用錯的顏色，例如 `#E0458A`。
+8. **顯示**：最小 ΔE 超過品牌的 `maxDeltaE` 時，改為回報候選中彩度最高的顏色（`share`、`deltaE` 也改為這個顏色的值）。判定不變，但說明文字會顯示實際用錯的顏色，例如 `#E0458A`。
 9. **沒有候選**：`hex = null`，`color_delta` 判定不通過，說明文字為「未偵測到主色（主色區塊 < 2%）」。
 
 **取捨**：這項檢查確認的是「排版上的品牌色元素有沒有用對色」，不檢查背景圖。程式產生的背景依品牌色繪製，所以沒有問題。Plan 7 換成 AI 生成的照片背景時，要另外新增「背景色系」檢查，標準不能是「與主色 ΔE ≤ 5」，因為正確的程式背景量起來也有 24–53。
@@ -131,7 +132,7 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
   - 其他 6 項規則不變。
 - **新的 `contentVlmChecks(spec, brand)`**（`web/src/lib/review/vlm.ts`）：
   - `vlm_exaggeration`：與 `banned_words` 相同的偵測；
-  - `vlm_occlusion`：Logo 與標題重疊時不通過，其他情況通過；
+  - `vlm_occlusion`：Logo 與標題的方框相交時不通過，其他情況通過（mock 用垂直間距判斷；在所有預設版型上結果相同）；
   - `vlm_quality`：一律通過。
   - 說明文字都加上「（模擬，Plan 6B 改用 Gemini）」。
   - mock 的 `mockVlmChecks` 保留不變，供模擬模式使用。
@@ -152,12 +153,13 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
 
 **流程**：
 - **排版階段**（`composing`）：對每張候選呼叫 `compose`。
-  - 真實版送出一則 `log` 事件「伺服器端排版 N 張」。
+  - 原本的「排版引擎疊加文字圖層（N 張）」保留；真實版另外送出「✓ 伺服器端排版 N 張」。每張之間檢查是否取消。
   - 模擬版的事件與目前完全相同。
 - **審查階段**：`Reviewer.review(brand, render, seed, poster)` 多一個 `poster` 參數。
   - **`ComposerReviewer`**（真實）：以 `poster.measured_primary` 呼叫 `/review`。
   - **`SimReviewer`**：忽略 `poster`，結果不變。
-- **錯誤**：composer 無法連線或回傳錯誤時，任務失敗，原因為中文，例如「排版服務（composer）無法繪製海報：…」。
+- **錯誤**：composer 無法連線或回傳錯誤時，任務失敗，原因為中文，例如「排版服務（composer）無法繪製海報：…」「排版服務（composer）無法審查海報：…」；worker 端找不到或讀不了商品圖時為「無法繪製審查用海報：找不到商品圖（網址）」。Logo 讀不到時改畫向量標誌並記錄警告。
+- **縮圖**：長邊超過 2048 像素、或 EXIF 方向不是 1 的圖片，以 Pillow 轉正並縮小後再送（有透明度存 PNG，否則 JPEG q90）。12–24 MP 的照片每張候選約多 160–270 毫秒，目前沒有快取。
 - **選用**：`build_services` 依 `settings.review_mode` 選擇 `PosterComposer` 與 `Reviewer`。
 
 ### 4.5 合約
@@ -165,7 +167,7 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
 - `ReviewCompletedEvent` 新增 `image: str | None`，內容是審查用海報的網址。
   - TypeScript 的 `review.completed` 新增 `image: string | null`。
   - 模擬版與 mock 一律為 `null`，golden timelines 只多這個欄位。
-- 前端 `JobView` 依事件把 `image` 存進候選，供審查面板使用。
+- 前端 `JobView` 的候選型別改為 `Candidate extends Render { reviewImage: string | null }`，依事件存入。
 
 ### 4.6 前端
 
@@ -173,14 +175,15 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
   - 有 `image` 時，顯示「預覽／審查用海報」切換。
   - 審查用海報直接顯示 PNG，框線標示照常疊加，兩者座標相同。
   - `color_delta` 的說明文字旁顯示量到的主色色塊。
-- **系統狀態**：composer 的說明改為「排版、繪製與規則審查」，並顯示目前的 `REVIEW_MODE`。
+- **系統狀態**：composer 的名稱改為「composer（排版、繪製與規則審查）」，說明顯示 `REVIEW_MODE` 與已載入的字型；`REVIEW_MODE=sim` 時為「模擬」，composer 沒有回報字型（舊映像檔）時為「異常」並提示重新建置。
+- **主色色塊**：畫在共用的檢查清單元件中，所以工作台的審查細節也看得到。
 
 ### 4.7 字型與 Docker
 
 - **`web/Dockerfile`**：
   - 新增 `FROM scratch AS fonts` 階段，以 `ADD --checksum=sha256:…` 下載兩個字型檔與兩份 `OFL.txt`。
   - composer 階段先 `mkdir -p` 字型資料夾，再以 `COPY --chmod=0644` 複製進去，並設定 `POSTER_FONTS_DIR`。
-- **`docker-compose.yml`**：worker 的環境變數加上 `REVIEW_MODE`（預設 `composer`）。composer 不需要掛載任何資料夾。
+- **`docker-compose.yml`**：api 與 worker 共用的環境加上 `REVIEW_MODE: ${REVIEW_MODE:-composer}`（api 的系統狀態也要讀它）。composer 不需要掛載任何資料夾。
 - **`docker-compose.e2e.yml`**：`REVIEW_MODE: composer`。
 - **`@napi-rs/canvas`**：版本固定為 `1.0.13`（不加 `^`），並提交 lockfile。lockfile 含各平台的預編譯檔。
 
@@ -262,3 +265,19 @@ Plan 5 之後，10 項審查中有 7 項規則依版型與文案計算，但有�
 - **背景色系檢查**：Plan 7。
 - **伺服器端匯出海報**：前端匯出照舊。
 - **自動清理 `data/jobs/` 的舊海報**：每張約 0.3–1 MB，之後視需要再加。
+- **範例商品瓶身標籤的字重**：範例商品圖是含 `<text>` 的 SVG。伺服器端的 SVG 繪製不支援可變字型的字重，標籤會畫成細體；瀏覽器把 SVG 當圖片載入時也用不到網頁字型。標籤在商品區塊內，不影響任何檢查，記為已知限制。
+
+## 12. 驗收結果（2026-10-22，草稿分支，Docker 專案 `plan6a-accept`）
+
+| 項目 | 結果 |
+|---|---|
+| 系統狀態 | composer 正常，顯示 `REVIEW_MODE=composer` 與兩個字型 |
+| 主色檢查 | 三個品牌（SÉLUNE、misty-isle、Kayla 精緻少女）第一輪偏色都不通過，說明文字是實際用錯的顏色（ΔE 12.4–36.6）；重試後 ΔE 0–0.4 通過 |
+| 分數 | 42 張候選全部等於 100 − 14×不通過 − 6×警告；同一張海報重畫三次，PNG 與檢查結果完全相同 |
+| 審查用海報 | 每張候選一個 PNG，皆為模板原尺寸，可經 `/files` 讀取 |
+| 與瀏覽器比對 | 版面、字型、粗細、顏色一致，差異只在邊緣反鋸齒；示範商品瓶身標籤字重見 §11 |
+| 大照片 | 4000×3000 JPEG 縮成 2048×1536 後繪製，任務正常完成 |
+| 時間 | 每張海報排版 100–520 毫秒（含讀圖、繪製、存檔），審查 2–7 毫秒 |
+| 記憶體 | composer 閒置約 50 MiB，畫過海報後約 220 MiB，峰值約 290 MiB |
+
+**品牌設定的發現**：各模板的版型目前固定，商品佔畫面 21–34%（限時動態 21.3%、IG 貼文 25.5%、Banner 31.7%、電商主圖 32.8%、情境圖 33.6%）。品牌的 `productRatio` 下限高於這些值時，該模板永遠無法通過；改寫流程也無法改變版型。Plan 6B 讓 Gemini 調整版面後才能處理。
