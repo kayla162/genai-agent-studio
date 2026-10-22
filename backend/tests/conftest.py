@@ -91,7 +91,7 @@ async def chroma(chroma_store: VectorStore) -> AsyncIterator[VectorStore]:
 
 @pytest.fixture(scope='session')
 def composer_url() -> Iterator[str]:
-    """在 3902 埠啟動 composer（需要 web/ 已 npm install）。"""
+    """在 3902 埠啟動 composer（需要 web/ 已 npm install 與 npm run fonts；字型資料夾沿用 POSTER_FONTS_DIR）。"""
     port = 3902
     url = f'http://127.0.0.1:{port}'
     proc = subprocess.Popen(
@@ -108,6 +108,11 @@ def composer_url() -> Iterator[str]:
                 if httpx.get(f'{url}/health').status_code == 200:
                     break
             except httpx.HTTPError:
+                # composer 啟動時就註冊字型，缺少字型會直接結束；不必等到逾時
+                if proc.poll() is not None:
+                    raise RuntimeError(
+                        f'composer 啟動失敗（結束代碼 {proc.returncode}）；缺少字型時請在 web/ 執行 npm run fonts'
+                    ) from None
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(0.2)

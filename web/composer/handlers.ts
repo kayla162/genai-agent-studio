@@ -10,6 +10,7 @@ import { computeLayout } from '@/lib/compose/layout';
 import { getTemplate } from '@/lib/compose/templates';
 import { runRuleChecks, scoreChecks } from '@/lib/review/rules';
 import { contentVlmChecks } from '@/lib/review/vlm';
+import { renderPoster, type RenderPosterInput } from './poster';
 
 /** 找不到路徑（伺服器回 404） */
 export class UnknownRoute extends Error {}
@@ -40,11 +41,20 @@ function reviewPoster({ spec, brand, measuredPrimary }: {
 }
 
 /**
- * 後端呼叫的 TypeScript 邏輯：版型、live 模式的審查，以及模擬模式沿用的 mock 行為（/sim/*）。
+ * 後端呼叫的 TypeScript 邏輯：版型、live 模式的繪製與審查，以及模擬模式沿用的 mock 行為（/sim/*）。
  * 輸入與輸出都是合約的 JSON。
  */
 const HANDLERS: Record<string, Handler> = {
   '/layout': ({ templateId }: { templateId: TemplateId }) => computeLayout(getTemplate(templateId)),
+
+  /** 審查用海報：PNG，標頭帶量到的主色（量不到時為空字串）與它的佔比（0–1） */
+  '/render': async (input: RenderPosterInput) => {
+    const { png, measured } = await renderPoster(input);
+    return new BinaryResponse(png, 'image/png', {
+      'X-Measured-Primary': measured.hex ?? '',
+      'X-Primary-Share': String(Number(measured.share.toFixed(4))),
+    });
+  },
 
   '/review': reviewPoster,
 
