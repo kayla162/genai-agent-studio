@@ -1,0 +1,233 @@
+# 品牌設定檔範本：複製成 brands/<品牌 id>.yaml 再修改內容。
+# - 檔名必須與 id 相同，id 只能用小寫英文、數字與連字號
+# - 以底線開頭的檔案（例如本檔）不會被匯入
+# - 修改後重新啟動後端：docker compose restart api worker
+# - 含「#」或「: 」的文字要用引號括起來（YAML 會把「 #」後面當成註解）
+
+id: my-brand-01
+name: Kayla 精緻少女
+category: 美妝保養
+ciVersion: v1.0
+
+# 品牌色票：主色、輔助色、點綴色、文字色（#RRGGBB）
+palette: {primary: '#B8A5D6', secondary: '#F9F4E8', accent: '#C9A96E', ink: '#3A3335'}
+
+# 目前只支援 Noto Serif TC 與 Noto Sans TC
+fonts: {headline: Noto Serif TC, body: Noto Sans TC}
+
+# 生圖時的品牌視覺風格（英文，直接放進 positive prompt）
+visualStyle: warm minimal product photography, natural linen texture, soft morning light
+
+# 預設語氣：gentle（溫柔療癒）、science（專業科研）、playful（活潑年輕）、minimal（簡約）
+defaultTone: science
+
+# 審查門檻：主色色差 ΔE2000 上限、最少留白比例、商品主體佔比（最小、最大）
+rules: {maxDeltaE: 5, minWhitespace: 0.3, productRatio: [0.2, 0.5]}
+
+# 禁用詞與合規替代用語（替代詞為空字串代表直接刪除）
+bannedWords: [
+  根治,
+  治療,
+  治癒,
+  疾病,
+  消炎,
+  抗發炎,
+  殺菌,
+  抗菌,
+  抗病毒,
+  抗感染,
+  消毒,
+  癌症,
+  抗癌,
+  修復受損細胞,
+  細胞再生,
+  刺激膠原蛋白增生,
+  傷口癒合,
+  傷口修復,
+  消除疤痕,
+  去疤,
+  除疤,
+  永久除毛,
+  永久美白,
+  立即美白,
+  保證美白,
+  保證有效,
+  絕對有效,
+  百分之百有效,
+  根除痘痘,
+  治療痘痘,
+  消除痘痘,
+  消除粉刺,
+  永不長痘,
+  根治濕疹,
+  治療皮膚炎,
+  治療異位性皮膚炎,
+  治療酒糟,
+  治療香港腳,
+  治療掉髮,
+  生髮,
+  治療禿頭,
+  活化毛囊,
+  促進毛囊再生,
+  消除黑眼圈,
+  消除眼袋,
+  消除皺紋,
+  逆轉老化,
+  返老還童,
+  換膚,
+  換皮,
+  深層排毒,
+  排出體內毒素,
+  溶脂,
+  燃脂,
+  瘦身,
+  減肥,
+  豐胸,
+  隆乳,
+  改變基因,
+  改變體質,
+  改善過敏,
+  抗過敏,
+  止癢,
+  止痛,
+  麻醉,
+  醫美級療效,
+  醫療級修復,
+  醫師認證療效,
+  零副作用,
+  完全無刺激,
+  絕不過敏,
+  永久有效,
+  一次見效,
+  立即見效,
+  七天根治,
+  三天消痘,
+  速效治療,
+  保證不復發,
+  最有效,
+  全網第一,
+  第一品牌,
+  最強,
+  無敵,
+  100%安全,
+  天然所以無害,
+  孕婦絕對安全
+]
+
+replacements: {
+  根治: '',
+  治療: '',
+  治癒: '',
+  疾病: '',
+  消炎: '',
+  抗發炎: '',
+  殺菌: '',
+  抗菌: '',
+  抗病毒: '',
+  抗感染: '',
+  消毒: '',
+  癌症: '',
+  抗癌: '',
+  修復受損細胞: '',
+  細胞再生: '',
+  刺激膠原蛋白增生: '',
+  傷口癒合: '',
+  傷口修復: '',
+  消除疤痕: '',
+  去疤: '',
+  除疤: '',
+  永久除毛: '',
+  永久美白: '',
+  立即美白: '',
+  保證美白: '',
+  保證有效: '',
+  絕對有效: '',
+  百分之百有效: '',
+  根除痘痘: '',
+  治療痘痘: '',
+  消除痘痘: 調理肌膚,
+  消除粉刺: 改善粉刺外觀,
+  永不長痘: '',
+  根治濕疹: '',
+  治療皮膚炎: '',
+  治療異位性皮膚炎: '',
+  治療酒糟: '',
+  治療香港腳: '',
+  治療掉髮: '',
+  生髮: '',
+  治療禿頭: '',
+  活化毛囊: '',
+  促進毛囊再生: '',
+  消除黑眼圈: 改善黑眼圈外觀,
+  消除眼袋: 改善眼周肌膚外觀,
+  消除皺紋: 淡化細紋,
+  逆轉老化: 維持肌膚年輕狀態,
+  返老還童: 維持肌膚彈潤,
+  換膚: '',
+  換皮: '',
+  深層排毒: 深層清潔,
+  排出體內毒素: '',
+  溶脂: '',
+  燃脂: '',
+  瘦身: '',
+  減肥: '',
+  豐胸: '',
+  隆乳: '',
+  改變基因: '',
+  改變體質: '',
+  改善過敏: 舒緩肌膚不適,
+  抗過敏: 舒緩肌膚,
+  止癢: 舒緩乾燥引起的不適,
+  止痛: '',
+  麻醉: '',
+  醫美級療效: 專業保養,
+  醫療級修復: 肌膚修護,
+  醫師認證療效: '',
+  零副作用: '',
+  完全無刺激: 溫和配方,
+  絕不過敏: '',
+  永久有效: '',
+  一次見效: '',
+  立即見效: '',
+  七天根治: '',
+  三天消痘: '',
+  速效治療: '',
+  保證不復發: '',
+  最有效: '',
+  全網第一: '',
+  第一品牌: '',
+  最強: '',
+  無敵: '',
+  100%安全: '',
+  天然所以無害: 天然來源成分,
+  孕婦絕對安全: ''
+}
+
+# 出現這些詞視為效果宣稱，頁尾會加上 disclaimerPhrase；不需要時兩者都留空（claimWords: []、disclaimerPhrase: ''）
+claimWords: [修護, 改善]
+disclaimerPhrase: 效果因個人膚況而異
+
+# 四種語氣的文案範例（標題兩行、副標），四種都要填
+copyPresets:
+  gentle: {headline: [溫柔呵護, 每一天], subhead: 天然成分・溫和配方}
+  science: {headline: [科學配方, 看得見的改變], subhead: 專利成分・臨床測試}
+  playful: {headline: [今天也要, 閃閃發光！], subhead: 限時優惠，手刀搶購}
+  minimal: {headline: [簡單, 就是美], subhead: 純粹成分・無多餘添加}
+
+# CI 規範切塊（RAG 檢索用）。key 在品牌內不可重複；tag 為 color、logo、law、layout、font、history 或 general。
+# 沒有 key 為 law-alt 的切塊時，會依 replacements 自動產生「合規替代用語對照」（只在 Query Rewriting 時檢索）。
+guidelines:
+  - {key: color, source: brand_guideline.pdf, section: 色彩, tag: color, text: '品牌主色 #B8A5D6，主色色差需控制在 ΔE2000 ≤ 5。'}
+  - {key: logo, source: brand_guideline.pdf, section: Logo, tag: logo, text: Logo 四周保留至少 0.5 倍 Logo 高度的淨空區。}
+  - {key: law, source: compliance.md, section: 廣告法規, tag: law, text: 不得宣稱醫療效能。禁用詞例：根治、治療、保證有效。}
+  - {key: layout, source: brand_guideline.pdf, section: 版型, tag: layout, text: 商品主體佔畫面 20–50%，整體留白至少 30%。}
+
+# 歷史優秀案例（ctr 為百分比，例如 3.5）
+caseStudies: []
+
+# Logo 圖檔（相對於 brands/，例如 assets/my-brand-logo.png）；支援 PNG、JPEG、WebP、SVG，沒有時填 null。
+# 海報上等比例縮放放進 Logo 框（靠左），所以建議用去背的橫式 Logo
+logo: null
+
+# IP-Adapter 參考圖（相對於 brands/），生圖時參考的品牌風格
+styleImages: []
