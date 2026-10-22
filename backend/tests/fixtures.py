@@ -1,6 +1,9 @@
 """讀取 contracts/fixtures/（由 web 的 `npm run fixtures` 產生），以及 tests/data/ 的測試檔案。"""
 
+import atexit
 import json
+import shutil
+import tempfile
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -9,10 +12,28 @@ from app.contract import HistoryEntry
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = REPO_ROOT / 'contracts' / 'fixtures'
-BRANDS_DIR = REPO_ROOT / 'brands'
+#: repo 追蹤的示範品牌檔（brands/ 裡其他檔案是使用者自己的品牌，不屬於測試的前提）
+DEMO_BRAND_FILES = ('_template.yaml', 'selune.yaml', 'misty-isle.yaml')
 TIMELINES = ('selune-retry', 'selune-needs-review', 'misty-first-pass')
 #: 含中文文字層的兩頁 PDF（Chromium 以微軟正黑體輸出，文字層的部分漢字記成康熙部首）
 SAMPLE_PDF = Path(__file__).parent / 'data' / 'ci-sample.pdf'
+
+
+def _copy_demo_brands() -> Path:
+    """只把示範品牌檔複製到暫存資料夾，測試不讀 repo 的 brands/：
+    使用者在那裡加了自己的品牌（例如 my-brand-01.yaml）時，「剛好兩個示範品牌」的斷言才不會失敗。
+    資料夾在每次 pytest 執行時建立一次，程式結束時刪除。"""
+    root = Path(tempfile.mkdtemp(prefix='genai-test-brands-'))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
+    source = REPO_ROOT / 'brands'
+    for name in DEMO_BRAND_FILES:
+        shutil.copy(source / name, root / name)
+    if (source / 'assets').is_dir():
+        shutil.copytree(source / 'assets', root / 'assets')
+    return root
+
+
+BRANDS_DIR = _copy_demo_brands()
 
 
 @cache

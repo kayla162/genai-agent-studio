@@ -77,7 +77,7 @@ async def services(db: Database, redis: Redis, composer_url: str, tmp_path: Path
     ports = sim_ports(composer, first_round_fail=True, force_all_fail=False)
     async with db.session() as s:
         await catalog.sync_brands(s, load_brands(BRANDS_DIR)[0], NOW)
-    settings = Settings(data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local')
+    settings = Settings(data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=BRANDS_DIR)
     cutouts = CutoutEngine('sim', tmp_path / 'models', redis)
     rag = RagEngine('sim', tmp_path / 'models', redis)
     vectors = VectorStore(settings.chroma_url, database=TEST_CHROMA_DATABASE)
@@ -522,7 +522,7 @@ async def test_run_task_returns_unfinished_when_the_wait_runs_out(queues: Queues
 async def test_build_services_picks_the_retriever_by_rag_mode(
     mode: RagMode, retriever: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('app.worker.settings', Settings(rag_mode=mode))
+    monkeypatch.setattr('app.worker.settings', Settings(brands_dir=BRANDS_DIR, rag_mode=mode))
     built = build_services()
     try:
         assert isinstance(built.ports.retriever, retriever)
