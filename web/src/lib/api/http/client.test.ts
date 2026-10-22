@@ -130,6 +130,16 @@ describe('HttpApiClient REST', () => {
     expect(api.connection.get().status).toBe('connected');
   });
 
+  it('turns the HTML 413 of nginx into a readable invalid error', async () => {
+    // nginx 的 client_max_body_size 先擋下太大的上傳，回的是 HTML，不是後端的錯誤 JSON
+    const { api } = setup(() => new Response('<html>413 Request Entity Too Large</html>', { status: 413 }));
+    const photo = new File([new Uint8Array([1, 2, 3])], 'serum.png', { type: 'image/png' });
+    await expect(api.uploadProductPhoto(photo)).rejects.toMatchObject({
+      code: 'invalid', message: '檔案太大，超過伺服器允許的上傳大小', status: 413,
+    });
+    expect(api.connection.get().status).toBe('connected');
+  });
+
   it('keeps checking while the dev server answers 500 for a stopped backend', async () => {
     let up = false;
     const { api } = setup(() => (up ? Response.json({ status: 'ok' }) : new Response('Internal Server Error', { status: 500 })));
@@ -197,5 +207,19 @@ describe('HttpApiClient.ingestBrandDocument', () => {
     await expect(api.ingestBrandDocument('selune', file(), () => {})).rejects.toMatchObject({ code: 'unavailable' });
     reply = () => ndjson(progress.slice(0, 2));
     await expect(api.ingestBrandDocument('selune', file(), () => {})).rejects.toThrow('文件上傳的進度中斷');
+  });
+
+  it('rejects a file over 20 MB without uploading it', async () => {
+    const { api, fetch } = setup(() => ndjson(progress));
+    const big = new File([new Uint8Array(20 * 1024 * 1024 + 1)], 'ci.pdf', { type: 'application/pdf' });
+    expect(big.size).toBe(20 * 1024 * 1024 + 1);
+    await expect(api.ingestBrandDocument('selune', big, () => {})).rejects.toMatchObject({
+      code: 'invalid', message: '檔案不可超過 20 MB', status: 400,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    // 剛好 20 MB 照常上傳（與後端的上限相同）
+    const limit = new File([new Uint8Array(20 * 1024 * 1024)], 'ci.pdf', { type: 'application/pdf' });
+    expect(await api.ingestBrandDocument('selune', limit, () => {})).toEqual([chunk]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

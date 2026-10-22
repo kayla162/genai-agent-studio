@@ -23,6 +23,9 @@ export interface HttpApiClientOptions {
 
 type IngestLine = IngestEvent | { error: { code: string; message: string } };
 
+/** 品牌文件的大小上限：與後端的 MAX_BYTES（backend/app/rag/extract.py）相同。先在瀏覽器擋下，nginx 的上限才不會先回 413 */
+const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
+
 const q = encodeURIComponent;
 const query = (brandId?: string) => (brandId ? `?brandId=${q(brandId)}` : '');
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,6 +78,7 @@ export class HttpApiClient implements ApiClient {
    * 送出請求；連不上後端時更新連線狀態，非 2xx 時丟出 ApiError。
    * 後端的錯誤一律是 JSON（未預期的錯誤也是 500 internal）；不是 JSON 的 5xx 來自中間的代理，視為連不上後端（network）：
    * nginx 連不上 api 時回 502、504，next dev 的 rewrites 在後端停止時回 500。
+   * 不是 JSON 的 413 是 nginx 擋下太大的上傳，轉成 invalid。
    */
   private async send(path: string, init: RequestInit = {}): Promise<Response> {
     let res: Response;
@@ -94,7 +98,10 @@ export class HttpApiClient implements ApiClient {
       throw new ApiError('network', '無法連線到後端，請確認服務已啟動', res.status);
     }
     this.connection.set('connected');
-    throw error ?? new ApiError('http_error', `後端回應 HTTP ${res.status}`, res.status);
+    if (error) throw error;
+    // nginx 的 client_max_body_size 擋下的上傳（HTML 413，請求沒有送到後端）
+    if (res.status === 413) throw new ApiError('invalid', '檔案太大，超過伺服器允許的上傳大小', 413);
+    throw new ApiError('http_error', `後端回應 HTTP ${res.status}`, res.status);
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -149,8 +156,9 @@ export class HttpApiClient implements ApiClient {
     return this.request('GET', '/api/brands');
   }
 
-  /** 以 multipart 上傳原檔（欄位 file）；檔案的問題在開始串流之前就以 HTTP 400 回應 */
+  /** 以 multipart 上傳原檔（欄位 file）；超過 20 MB 的不送出。檔案的問題在開始串流之前就以 HTTP 400 回應 */
   async ingestBrandDocument(brandId: string, file: File, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]> {
+    if (file.size > MAX_DOCUMENT_BYTES) throw new ApiError('invalid', `檔案不可超過 ${MAX_DOCUMENT_BYTES / 1024 / 1024} MB`, 400);
     const form = new FormData();
     form.append('file', file, file.name);
     const res = await this.send(`/api/brands/${q(brandId)}/documents`, { method: 'POST', body: form });
