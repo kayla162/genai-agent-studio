@@ -34,6 +34,11 @@ export const LAYOUT_PRESETS: Record<TemplateId, Record<LayoutElementId, NormBox>
   },
 };
 
+/** 版面元素的中文名稱（審查說明、護欄與 VLM 提示詞共用） */
+export const ELEMENT_LABELS: Record<LayoutElementId, string> = {
+  logo: 'Logo', headline: '標題', subhead: '副標', features: '賣點', product: '商品', badge: '徽章', price: '價格', disclaimer: '註記',
+};
+
 const Z_INDEX: Partial<Record<LayoutElementId, number>> = { product: 1, badge: 3 };
 
 export function computeLayout(t: ChannelTemplate): LayoutBox[] {

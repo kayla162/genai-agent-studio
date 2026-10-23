@@ -4,6 +4,7 @@ import { areaRatio, verticalGap } from '@/lib/core/geometry';
 import { clamp, round1 } from '@/lib/core/num';
 import { deltaEHex } from './color';
 import { PRIMARY_MEASURE } from './measure';
+import { ocrCheck, type OcrResult } from './ocr';
 
 export function findBannedWords(texts: string[], banned: string[]): string[] {
   const joined = texts.join('\n');
@@ -61,11 +62,11 @@ export interface RuleContext {
   spec: PromptSpec;
   /** 從海報量到的主色（measurePrimary）；量不到時為 null，主色檢查判定不通過 */
   measuredPrimary: string | null;
-  /** OCR 結果與文案的差異字數 */
-  ocrDiffs?: number;
+  /** VLM 轉錄與海報文字的比對結果（ocrDiffs）；沒有轉錄時（模擬模式）為 0 處差異 */
+  ocr?: OcrResult;
 }
 
-export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: RuleContext): ReviewCheck[] {
+export function runRuleChecks({ brand, spec, measuredPrimary, ocr }: RuleContext): ReviewCheck[] {
   const B = boxMap(spec.layout);
   const { width: W, height: H } = spec.canvas;
   const pct = (v: number) => `${round1(v * 100)}%`;
@@ -118,8 +119,7 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: Ru
       ragRef: ragRefFor(brand, 'layout'),
     },
     {
-      id: 'ocr_typo', name: 'OCR 錯字比對', kind: 'rule', rule: '渲染文字與文案逐字比對',
-      value: `${ocrDiffs} 處差異`, status: ocrDiffs === 0 ? 'pass' : 'fail', target: 'headline', ragRef: null,
+      id: 'ocr_typo', name: 'OCR 錯字比對', kind: 'rule', rule: '渲染文字與文案逐字比對', ...ocrCheck(ocr), ragRef: null,
     },
   ];
 }
