@@ -16,6 +16,8 @@ from fastapi import APIRouter, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
+from app.adapters.composer import ComposerClient, ComposerError
+from app.adapters.gemini import NOT_CONFIGURED, GeminiError
 from app.api.services import ApiServices, Services
 from app.contract import (
     ApiOptions,
@@ -44,14 +46,14 @@ from app.rag.state import STATE_KEY as RAG_STATE_KEY
 from app.repo import catalog
 from app.settings import Settings
 from app.templates import CHANNEL_TEMPLATES
+from app.usage import PricingError, usd
 
 router = APIRouter(tags=['品牌與商品'])
 
 ComponentState = Literal['ok', 'sim', 'off', 'error']
 
-#: 還是模擬版的外部服務（Plan 6、7 換成真實版）
+#: 還是模擬版的外部服務（Plan 7 換成真實版）
 SIMULATED = [
-    ComponentStatus(id='gemini', label='Gemini（LLM／VLM）', status='sim', detail='模擬 Agent 與 VLM 審查'),
     ComponentStatus(id='comfyui', label='ComfyUI', status='sim', detail='模擬生圖：程序化背景'),
 ]
 #: 系統狀態每一項最多等待的秒數
@@ -125,13 +127,38 @@ async def _composer(services: ApiServices) -> str | tuple[ComponentState, str]:
     return f'REVIEW_MODE=composer・字型：{"、".join(health.fonts)}（{url}）'
 
 
+async def glyph_warnings(composer: ComposerClient, brands: list[Brand]) -> str:
+    """品牌設定檔的預設文案、註記用語與替代用語中，海報字型沒有的字（會畫成方塊）。
+    有缺字時回傳接在系統狀態說明後面的警告；composer 沒有回應時略過（不影響狀態）。"""
+    texts: list[tuple[Brand, str]] = []
+    for brand in brands:
+        for preset in brand.copy_presets.values():
+            texts += [(brand, line) for line in (*preset.headline, preset.subhead)]
+        texts += [(brand, brand.disclaimer_phrase), *((brand, alt) for alt in brand.replacements.values())]
+    try:
+        missing = await composer.glyphs([text for _, text in texts])
+    except ComposerError:
+        return ''
+    found: dict[str, list[str]] = {}
+    for (brand, _), chars in zip(texts, missing, strict=True):
+        known = found.setdefault(brand.name, [])
+        known += [ch for ch in chars if ch not in known]
+    return ''.join(
+        f'；{name} 的預設文案或替代用語有伺服器字型沒有的字：「{"".join(chars)}」'
+        for name, chars in found.items()
+        if chars
+    )
+
+
 async def _brands(services: ApiServices) -> str:
+    """品牌設定檔：載入數、格式錯誤而略過的檔案（error），以及預設文案的缺字（只加警告，不改變狀態）。"""
     async with services.db.session() as s:
-        count = len(await catalog.list_brands(s))
+        brands = await catalog.list_brands(s)
+    warning = await glyph_warnings(services.composer, brands)
     if services.brand_errors:
         skipped = '；'.join(f'{e.file}：{e.message}' for e in services.brand_errors)
-        raise Invalid(f'已載入 {count} 個品牌；略過 {skipped}')
-    return f'已載入 {count} 個品牌'
+        raise Invalid(f'已載入 {len(brands)} 個品牌；略過 {skipped}{warning}')
+    return f'已載入 {len(brands)} 個品牌{warning}'
 
 
 async def _chroma(services: ApiServices) -> str | tuple[ComponentState, str]:
@@ -150,9 +177,34 @@ async def _chroma(services: ApiServices) -> str | tuple[ComponentState, str]:
     return url
 
 
+async def _gemini(services: ApiServices) -> str | tuple[ComponentState, str]:
+    """AGENT_MODE=gemini：key、單價表與模型（models.get，不計費，結果快取 60 秒）都正常時，顯示模型、本月費用與上限、
+    key 末 4 碼；任一項有問題時為 error 並說明原因。"""
+    settings = services.settings
+    if settings.agent_mode == 'sim':
+        return 'sim', 'AGENT_MODE=sim：模擬 Agent 與 VLM 審查'
+    gemini, ledger = services.gemini, services.ledger
+    if gemini is None or not gemini.configured:
+        raise GeminiError(NOT_CONFIGURED)
+    llm, vlm = settings.gemini_llm_model, settings.gemini_vlm_model
+    models = list(dict.fromkeys([llm, vlm]))
+    if ledger is not None:
+        if ledger.pricing.problem is not None:
+            raise PricingError(ledger.pricing.problem)
+        for model in models:
+            ledger.pricing.price(model, utc_now())
+    for model in models:
+        await gemini.check_model(model)
+    month = await ledger.month_total() if ledger is not None else 0
+    cap = settings.gemini_monthly_budget_usd
+    shown = f'LLM／VLM {llm}' if llm == vlm else f'LLM {llm}／VLM {vlm}'
+    budget = f'上限 US${cap:g}' if cap > 0 else '不設上限'
+    return f'{shown}・本月 {usd(month)}／{budget}・key {gemini.key_hint}'
+
+
 @router.get('/api/status')
 async def get_status(services: Services) -> SystemStatus:
-    *probed, cutout = await asyncio.gather(
+    *probed, gemini, cutout = await asyncio.gather(
         _probe('db', 'PostgreSQL', _db(services)),
         _probe('redis', 'Redis（佇列與事件推送）', _redis(services)),
         _probe('worker', 'worker（SAQ）', _workers(services)),
@@ -160,9 +212,10 @@ async def get_status(services: Services) -> SystemStatus:
         _probe('brands', '品牌設定檔', _brands(services)),
         _probe('chroma', '向量庫（Chroma）', _chroma(services)),
         _probe('rag', 'RAG 模型（BGE-M3＋Reranker）', _rag_model(services)),
+        _probe('gemini', 'Gemini（LLM／VLM）', _gemini(services)),
         _probe('cutout', '去背模型（BiRefNet）', _cutout_model(services)),
     )
-    return SystemStatus(components=[*probed, *SIMULATED, cutout])
+    return SystemStatus(components=[*probed, gemini, *SIMULATED, cutout])
 
 
 async def _rag_model(services: ApiServices) -> tuple[ComponentState, str]:

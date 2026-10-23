@@ -34,6 +34,7 @@ from app.core.clock import iso, utc_now
 from app.errors import Invalid, NotFound, Unavailable
 from app.queues import TaskFailed
 from app.repo import catalog, history, jobs
+from app.repo import usage as usage_repo
 from app.stats import dashboard_stats
 from app.usage import UsageScope
 
@@ -288,5 +289,8 @@ async def set_favorite(history_id: str, body: FavoriteRequest, services: Service
 async def get_stats(
     services: Services, brand_id: Annotated[str | None, Query(alias='brandId')] = None
 ) -> DashboardStats:
+    """每張成本依 job_usage 的實際費用（沒有紀錄的任務，例如模擬模式，為 0）。"""
     async with services.db.session() as s:
-        return dashboard_stats(await jobs.finished_snapshots(s, brand_id))
+        snaps = await jobs.finished_snapshots(s, brand_id)
+        costs = await usage_repo.costs_by_job(s, [snap.summary.id for snap in snaps])
+    return dashboard_stats(snaps, {job_id: float(cost) for job_id, cost in costs.items()})

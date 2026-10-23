@@ -291,7 +291,7 @@ export interface DashboardStats {
   /** 每個任務平均重試幾輪 */
   avgRetries: number;
   avgDurationMs: number;
-  /** 每張交付圖的平均成本（美元，估算）；沒有交付任何圖時為 null */
+  /** 每張交付圖的平均成本（美元；live 依 Gemini 的實際用量，mock 為估算）；沒有交付任何圖時為 null */
   costPerImage: number | null;
   /** 依 CHECK_IDS 的順序 */
   checkFailures: CheckFailureStat[];

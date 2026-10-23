@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 from saq.job import Status
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedError
@@ -233,6 +234,14 @@ async def test_select_a_render_then_favorite_it_and_count_the_job(api: LiveApi) 
     assert (await api.http.patch('/api/history/hist_nope', json={'favorite': True})).status_code == 404
     stats = (await api.http.get('/api/stats', params={'brandId': 'selune'})).json()
     assert (stats['jobs'], stats['passRate'], stats['recent'][0]['jobId']) == (1, 1, job_id)
+    # 每張成本依 job_usage 的實際費用：模擬模式沒有用量紀錄，為 0
+    assert (stats['recent'][0]['costUsd'], stats['costPerImage']) == (0, 0)
+    ledger = UsageLedger(api.services.db, Pricing.load(REPO_ROOT / 'pricing.yaml'), job_budget=1, monthly_budget=20)
+    scope = UsageScope(job_id=job_id, brand_id='selune', round=1, target='story')
+    await ledger.record(scope, 'spec', 'gemini-3.8-flash', TokenUsage(0, 0, 1_000_000, 0))
+    stats = (await api.http.get('/api/stats', params={'brandId': 'selune'})).json()
+    assert stats['recent'][0]['costUsd'] == 3.75
+    assert stats['costPerImage'] == 3.75 / stats['recent'][0]['delivered']
     assert (await api.http.get('/api/stats', params={'brandId': 'misty-isle'})).json()['jobs'] == 0
 
 
@@ -302,7 +311,7 @@ async def test_create_job_needs_a_key_and_room_in_the_monthly_budget(
     assert (res.status_code, res.json()) == (503, {'error': {'code': 'unavailable', 'message': NOT_CONFIGURED}})
 
     ledger = UsageLedger(api.services.db, Pricing.load(REPO_ROOT / 'pricing.yaml'), job_budget=1, monthly_budget=1)
-    keyed = gemini.model_copy(update={'gemini_api_key': 'AIza-test-key-0000'})
+    keyed = gemini.model_copy(update={'gemini_api_key': SecretStr('AIza-test-key-0000')})
     client = GeminiClient(keyed, ledger)
     monkeypatch.setattr(api.services, 'gemini', client)
     monkeypatch.setattr(api.services, 'ledger', ledger)

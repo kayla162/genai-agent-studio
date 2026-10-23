@@ -27,3 +27,15 @@ def test_cancelled_and_failed_jobs_are_left_out() -> None:
 def test_empty_stats() -> None:
     stats = dashboard_stats([])
     assert (stats.jobs, stats.pass_rate, stats.cost_per_image, stats.rerank_hits, stats.recent) == (0, 0, None, [], [])
+
+
+def test_uses_the_recorded_costs_when_given() -> None:
+    snaps = snapshots(None)
+    first = dashboard_stats(snaps).recent[0].job_id
+    stats = dashboard_stats(snaps, {first: 0.5, 'job_not_finished': 9.0})
+    costs = {j.job_id: j.cost_usd for j in stats.recent}
+    # 沒有用量紀錄的任務（例如模擬模式）為 0
+    assert costs == {job_id: (0.5 if job_id == first else 0) for job_id in costs}
+    delivered = sum(j.delivered for j in stats.recent)
+    assert stats.jobs == len(stats.recent)
+    assert stats.cost_per_image == 0.5 / delivered
