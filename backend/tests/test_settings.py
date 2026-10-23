@@ -10,7 +10,7 @@ def test_gemini_defaults() -> None:
     s = Settings(_env_file=None)
     assert (s.agent_mode, s.review_mode) == ('gemini', 'composer')
     assert (s.gemini_llm_model, s.gemini_vlm_model) == ('gemini-3.8-flash', 'gemini-3.8-flash')
-    assert (s.gemini_timeout_seconds, s.gemini_max_retries, s.gemini_concurrency) == (60, 3, 4)
+    assert (s.gemini_timeout_seconds, s.gemini_max_retries, s.gemini_concurrency) == (120, 3, 4)
     assert (s.gemini_job_budget_usd, s.gemini_monthly_budget_usd) == (1, 20)
     assert s.gemini_api_key.get_secret_value() == ''
     assert s.pricing_file == REPO_ROOT / 'pricing.yaml'
