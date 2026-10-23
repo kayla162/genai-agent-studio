@@ -1,9 +1,11 @@
-"""AGENT_MODE=gemini 的 Agent：Gemini 負責需求拆解、Prompt 構建與 Query Rewriting。
+"""AGENT_MODE=gemini 的 Agent 與審查：Gemini 負責需求拆解、Prompt 構建、Query Rewriting 與 VLM 審查。
 
 - 提示詞的系統指示放在 prompts/*.md（固定，讓隱式快取有機會命中）；動態的資料以 JSON 放在 user 訊息。
 - Prompt 構建的程式護欄在 composer 的 /spec（與審查共用同一套文案與幾何函式）：第一次有需要重問的問題時，
   帶著中文說明重問一次；第二次直接使用 /spec 回傳的 spec（仍有問題的欄位已改用預設），並以 warn log 顯示。
 - 需求拆解與 Query Rewriting 的護欄在這裡（規格 §4.3、§4.5）。
+- VLM 審查：讀排版階段存的審查用海報，Gemini 轉錄文字並判斷三項 VLM 檢查（不提供預期文案，避免照抄），
+  再由 composer 的 /review 比對轉錄（ocrDiffs）並產生 10 項檢查。
 """
 
 import asyncio
@@ -16,26 +18,31 @@ from functools import cache
 from pathlib import Path
 from typing import Any, TypeVar
 
+from google.genai import types
 from PIL import Image, ImageOps
 
-from app.adapters.composer import ComposerClient
-from app.adapters.gemini import GeminiCall, LlmClient
+from app.adapters.composer import ComposerClient, ComposerError
+from app.adapters.gemini import GeminiCall, GeminiError, LlmClient
 from app.contract import (
     Brand,
     CheckId,
     Fix,
     JobEvent,
+    LayoutElementId,
     LogLevel,
     LogSource,
     ParsedBrief,
     Product,
     PromptSpec,
+    Render,
     ReviewCheck,
     Tone,
 )
+from app.errors import AppError
 from app.files import resolve_url
-from app.pipeline.gemini_types import BriefDraft, GuardIssue, RewriteDraft, SpecDraft
-from app.pipeline.ports import Agent, Rewrite, RunContext, SpecRequest
+from app.pipeline.gemini_types import BriefDraft, GuardIssue, RewriteDraft, SpecDraft, VlmVerdict
+from app.pipeline.ports import Agent, ComposedPoster, Reviewer, ReviewResult, Rewrite, RunContext, SpecRequest
+from app.pipeline.review import POSTER_REQUIRED, REVIEW_FAILED
 from app.settings import Settings
 from app.usage import UsageScope
 
@@ -71,6 +78,24 @@ FIX_DESC_CHARS = 80
 RATIONALE_CHARS = 60
 #: 禁用詞或誇大用語未通過、Gemini 沒有給查詢時的重新檢索（與模擬版相同）
 REQUERY_CHECKS: frozenset[CheckId] = frozenset({'banned_words', 'vlm_exaggeration'})
+
+#: 送給 VLM 的海報長邊上限（像素）；None 為模板原尺寸（長邊 1600–2048）。實驗決定
+VLM_MAX_SIDE: int | None = None
+#: VLM 呼叫失敗（重試後）時任務失敗的原因開頭
+VLM_FAILED = 'Gemini 無法審查海報：'
+#: 版面元素的中文名稱（與 web 的 ELEMENT_LABELS 相同）
+ELEMENT_NAMES: dict[LayoutElementId, str] = {
+    'logo': 'Logo',
+    'headline': '標題',
+    'subhead': '副標',
+    'features': '賣點',
+    'product': '商品',
+    'badge': '徽章',
+    'price': '價格',
+    'disclaimer': '註記',
+}
+#: Gemini 的 seed 是 32 位元有號整數
+SEED_RANGE = 2**31
 
 #: 護欄的問題在第二次之後的處理方式（warn log 的結尾）
 COPY_CODES = frozenset({'missing_glyph', 'banned_word', 'too_long', 'invented_offer', 'empty_field'})
@@ -360,3 +385,66 @@ class GeminiAgent(Agent):
         if query is None and REQUERY_CHECKS & set(failing_ids):
             query = f'{brand.category} 禁用詞 合規替代用語'
         return Rewrite(fixes=[by_check[i] for i in failing_ids if i in by_check], query=query)
+
+
+def prepare_poster(path: Path, max_side: int | None) -> tuple[bytes, tuple[int, int], float]:
+    """讀審查用海報；長邊超過 max_side 時等比例縮小。回傳 PNG、送出的尺寸，以及送出圖片與原圖的比例。"""
+    data = path.read_bytes()
+    with Image.open(io.BytesIO(data)) as img:
+        size = img.size
+        if max_side is None or max(size) <= max_side:
+            return data, size, 1.0
+        scale = max_side / max(size)
+        resized = img.resize((round(size[0] * scale), round(size[1] * scale)), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    resized.save(out, 'PNG')
+    return out.getvalue(), resized.size, resized.size[0] / size[0] if size[0] else scale
+
+
+class GeminiReviewer(Reviewer):
+    """AGENT_MODE=gemini 的審查：Gemini VLM 讀審查用海報，再以 composer 的 /review 產生 10 項檢查與分數。"""
+
+    def __init__(self, client: LlmClient, composer: ComposerClient, settings: Settings) -> None:
+        self.client = client
+        self.composer = composer
+        self.settings = settings
+
+    async def review(
+        self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None, run: RunContext
+    ) -> ReviewResult:
+        if poster is None:
+            raise AppError(POSTER_REQUIRED)
+        path = resolve_url(self.settings, poster.url)
+        if path is None:
+            raise AppError(f'{VLM_FAILED}找不到審查用海報（{poster.url}）')
+        png, (width, height), scale = await asyncio.to_thread(prepare_poster, path, VLM_MAX_SIDE)
+        payload = {
+            'brand': {
+                'category': brand.category,
+                'bannedWords': brand.banned_words,
+                'claimWords': brand.claim_words,
+                'disclaimerPhrase': brand.disclaimer_phrase,
+            },
+            'image': {'width': width, 'height': height},
+            'layout': [
+                {'id': b.id, 'name': ELEMENT_NAMES[b.id], 'box': [round(v * scale) for v in b.bbox]}
+                for b in render.spec.layout
+            ],
+        }
+        call = GeminiCall(
+            kind='vlm',
+            model=self.settings.gemini_vlm_model,
+            system=load_prompt('vlm'),
+            parts=[types.Part.from_bytes(data=png, mime_type='image/png'), json_text(payload)],
+            schema=VlmVerdict,
+            scope=UsageScope(job_id=run.job_id, brand_id=brand.id, round=render.round, target=render.id),
+            seed=seed % SEED_RANGE,
+        )
+        try:
+            verdict = await self.client.generate(call, run)
+        except GeminiError as error:
+            raise AppError(f'{VLM_FAILED}{error.message}') from error
+        try:
+            return await self.composer.review(render.spec, brand, poster.measured_primary, verdict, scale)
+        except ComposerError as error:
+            raise AppError(f'{REVIEW_FAILED}{error}') from error
