@@ -12,6 +12,8 @@
     --composer 網址        預設 http://127.0.0.1:3900
 
 報告寫到 data/experiments/plan6b-<時間>.json，並在終端機印出摘要。會產生費用：all 約呼叫 110 次。
+組合之間並行（同時最多 GEMINI_CONCURRENCY 個 Gemini 呼叫）；Gemini 很慢時可以用環境變數 GEMINI_TIMEOUT_SECONDS、
+GEMINI_MAX_RETRIES 放寬逾時與重試次數（Settings 會讀環境變數）。
 """
 
 import argparse
@@ -23,6 +25,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -66,7 +69,23 @@ EXAGGERATED = '三天見效・全台第一'
 @dataclass
 class Report:
     results: dict[str, Any] = field(default_factory=dict)
-    calls: list[dict[str, Any]] = field(default_factory=list)
+    #: 每次 generate（含重試與格式重問）的種類與秒數
+    timings: list[dict[str, Any]] = field(default_factory=list)
+
+
+class TimingClient(LlmClient):
+    """記錄每次 generate 花的時間（並行時 ledger 的紀錄會交錯，所以時間另外記）。"""
+
+    def __init__(self, inner: LlmClient, report: Report) -> None:
+        self.inner = inner
+        self.report = report
+
+    async def generate[T: BaseModel](self, call: GeminiCall[T], run: Any) -> T:
+        started = time.monotonic()
+        try:
+            return await self.inner.generate(call, run)
+        finally:
+            self.report.timings.append({'kind': call.kind, 'seconds': round(time.monotonic() - started, 2)})
 
 
 class ExperimentRun:
@@ -175,7 +194,8 @@ class Experiment:
         self.report = report
         self.ledger = MemoryLedger(Pricing.load(REPO_ROOT / 'pricing.yaml'))
         self.offline = OfflineClient() if args.offline else None
-        self.client: LlmClient = self.offline or GeminiClient(settings, self.ledger)
+        self.gemini = None if args.offline else GeminiClient(settings, self.ledger)
+        self.client: LlmClient = TimingClient(self.offline or self.gemini, report)  # type: ignore[arg-type]
         self.composer = ComposerClient(args.composer)
         self.posters = ComposerPosters(self.composer, settings)
         loaded = {b.brand.id: b for b in load_brands(REPO_ROOT / 'brands')[0]}
@@ -185,8 +205,18 @@ class Experiment:
 
     async def close(self) -> None:
         await self.composer.aclose()
-        if isinstance(self.client, GeminiClient):
-            await self.client.aclose()
+        if self.gemini is not None:
+            await self.gemini.aclose()
+
+    async def each[I, R](self, items: Sequence[I], fn: Callable[[I], Awaitable[R]]) -> list[R]:
+        """並行處理；離線模式的假回應有共用狀態，所以逐一處理。"""
+        limit = asyncio.Semaphore(1 if self.offline else self.settings.gemini_concurrency)
+
+        async def one(item: I) -> R:
+            async with limit:
+                return await fn(item)
+
+        return await asyncio.gather(*(one(i) for i in items))
 
     async def request(self, brand: Brand, product: Product, template_id: TemplateId) -> SpecRequest:
         brief = await self.composer.sim_brief(brand, product, TEXT)
@@ -198,16 +228,6 @@ class Experiment:
 
     async def default_spec(self, brand: Brand, product: Product, template_id: TemplateId) -> PromptSpec:
         return await self.composer.sim_prompt(await self.request(brand, product, template_id), flawed=False)
-
-    def timed(self, kind: str, started: float, before: int) -> None:
-        for _, record_kind, model, usage, cost in self.ledger.records[before:]:
-            self.report.calls.append(
-                {
-                    'kind': record_kind, 'model': model, 'input': usage.input_tokens, 'cached': usage.cached_tokens,
-                    'output': usage.output_tokens, 'thinking': usage.thinking_tokens, 'cost': float(cost),
-                    'seconds': round(time.monotonic() - started, 2), 'label': kind,
-                }
-            )  # fmt: skip
 
     # ---------- probe ----------
 
@@ -244,29 +264,33 @@ class Experiment:
     # ---------- spec ----------
 
     async def spec(self) -> None:
-        format_ok = guard_ok = total = 0
-        codes: Counter[str] = Counter()
-        for brand, product, template_id in self.combos:
+        jobs = [
+            (brand, product, template_id)
+            for brand, product, template_id in self.combos
+            for _ in range(self.args.repeat)
+        ]
+
+        async def build(job: tuple[Brand, Product, TemplateId]) -> tuple[bool, list[str], list[str]]:
+            brand, product, template_id = job
             request = await self.request(brand, product, template_id)
-            for _ in range(self.args.repeat):
-                if self.offline:
-                    self.offline.next_spec = await self.composer.sim_prompt(request, flawed=False)
-                run = ExperimentRun()
-                started, before = time.monotonic(), len(self.ledger.records)
-                payload = await self._spec_payload(request)
-                call = GeminiCall(
-                    kind='spec', model=self.settings.gemini_llm_model, system=load_prompt('spec'),
-                    parts=[json.dumps(payload, ensure_ascii=False, indent=1)], schema=SpecDraft,
-                    scope=UsageScope('job_experiment', brand.id, 1, template_id), seed=request.seed,
-                )  # fmt: skip
-                draft = await self.client.generate(call, run)
-                self.timed('spec', started, before)
-                _, issues = await self.composer.spec(draft, request)
-                total += 1
-                format_ok += run.format_retries() == 0
-                retry = [i for i in issues if i.retry]
-                guard_ok += not retry
-                codes.update(i.code for i in issues)
+            if self.offline:
+                self.offline.next_spec = await self.composer.sim_prompt(request, flawed=False)
+            run = ExperimentRun()
+            payload = await self._spec_payload(request)
+            call = GeminiCall(
+                kind='spec', model=self.settings.gemini_llm_model, system=load_prompt('spec'),
+                parts=[json.dumps(payload, ensure_ascii=False, indent=1)], schema=SpecDraft,
+                scope=UsageScope('job_experiment', brand.id, 1, template_id), seed=request.seed,
+            )  # fmt: skip
+            draft = await self.client.generate(call, run)
+            _, issues = await self.composer.spec(draft, request)
+            return run.format_retries() == 0, [i.code for i in issues if i.retry], [i.code for i in issues]
+
+        results = await self.each(jobs, build)
+        total = len(results)
+        format_ok = sum(ok for ok, _, _ in results)
+        guard_ok = sum(not retry for _, retry, _ in results)
+        codes = Counter(code for _, _, all_codes in results for code in all_codes)
         self.report.results['spec'] = {
             'total': total, 'formatFirstTry': format_ok, 'guardFirstTry': guard_ok, 'issueCodes': dict(codes),
         }  # fmt: skip
@@ -303,32 +327,30 @@ class Experiment:
             if self.offline
             else GeminiReviewer(self.client, self.composer, self.settings)
         )
-        started, before = time.monotonic(), len(self.ledger.records)
-        result = await reviewer.review(brand, self.render(spec, brand, label), 7, poster, ExperimentRun())
-        self.timed('vlm', started, before)
-        return result
+        return await reviewer.review(brand, self.render(spec, brand, label), 7, poster, ExperimentRun())
 
     # ---------- ocr ----------
 
     async def ocr(self) -> None:
-        rows: list[dict[str, Any]] = []
-        for brand, product, template_id in self.combos:
+        async def check(job: tuple[Brand, Product, TemplateId]) -> list[dict[str, Any]]:
+            brand, product, template_id = job
             spec = await self.default_spec(brand, product, template_id)
-            typo = with_first_char(spec, '某')
-            boxed = with_first_char(spec, '这')
-            for case, drawn in (('correct', spec), ('typo', typo), ('missing_glyph', boxed)):
-                poster = await self.poster(drawn, brand, product, f'{template_id}_{case}')
-                result = await self.review(brand, spec, poster, drawn, f'{template_id}_{case}')
-                check = next(c for c in result.checks if c.id == 'ocr_typo')
+            rows = []
+            cases = (
+                ('correct', spec),
+                ('typo', with_first_char(spec, '某')),
+                ('missing_glyph', with_first_char(spec, '这')),
+            )
+            for case, drawn in cases:
+                poster = await self.poster(drawn, brand, product, f'{brand.id}_{template_id}_{case}')
+                result = await self.review(brand, spec, poster, drawn, f'{brand.id}_{template_id}_{case}')
+                ocr = next(c for c in result.checks if c.id == 'ocr_typo')
                 rows.append(
-                    {
-                        'brand': brand.id,
-                        'template': template_id,
-                        'case': case,
-                        'status': check.status,
-                        'value': check.value,
-                    }
+                    {'brand': brand.id, 'template': template_id, 'case': case, 'status': ocr.status, 'value': ocr.value}
                 )
+            return rows
+
+        rows = [row for rows in await self.each(self.combos, check) for row in rows]
         self.report.results['ocr'] = rows
         correct = [r for r in rows if r['case'] == 'correct']
         caught = [r for r in rows if r['case'] != 'correct']
@@ -352,14 +374,24 @@ class Experiment:
         return [('correct', spec), ('occlusion', occluded), ('exaggeration', exaggerated)]
 
     async def vlm(self, repeats: int = 1, key: str = 'vlm') -> None:
-        rows: list[dict[str, Any]] = []
-        for brand, product in self.brands:
-            for case, spec in await self.vlm_cases(brand, product):
-                poster = await self.poster(spec, brand, product, f'vlm_{case}')
-                for attempt in range(repeats):
-                    result = await self.review(brand, spec, poster, spec, f'vlm_{case}_{attempt}')
-                    statuses: dict[str, str] = {c.id: c.status for c in result.checks if c.kind == 'vlm'}
-                    rows.append({'brand': brand.id, 'case': case, 'attempt': attempt, **statuses})
+        cases = [
+            (brand, product, case, spec)
+            for brand, product in self.brands
+            for case, spec in await self.vlm_cases(brand, product)
+        ]
+
+        async def judge(item: tuple[Brand, Product, str, PromptSpec]) -> list[dict[str, Any]]:
+            brand, product, case, spec = item
+            poster = await self.poster(spec, brand, product, f'{brand.id}_vlm_{case}')
+            rows = []
+            for attempt in range(repeats):
+                result = await self.review(brand, spec, poster, spec, f'{brand.id}_vlm_{case}_{attempt}')
+                statuses: dict[str, str] = {c.id: c.status for c in result.checks if c.kind == 'vlm'}
+                reasons = {c.id: c.value for c in result.checks if c.kind == 'vlm'}
+                rows.append({'brand': brand.id, 'case': case, 'attempt': attempt, **statuses, 'values': reasons})
+            return rows
+
+        rows = [row for rows in await self.each(cases, judge) for row in rows]
         self.report.results[key] = rows
         if key == 'vlm':
             correct = [r for r in rows if r['case'] == 'correct']
@@ -377,25 +409,36 @@ class Experiment:
             print(f'穩定性：三次審查狀態一致 {same}/{len(groups)}')
 
     def summary(self) -> None:
-        by_kind: dict[str, list[dict[str, Any]]] = {}
-        for c in self.report.calls:
-            by_kind.setdefault(c['kind'], []).append(c)
         usage: dict[str, dict[str, Any]] = {}
-        for kind, calls in by_kind.items():
-            n = len(calls)
-            avg = {k: sum(c[k] for c in calls) / n for k in ('input', 'output', 'thinking', 'seconds')}
+        for kind in dict.fromkeys(r[1] for r in self.ledger.records):
+            records = [r for r in self.ledger.records if r[1] == kind]
+            seconds = [t['seconds'] for t in self.report.timings if t['kind'] == kind]
+            n = len(records)
+            avg = {
+                'input': sum(r[3].input_tokens for r in records) / n,
+                'cached': sum(r[3].cached_tokens for r in records) / n,
+                'output': sum(r[3].output_tokens for r in records) / n,
+                'thinking': sum(r[3].thinking_tokens for r in records) / n,
+            }
             usage[kind] = {
-                'calls': n,
+                'responses': n,
+                'calls': len(seconds),
                 'avgInput': round(avg['input']),
+                'avgCached': round(avg['cached']),
                 'avgOutput': round(avg['output']),
                 'avgThinking': round(avg['thinking']),
-                'avgSeconds': round(avg['seconds'], 2),
-                'cost': round(sum(c['cost'] for c in calls), 4),
+                'avgSeconds': round(sum(seconds) / len(seconds), 1) if seconds else None,
+                'maxSeconds': max(seconds) if seconds else None,
+                'cost': float(sum(r[4] for r in records)),
             }
-            tokens = f'輸入 {avg["input"]:,.0f}／輸出 {avg["output"]:,.0f}（思考 {avg["thinking"]:,.0f}）tokens'
-            print(f'{kind}：{n} 次，平均 {tokens}、{avg["seconds"]:.2f} 秒')
+            tokens = (
+                f'輸入 {avg["input"]:,.0f}（快取 {avg["cached"]:,.0f}）'
+                f'／輸出 {avg["output"]:,.0f}（思考 {avg["thinking"]:,.0f}）'
+            )
+            timing = f'平均 {usage[kind]["avgSeconds"]} 秒、最長 {usage[kind]["maxSeconds"]} 秒' if seconds else ''
+            print(f'{kind}：{n} 個回應，{tokens} tokens；{timing}；US${usage[kind]["cost"]:.4f}')
         self.report.results['usage'] = usage
-        print(f'合計 {len(self.report.calls)} 次呼叫，US${self.ledger.total:.4f}')
+        print(f'合計 {len(self.ledger.records)} 個回應，US${self.ledger.total:.4f}')
 
 
 class OfflineReviewer(GeminiReviewer):
@@ -455,7 +498,7 @@ async def main(args: argparse.Namespace) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     meta = {'thinking': args.thinking, 'limit': args.limit, 'repeat': args.repeat, 'offline': args.offline}
     out.write_text(
-        json.dumps({'meta': meta, **report.results, 'calls': report.calls}, ensure_ascii=False, indent=1),
+        json.dumps({'meta': meta, **report.results, 'timings': report.timings}, ensure_ascii=False, indent=1),
         encoding='utf-8',
     )
     print(f'報告：{out}')
