@@ -1,6 +1,6 @@
 import { CircleCheck, CircleX, TriangleAlert } from 'lucide-react';
 import type { CheckStatus, ReviewCheck } from '@/types/contract';
-import { measuredPrimaryOf } from '@/lib/review/rules';
+import { measuredBackgroundOf, measuredPrimaryOf } from '@/lib/review/rules';
 import { cn } from '@/lib/utils';
 
 const ICON: Record<CheckStatus, React.ReactNode> = {
@@ -9,12 +9,16 @@ const ICON: Record<CheckStatus, React.ReactNode> = {
   fail: <CircleX className="size-4 text-destructive" />,
 };
 
-/** 主色檢查說明旁的色塊：量到的主色（偏色時是實際用錯的顏色） */
+/** 主色與背景色系檢查說明旁的色塊：量到的主色（偏色時是實際用錯的顏色），或背景中最多的色系外顏色 */
 function PrimarySwatch({ check }: { check: ReviewCheck }) {
-  const hex = measuredPrimaryOf(check);
+  const primary = measuredPrimaryOf(check);
+  const hex = primary ?? measuredBackgroundOf(check);
   if (!hex) return null;
   return (
-    <span className="inline-block size-3 shrink-0 rounded-sm border" style={{ backgroundColor: hex }} title={`偵測主色 ${hex}`} aria-hidden />
+    <span
+      className="inline-block size-3 shrink-0 rounded-sm border" style={{ backgroundColor: hex }}
+      title={primary ? `偵測主色 ${hex}` : `背景色系外 ${hex}`} aria-hidden
+    />
   );
 }
 

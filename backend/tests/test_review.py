@@ -130,9 +130,14 @@ async def test_a_clean_spec_measures_the_brand_primary_and_passes_color_delta(
     posters, reviewer = ComposerPosters(composer, settings), ComposerReviewer(composer)
     clean = await posters.compose(JOB_ID, CLEAN, SERUM, SELUNE)
     assert clean.measured_primary == SELUNE.palette.primary.lower()
+    assert clean.background is not None and clean.background.off_share <= 0.15
     result = await reviewer.review(SELUNE, CLEAN, 1, clean, FakeRun())
     assert len(result.checks) == 11
     assert next(c for c in result.checks if c.id == 'color_delta').status == 'pass'
+    assert (
+        next(c for c in result.checks if c.id == 'bg_palette').value
+        == f'色系外 {round(clean.background.off_share * 100)}%'
+    )
     assert result.passed
     # 分數不加隨機抖動：seed 不同，結果相同
     assert await reviewer.review(SELUNE, CLEAN, 2, clean, FakeRun()) == result
@@ -186,8 +191,16 @@ async def test_the_logo_and_a_url_background_are_read_for_the_composer(
     render = CLEAN.model_copy(
         update={'background': UrlBackground(kind='url', url='/files/uploads/bg.jpg', includes_product=False)}
     )
-    await posters.compose(JOB_ID, render, SERUM, brand)
+    poster = await posters.compose(JOB_ID, render, SERUM, brand)
     assert composer.sent[-1] == PosterImages(logo=logo.read_bytes(), background=background.read_bytes())
+    # 藍色的背景不在 SÉLUNE 的色系內：量的是 url 背景本身
+    assert poster.background is not None and poster.background.off_share == 1
+    bg = next(
+        c
+        for c in (await ComposerReviewer(composer).review(brand, render, 1, poster, FakeRun())).checks
+        if c.id == 'bg_palette'
+    )
+    assert (bg.status, bg.value) == ('fail', f'色系外 100%（主要為 {poster.background.off_hex}）')
 
     # 與瀏覽器相同：Logo 圖檔不見時改畫向量標誌，海報照樣畫得出來
     logo.unlink()

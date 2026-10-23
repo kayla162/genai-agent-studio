@@ -15,6 +15,7 @@ from app.contract import (
     JobInput,
     LogLevel,
     LogSource,
+    Model,
     ParsedBrief,
     Product,
     PromptSpec,
@@ -123,6 +124,18 @@ class ImageEngine(Protocol):
     ) -> dict[tuple[TemplateId, int], RenderBackground]: ...
 
 
+class BackgroundPalette(Model):
+    """composer 從疊上文字與商品之前的背景量到的品牌色系（web/src/lib/review/background.ts，/render 的
+    X-Background-Palette 標頭），worker 原樣送回 /review。"""
+
+    #: 商品方框以外、品牌色系外的像素比例（0–1）
+    off_share: float
+    #: 色系外像素中最多的顏色（大寫 #RRGGBB）；沒有色系外的像素時為 None
+    off_hex: str | None
+    #: 量測的像素數
+    sampled: int
+
+
 @dataclass(frozen=True)
 class ComposedPoster:
     """伺服器端繪製的審查用海報。"""
@@ -131,6 +144,8 @@ class ComposedPoster:
     url: str
     #: 從海報像素量到的品牌主色（小寫 #rrggbb）；量不到時為 None
     measured_primary: str | None
+    #: 背景的品牌色系；composer 沒有回傳時為 None（背景色系判定為模擬）
+    background: BackgroundPalette | None = None
 
 
 class PosterComposer(Protocol):

@@ -80,7 +80,7 @@ class ComposerPosters:
         except ComposerError as error:
             raise AppError(f'{COMPOSE_FAILED}{error}') from error
         await asyncio.to_thread(_write, target, poster.png)
-        return ComposedPoster(url=url, measured_primary=poster.measured_primary)
+        return ComposedPoster(url=url, measured_primary=poster.measured_primary, background=poster.background)
 
     def _images(self, render: Render, product: Product, brand: Brand) -> PosterImages:
         """在執行緒裡讀圖與縮圖（大張照片解碼約需數百毫秒）。"""
@@ -144,6 +144,6 @@ class ComposerReviewer:
         if poster is None:
             raise AppError(POSTER_REQUIRED)
         try:
-            return await self.composer.review(render.spec, brand, poster.measured_primary)
+            return await self.composer.review(render.spec, brand, poster.measured_primary, background=poster.background)
         except ComposerError as error:
             raise AppError(f'{REVIEW_FAILED}{error}') from error

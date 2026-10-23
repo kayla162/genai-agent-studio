@@ -13,6 +13,7 @@ import { missingGlyphs } from '@/lib/compose/glyphs';
 import { computeLayout } from '@/lib/compose/layout';
 import { composePoster } from '@/lib/compose/scene';
 import { getTemplate } from '@/lib/compose/templates';
+import type { BackgroundPalette } from '@/lib/review/background';
 import { expectedSegments, ocrDiffs } from '@/lib/review/ocr';
 import { runRuleChecks, scoreChecks } from '@/lib/review/rules';
 import { contentVlmChecks, geminiVlmChecks } from '@/lib/review/vlm';
@@ -83,26 +84,41 @@ function checkVerdict(vlm: unknown): asserts vlm is VlmVerdict {
   ensure(isStrings((vlm.quality as Record<string, unknown>).issues), 'vlm.quality.issues 必須是字串陣列');
 }
 
+/** /render 量到的背景色系（X-Background-Palette），worker 原樣送回 /review */
+function checkBackground(value: unknown): asserts value is BackgroundPalette {
+  const v = value as Record<string, unknown> | null;
+  ensure(
+    typeof v === 'object' && v !== null
+      && typeof v.offShare === 'number' && v.offShare >= 0 && v.offShare <= 1
+      && (v.offHex === null || (typeof v.offHex === 'string' && HEX.test(v.offHex)))
+      && Number.isInteger(v.sampled) && (v.sampled as number) >= 0,
+    'background 必須是 { offShare: 0–1, offHex: #RRGGBB 或 null, sampled: 整數 }',
+  );
+}
+
 /**
  * live 模式的審查：8 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
+ * background 為 /render 量到的背景色系；null 或省略時背景色系為模擬（通過）。
  * vlm 有值（AGENT_MODE=gemini）時 VLM 三項用 Gemini 的判讀，並以轉錄比對海報上的文字（ocrDiffs）；
  * vlmScale 為送出給 VLM 的圖片與畫布的比例。vlm 為 null 或省略時與 6A 相同（依內容判斷）。
  */
-function reviewPoster({ spec, brand, measuredPrimary, vlm = null, vlmScale = 1 }: {
+function reviewPoster({ spec, brand, measuredPrimary, vlm = null, vlmScale = 1, background = null }: {
   spec: PromptSpec; brand: Brand; measuredPrimary: string | null; vlm?: VlmVerdict | null; vlmScale?: number;
+  background?: BackgroundPalette | null;
 }): { checks: ReviewCheck[]; score: number; passed: boolean } {
   if (measuredPrimary !== null && !(typeof measuredPrimary === 'string' && HEX.test(measuredPrimary))) {
     throw new Error(`measuredPrimary 必須是 #RRGGBB 或 null：${JSON.stringify(measuredPrimary)}`);
   }
+  if (background !== null) checkBackground(background);
   if (vlm === null) {
-    const checks = [...runRuleChecks({ brand, spec, measuredPrimary }), ...contentVlmChecks(spec, brand)];
+    const checks = [...runRuleChecks({ brand, spec, measuredPrimary, background }), ...contentVlmChecks(spec, brand)];
     return { checks, ...scoreChecks(checks, 0) };
   }
   checkVerdict(vlm);
   ensure(typeof vlmScale === 'number' && vlmScale > 0, 'vlmScale 必須是大於 0 的數字');
   const segments = expectedSegments(composePoster({ canvas: spec.canvas, layout: spec.layout, palette: spec.palette, copy: spec.copy, brand }));
   const ocr = ocrDiffs(vlm.lines, segments, vlmScale);
-  const checks = [...runRuleChecks({ brand, spec, measuredPrimary, ocr }), ...geminiVlmChecks(vlm, spec, brand)];
+  const checks = [...runRuleChecks({ brand, spec, measuredPrimary, ocr, background }), ...geminiVlmChecks(vlm, spec, brand)];
   return { checks, ...scoreChecks(checks, 0) };
 }
 
@@ -113,12 +129,13 @@ function reviewPoster({ spec, brand, measuredPrimary, vlm = null, vlmScale = 1 }
 const HANDLERS: Record<string, Handler> = {
   '/layout': ({ templateId }: { templateId: TemplateId }) => computeLayout(getTemplate(templateId)),
 
-  /** 審查用海報：PNG，標頭帶量到的主色（量不到時為空字串）與它的佔比（0–1） */
+  /** 審查用海報：PNG，標頭帶量到的主色（量不到時為空字串）與它的佔比（0–1），以及背景色系的量測（JSON） */
   '/render': async (input: RenderPosterInput) => {
-    const { png, measured } = await renderPoster(input);
+    const { png, measured, background } = await renderPoster(input);
     return new BinaryResponse(png, 'image/png', {
       'X-Measured-Primary': measured.hex ?? '',
       'X-Primary-Share': String(Number(measured.share.toFixed(4))),
+      'X-Background-Palette': JSON.stringify({ ...background, offShare: Number(background.offShare.toFixed(4)) }),
     });
   },
 

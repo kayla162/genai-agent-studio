@@ -1,12 +1,13 @@
 // composer 在伺服器端繪製審查用海報：流程與瀏覽器的 render.ts（preparePoster → paintPoster）相同，
 // 版面與繪製直接沿用 scene.ts 與 paint.ts，只把載圖與 Canvas 換成 @napi-rs/canvas。
 import { createCanvas, loadImage, type Image, type SKRSContext2D } from '@napi-rs/canvas';
-import type { Brand, Product, Render } from '@/types/contract';
+import type { Brand, Product, PromptSpec, Render } from '@/types/contract';
 import { backgroundSvg } from '@/lib/compose/art';
 import { fontStacks, productImage } from '@/lib/compose/assets';
 import { boxMap } from '@/lib/compose/layout';
 import { paintScene, type PaintAssets } from '@/lib/compose/paint';
 import { composePoster } from '@/lib/compose/scene';
+import { BACKGROUND_MEASURE, measureBackgroundPalette, type BackgroundPalette } from '@/lib/review/background';
 import { measurePrimary, type MeasuredPrimary } from '@/lib/review/measure';
 
 /** worker 讀好的圖檔（base64）。composer 不讀任何資料夾 */
@@ -32,6 +33,8 @@ export interface RenderedPoster {
   png: Buffer;
   /** 從繪製結果量到的品牌主色（measurePrimary，門檻為 brand.rules.maxDeltaE） */
   measured: MeasuredPrimary;
+  /** 疊上文字與商品之前的背景，品牌色系的量測（measureBackgroundPalette） */
+  background: BackgroundPalette;
 }
 
 /*
@@ -77,7 +80,9 @@ async function loadProduct(
   return { image: await fromBase64('商品圖', 'images.product', upload), blend: upload.blend };
 }
 
-async function loadAssets({ render, product, brand, images = { product: null, logo: null } }: RenderPosterInput): Promise<PaintAssets> {
+async function loadAssets(
+  { render, product, brand, images = { product: null, logo: null } }: RenderPosterInput,
+): Promise<{ assets: PaintAssets; background: Image }> {
   const spec = render.spec;
   const bg = render.background;
   const [background, prod, logo] = await Promise.all([
@@ -91,7 +96,7 @@ async function loadAssets({ render, product, brand, images = { product: null, lo
     // 與前端相同：品牌有 Logo 圖檔才使用，否則畫向量標誌與字標
     brand.logo && images.logo ? fromBase64('Logo 圖檔', 'images.logo', images.logo) : null,
   ]);
-  return {
+  const assets: PaintAssets = {
     background: domImage(background),
     // 沒有固有尺寸的圖以前端相同的預設尺寸計算
     product: prod
@@ -100,17 +105,34 @@ async function loadAssets({ render, product, brand, images = { product: null, lo
     logo: logo ? { image: domImage(logo), width: logo.naturalWidth || 300, height: logo.naturalHeight || 100 } : null,
     fonts: fontStacks(brand),
   };
+  return { assets, background };
 }
 
 /**
- * 以模板原始尺寸繪製海報（spec 的文案、版面與配色），量出品牌主色，輸出 PNG。
+ * 量背景的品牌色系：把背景縮小到長邊 sampleSide 再量（與海報相同的拉伸方式畫滿畫布），範圍扣掉商品方框。
+ * 色票用品牌設定檔的（brand.palette），不是 spec 的：偏色的 spec 畫出的背景也要判定為色系外。
+ */
+export function measureBackground(background: Image, spec: Pick<PromptSpec, 'canvas' | 'layout'>, brand: Brand): BackgroundPalette {
+  const { width: W, height: H } = spec.canvas;
+  const scale = Math.min(1, BACKGROUND_MEASURE.sampleSide / Math.max(W, H));
+  const width = Math.max(1, Math.round(W * scale));
+  const height = Math.max(1, Math.round(H * scale));
+  const ctx = createCanvas(width, height).getContext('2d');
+  ctx.drawImage(background, 0, 0, width, height);
+  const { data } = ctx.getImageData(0, 0, width, height);
+  const p = boxMap(spec.layout).product;
+  return measureBackgroundPalette({ data, width, height }, [p.x, p.y, p.w, p.h], spec.canvas, brand.palette);
+}
+
+/**
+ * 以模板原始尺寸繪製海報（spec 的文案、版面與配色），量出品牌主色與背景色系，輸出 PNG。
  * 字型要先以 registerPosterFonts 註冊；圖檔缺少或無法解碼時丟出中文錯誤。
  */
 export async function renderPoster(input: RenderPosterInput): Promise<RenderedPoster> {
   const { render, brand } = input;
   const spec = render.spec;
   const scene = composePoster({ canvas: spec.canvas, layout: spec.layout, palette: spec.palette, copy: spec.copy, brand });
-  const assets = await loadAssets(input);
+  const { assets, background } = await loadAssets(input);
 
   const width = Math.round(scene.width);
   const height = Math.round(scene.height);
@@ -120,5 +142,5 @@ export async function renderPoster(input: RenderPosterInput): Promise<RenderedPo
 
   const pixels = ctx.getImageData(0, 0, width, height).data;
   const measured = measurePrimary(pixels, width, height, spec.layout, brand.palette.primary, brand.rules.maxDeltaE);
-  return { png: await canvas.encode('png'), measured };
+  return { png: await canvas.encode('png'), measured, background: measureBackground(background, spec, brand) };
 }

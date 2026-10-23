@@ -1,4 +1,22 @@
-import type { ReviewCheck } from '@/types/contract';
+import type { BBox, Palette, ReviewCheck } from '@/types/contract';
+import { hexToRgb, labToHex, rgbToLab } from './color';
+import type { RGBA } from './measure';
+
+/** 背景色系量測的參數（Plan 7 規格 §4.8；標示「實驗決定」的在 Plan 7 Task 1 依實測調整） */
+export const BACKGROUND_MEASURE = {
+  /** 彩度 C* 低於這個值為中性色，一律在色系內（實驗決定） */
+  neutralChroma: 12,
+  /** 與品牌色的色相差 ≤ 這個角度（度）才算同一色系（實驗決定） */
+  hueTolerance: 30,
+  /** 彩度最多比同色系的品牌色高出這麼多，再高就是過度飽和（螢光色）（實驗決定） */
+  chromaMargin: 25,
+  /** 商品方框向外擴張的比例（× 畫布短邊） */
+  productMargin: 0.02,
+  /** 取樣格的邊數上限：大圖以等距取樣，最多約 sampleSide × sampleSide 個像素 */
+  sampleSide: 256,
+  /** 找色系外主要顏色時，Lab 量化的格寬 */
+  bin: 8,
+} as const;
 
 /** 背景色系外的面積比例 ≤ 這個值為通過（實驗決定，Plan 7 規格 §4.8） */
 export const BG_PASS_MAX = 0.15;
@@ -13,6 +31,75 @@ export interface BackgroundPalette {
   offHex: string | null;
   /** 量測的像素數 */
   sampled: number;
+}
+
+/** 背景的不透明像素（canvas `getImageData()` 的結果），可以是縮小後的樣本 */
+export interface BackgroundPixels { data: RGBA; width: number; height: number }
+
+interface Hue { h: number; c: number }
+
+const hueOf = (L: { a: number; b: number }): Hue => ({ h: (Math.atan2(L.b, L.a) * 180) / Math.PI, c: Math.hypot(L.a, L.b) });
+const hueGap = (x: number, y: number) => {
+  const d = Math.abs(x - y) % 360;
+  return d > 180 ? 360 - d : d;
+};
+
+/**
+ * 量背景的品牌色系（Plan 7 規格 §4.8）：
+ * 1. 範圍：商品方框（向外擴張 productMargin × 畫布短邊）以外的像素；pixels 可以比畫布小，方框依比例換算。
+ * 2. 取樣：每 step 個像素取一個（step 讓取樣數不超過 sampleSide²）。
+ * 3. 每個像素轉成 Lab 與 LCh：C* < neutralChroma 為中性色；與任一彩色品牌色（C* ≥ neutralChroma）的色相差
+ *    ≤ hueTolerance 且彩度 ≤ 該品牌色彩度 + chromaMargin 為色系內；其他（含過度飽和）為色系外。
+ * 4. offShare：色系外 ÷ 取樣數；offHex：色系外像素依 Lab 量化（bin）後最多的一格的平均色（大寫 #RRGGBB）。
+ */
+export function measureBackgroundPalette(
+  pixels: BackgroundPixels, product: BBox, canvas: { width: number; height: number }, palette: Palette,
+): BackgroundPalette {
+  const M = BACKGROUND_MEASURE;
+  const { data, width, height } = pixels;
+  const sx = width / canvas.width;
+  const sy = height / canvas.height;
+  const margin = M.productMargin * Math.min(canvas.width, canvas.height);
+  const [px, py, pw, ph] = product;
+  const hasProduct = pw > 0 && ph > 0;
+  const x0 = (px - margin) * sx, x1 = (px + pw + margin) * sx;
+  const y0 = (py - margin) * sy, y1 = (py + ph + margin) * sy;
+  const brand = [palette.primary, palette.secondary, palette.accent, palette.ink]
+    .map((hex) => hueOf(rgbToLab(hexToRgb(hex))))
+    .filter((p) => p.c >= M.neutralChroma);
+  const step = Math.max(1, Math.ceil(Math.max(width, height) / M.sampleSide));
+
+  const bins = new Map<string, { n: number; L: number; a: number; b: number }>();
+  let sampled = 0;
+  let off = 0;
+  for (let y = Math.floor(step / 2); y < height; y += step) {
+    for (let x = Math.floor(step / 2); x < width; x += step) {
+      if (hasProduct && x + 0.5 >= x0 && x + 0.5 < x1 && y + 0.5 >= y0 && y + 0.5 < y1) continue;
+      sampled++;
+      const i = (y * width + x) * 4;
+      const lab = rgbToLab([data[i], data[i + 1], data[i + 2]]);
+      const p = hueOf(lab);
+      if (p.c < M.neutralChroma) continue;
+      if (brand.some((q) => hueGap(p.h, q.h) <= M.hueTolerance && p.c <= q.c + M.chromaMargin)) continue;
+      off++;
+      const key = `${Math.floor(lab.L / M.bin)},${Math.floor(lab.a / M.bin)},${Math.floor(lab.b / M.bin)}`;
+      const bin = bins.get(key) ?? { n: 0, L: 0, a: 0, b: 0 };
+      bin.n++;
+      bin.L += lab.L;
+      bin.a += lab.a;
+      bin.b += lab.b;
+      bins.set(key, bin);
+    }
+  }
+  // 最多的一格；同分時取先出現的（Map 依插入順序）
+  const top = [...bins.values()].reduce<{ n: number; L: number; a: number; b: number } | null>(
+    (best, bin) => (!best || bin.n > best.n ? bin : best), null,
+  );
+  return {
+    offShare: sampled ? off / sampled : 0,
+    offHex: top ? labToHex({ L: top.L / top.n, a: top.a / top.n, b: top.b / top.n }).toUpperCase() : null,
+    sampled,
+  };
 }
 
 /** 背景色系檢查說明中色系外的主要顏色：`色系外 42%（主要為 #3FD27A）`（hex 為大寫） */

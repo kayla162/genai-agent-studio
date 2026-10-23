@@ -456,7 +456,9 @@ class GeminiReviewer(Reviewer):
         except GeminiError as error:
             raise AppError(f'{VLM_FAILED}{error.message}') from error
         try:
-            return await self.composer.review(render.spec, brand, poster.measured_primary, verdict, scale)
+            return await self.composer.review(
+                render.spec, brand, poster.measured_primary, verdict, scale, background=poster.background
+            )
         except ComposerError as error:
             raise AppError(f'{REVIEW_FAILED}{error}') from error
 

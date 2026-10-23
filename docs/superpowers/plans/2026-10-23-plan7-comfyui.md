@@ -58,6 +58,11 @@
   - `recheckCopy`（文字編輯器改文案後的重新審查）沿用生成時的 `bg_palette`：背景與文案無關，否則會變回「（模擬）」。
   - 畫面與註解的「規則 7 項」改為 8 項（節點圖、合規報告、結果牆、composer 與 Python 的 docstring）；README 留到 Task 12。
   - 多一項檢查使審查階段內 `review.check` 的時間間隔變短（總長不變），sample snapshot 的 `seq` 也隨之後移；以 JSON 比對確認除此之外 fixtures 沒有改變，並以暫存腳本在記憶體中執行模擬模式的 `_pipeline`，三條 timelines 的事件完全相同（`test_parity` 需要資料庫，未在本機執行）。
+- **Task 3**：
+  - Python 的 `BackgroundPalette` 放在 `app/pipeline/ports.py`（`ComposedPoster.background` 用到它，放在 `composer.py` 會循環匯入）；`RenderedPoster.background` 與 `ComposedPoster.background` 預設為 None（沒有標頭時背景色系為模擬）。
+  - composer 的 `measureBackground(image, spec, brand)`：把背景以海報相同的拉伸方式縮小到長邊 256 再量，色票用品牌設定檔的（不是 spec 的，偏色的 spec 畫出的背景也要判定為色系外）；`measureBackgroundPalette` 的商品方框為 `BBox`，由呼叫端從 `boxMap` 的矩形轉換。
+  - 程式產生的背景（3 個品牌 × 5 個模板 × 6 個 seed）色系外最多 0.7%（SÉLUNE），其他兩個品牌為 0%，與 15% 的門檻有很大的餘裕。
+  - 審查清單在背景色系的說明旁畫出色系外的主要顏色（與主色色塊共用元件）。
 
 ## Global Constraints
 

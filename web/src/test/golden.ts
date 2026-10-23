@@ -9,6 +9,7 @@ import { buildTimeline } from '@/lib/api/mock/scenario';
 import { CHANNEL_TEMPLATES, getTemplate } from '@/lib/compose/templates';
 import { hashString, mulberry32 } from '@/lib/core/num';
 import { chunkDocument, embedPreview } from '@/lib/rag/chunk';
+import type { BackgroundPalette } from '@/lib/review/background';
 import { dashboardStats } from '@/lib/stats/dashboard';
 import { CHUNK_SAMPLES, PREVIEW_SAMPLES } from './chunk-samples';
 import { cleanSpec, draftOf } from './fixtures';
@@ -126,9 +127,12 @@ function slim(snap: JobSnapshot): unknown {
 
 /**
  * Gemini 的結構化輸出與護欄結果的範例（後端 gemini_types.py 解析，確認兩邊的欄位一致）：
- * 合格的 SpecDraft、涵蓋每一種問題代碼的 GuardIssue、三種狀態都有的 VlmVerdict。
+ * 合格的 SpecDraft、涵蓋每一種問題代碼的 GuardIssue、三種狀態都有的 VlmVerdict；
+ * 以及 composer 量到的背景色系（BackgroundPalette，後端 ports.py 解析），有色系外顏色與沒有的各一個。
  */
-function agentFixtures(): { specDraft: SpecDraft; guardIssues: GuardIssue[]; vlmVerdict: VlmVerdict } {
+function agentFixtures(): {
+  specDraft: SpecDraft; guardIssues: GuardIssue[]; vlmVerdict: VlmVerdict; backgroundPalettes: BackgroundPalette[];
+} {
   const spec = cleanSpec();
   const brand = getBrandById('selune');
   const product = { ...SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!, name: '極光精華✨这款' };
@@ -159,7 +163,11 @@ function agentFixtures(): { specDraft: SpecDraft; guardIssues: GuardIssue[]; vlm
     occlusion: { status: 'warn', elements: ['logo', 'headline'], reason: 'Logo 與標題太靠近' },
     quality: { status: 'fail', issues: ['商品邊緣模糊'], reason: '商品主體失焦' },
   };
-  return { specDraft, guardIssues, vlmVerdict };
+  const backgroundPalettes: BackgroundPalette[] = [
+    { offShare: 0.4213, offHex: '#3FD27A', sampled: 61234 },
+    { offShare: 0, offHex: null, sampled: 49152 },
+  ];
+  return { specDraft, guardIssues, vlmVerdict, backgroundPalettes };
 }
 
 export function goldenFixtures(): Record<string, unknown> {
