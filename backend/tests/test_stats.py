@@ -3,7 +3,7 @@
 import pytest
 
 from app.contract import JobSnapshot
-from app.stats import dashboard_stats
+from app.stats import UNIT_COST_USD, dashboard_stats, job_cost, job_stat
 from tests.fixtures import load_fixture
 
 
@@ -22,6 +22,38 @@ def test_cancelled_and_failed_jobs_are_left_out() -> None:
     stats = dashboard_stats(snapshots(None))
     assert stats.jobs == 6
     assert {j.job_id for j in stats.recent}.isdisjoint({'job_sample_cancelled', 'job_sample_failed'})
+
+
+def test_backgrounds_generated_by_comfyui_on_the_local_gpu_are_free() -> None:
+    snap = next(s for s in snapshots(None) if job_stat(s) is not None)
+    local = JobSnapshot.model_validate(
+        {
+            **snap.to_json(),
+            'events': [
+                {
+                    **m,
+                    'renders': [
+                        {
+                            **r,
+                            'background': {
+                                'kind': 'url',
+                                'url': f'/files/jobs/{r["id"]}.png',
+                                'includesProduct': False,
+                            },
+                        }
+                        for r in m['renders']
+                    ],
+                }
+                if m['type'] == 'render.completed'
+                else m
+                for m in snap.events
+            ],
+        }
+    )
+    stat = job_stat(snap)
+    assert stat is not None
+    assert job_cost(snap) - job_cost(local) == pytest.approx(stat.renders * UNIT_COST_USD['comfy_image'])
+    assert job_stat(local).renders == stat.renders  # type: ignore[union-attr]
 
 
 def test_empty_stats() -> None:

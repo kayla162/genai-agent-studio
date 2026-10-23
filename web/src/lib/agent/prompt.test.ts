@@ -4,8 +4,8 @@ import { parseBrief } from '@/lib/api/mock/brief';
 import { getTemplate } from '@/lib/compose/templates';
 import { maskImageName, PRODUCT_SCENE, plateImageName } from './comfy';
 import {
-  applyReplacements, BASE_NEGATIVE, buildCopy, buildDisclaimer, buildPromptSpec, negativePromptOf, positivePromptOf, seedOf,
-  setParam, type PromptBuildInput,
+  applyReplacements, BASE_NEGATIVE, buildCopy, buildDisclaimer, buildPromptSpec, negativePromptOf, positivePromptOf, renderSeed,
+  seedOf, setParam, type PromptBuildInput,
 } from './prompt';
 
 const serum = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
@@ -87,6 +87,14 @@ describe('buildPromptSpec', () => {
     expect(spec.copy.badge).toEqual({ top: '期間限定', main: '限時優惠', sub: 'LIMITED OFFER' });
     expect(spec.copy.price.label).toBe('限時活動價');
     expect(spec.positivePrompt).toContain('minimal');
+  });
+
+  it('renderSeed is the procedural seed, or the injected seed plus the variant for a ComfyUI background', () => {
+    const spec = buildPromptSpec(input());
+    const base = { id: 'r', jobId: 'job_t', round: 1, templateId: spec.templateId, variant: 2, spec, score: null, passed: null, checks: [] };
+    expect(renderSeed({ ...base, background: { kind: 'procedural', seed: 77, palette: spec.palette, style: 'selune' } })).toBe(77);
+    expect(renderSeed({ ...base, background: { kind: 'url', url: '/files/jobs/job_t/bg.png', includesProduct: false } }))
+      .toBe(123456789 + 2);
   });
 
   it('setParam returns a new injection with the updated value', () => {

@@ -92,6 +92,11 @@
   - 鎖在 `ComfyImageEngine.render_round` 檢查完節點與模型之後取得（缺少模型時不必等去背），等待時送出 log「等待商品去背完成」。
   - 去背在讀完照片、載入模型之前取得鎖，等待時只寫 logger（商品卡維持「去背中」）。`Services.memory` 預設為 None（不互斥），`build_services` 依 `MEMORY_LOCK` 建立。
   - `ImageEngine.finish(job_id)` 由 `run_job` 的 `finally` 呼叫（完成、失敗、取消都會）；認領失敗（任務已不在排隊）時不呼叫。
+- **Task 10**：
+  - 依 `IMAGE_MODE` 選生圖引擎的邏輯放在 `comfy_ports(ports, composer, settings, memory)`（與 6B 的 `gemini_ports` 相同的作法），`build_services` 呼叫它；不需要資料庫就能測試。`load_workflow()` 讀對照表與 workflow，`ComfyImageEngine` 與系統狀態共用。
+  - 系統狀態的 ComfyUI 一項名稱改為「ComfyUI（生圖）」；`/object_info` 由 `ComfyClient` 快取 60 秒。沒有做「背景更新、第一次逾時顯示檢查中」：ComfyUI 回應 `/object_info` 很快（本機），逾時時照現有規則顯示「3 秒內沒有回應」，Task 1 實測後若太慢再處理。
+  - 前端的節點圖本來就只顯示目前執行中的節點群組與步數（`COMFY_STEP[progress.node]`），不需修改。已知限制：精簡進度條（`jobProgress`）依節點估算比例，ComfyUI 每個 variant 的 `generate` 進度會從頭開始，所以進度條在生圖階段會來回；之後可在 `render.progress` 加上 variant 再改。
+  - 結果牆的 seed 改用 `renderSeed(render)`（`prompt.ts`）；儀表板的成本說明在 live 模式加上「生圖在本機 GPU，不計費」（live 的成本本來就只有 `job_usage`）。模擬 Agent 的估算以每張 `Render.background.kind` 判斷（`url` 不計生圖費用），任務摘要不需要新欄位。
 
 ## Global Constraints
 

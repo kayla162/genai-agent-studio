@@ -1,5 +1,5 @@
 import type {
-  Brand, ChannelTemplate, CheckId, ComfyInjection, Copy, Engine, ParsedBrief, Product, PromptSpec,
+  Brand, ChannelTemplate, CheckId, ComfyInjection, Copy, Engine, ParsedBrief, Product, PromptSpec, Render,
 } from '@/types/contract';
 import { computeLayout } from '@/lib/compose/layout';
 import { claimTexts, hasClaim } from '@/lib/review/rules';
@@ -161,6 +161,10 @@ export function setParam(injection: ComfyInjection, label: string, value: string
 
 export const seedOf = (spec: PromptSpec): number =>
   Number(spec.injection.params.find((p) => p.label === 'seed')?.value ?? 0);
+
+/** 一張候選實際用的 seed：程序化背景記在背景裡；ComfyUI 的背景是注入的 seed 加上 variant 編號（與 worker 相同） */
+export const renderSeed = (render: Pick<Render, 'background' | 'spec' | 'variant'>): number =>
+  render.background.kind === 'procedural' ? render.background.seed : seedOf(render.spec) + render.variant;
 
 export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
   const { brand, product, brief, template } = input;

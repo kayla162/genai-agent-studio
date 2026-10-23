@@ -47,14 +47,23 @@ def _render_count(events: list[Message]) -> int:
     return sum(len(e['renders']) for e in events if e['type'] == 'render.completed')
 
 
+def _priced_renders(events: list[Message]) -> int:
+    """要計生圖費用的候選：IMAGE_MODE=comfyui 在本機 GPU 生成的背景（url）不計費，程序化背景依估算單價。"""
+    return sum(
+        1 for e in events if e['type'] == 'render.completed' for r in e['renders'] if r['background']['kind'] != 'url'
+    )
+
+
 def job_cost(snap: JobSnapshot) -> float:
     events = snap.events
-    image = UNIT_COST_USD['ideogram_image'] if snap.summary.input.engine == 'ideogram' else UNIT_COST_USD['comfy_image']
+    ideogram = snap.summary.input.engine == 'ideogram'
+    image = UNIT_COST_USD['ideogram_image'] if ideogram else UNIT_COST_USD['comfy_image']
+    renders = _render_count(events) if ideogram else _priced_renders(events)
     llm_calls = _count(events, 'brief.parsed') + _count(events, 'prompt.generated') + _count(events, 'rewrite.started')
     return (
         UNIT_COST_USD['llm_call'] * llm_calls
         + UNIT_COST_USD['rerank'] * _count(events, 'rag.reranked')
-        + image * _render_count(events)
+        + image * renders
         + UNIT_COST_USD['vlm_review'] * _count(events, 'review.completed')
     )
 

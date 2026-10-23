@@ -18,6 +18,7 @@ import copy
 import io
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ from app.contract import (
 from app.errors import AppError
 from app.files import poster_file
 from app.pipeline.memory import HeavyMemoryLock
-from app.pipeline.ports import RunContext
+from app.pipeline.ports import Ports, RunContext
 from app.pipeline.review import product_image
 from app.settings import REPO_ROOT, Settings
 
@@ -54,6 +55,19 @@ SAMPLER_NODES = frozenset({'KSampler', 'KSamplerAdvanced', 'SamplerCustom', 'Sam
 IMAGE_LABELS = frozenset({'plate_image', 'mask_image'})
 PLATE_FAILED = '排版服務（composer）無法產生商品底圖：'
 MISSING_PRODUCT_IMAGE = '無法產生商品底圖：'
+
+
+def load_workflow(workflows_dir: Path = WORKFLOWS_DIR) -> tuple[dict[str, Any], frozenset[tuple[str, str]]]:
+    """讀參數對照表指定的 workflow，以及底圖與遮罩的 (nodeId, input)（每個任務上傳，檢查模型時略過）。"""
+    table = json.loads((workflows_dir / TABLE_FILE).read_text(encoding='utf-8'))
+    workflow: dict[str, Any] = json.loads((workflows_dir / table['workflow']).read_text(encoding='utf-8'))
+    ignore = frozenset((p['nodeId'], p['input']) for p in table['params'] if p['label'] in IMAGE_LABELS)
+    return workflow, ignore
+
+
+def comfy_ports(ports: Ports, composer: ComposerClient, settings: Settings, memory: HeavyMemoryLock) -> Ports:
+    """IMAGE_MODE=comfyui：生圖換成 ComfyImageEngine（與去背共用同一個 heavy-memory 鎖），其他不變。"""
+    return replace(ports, image=ComfyImageEngine(ComfyClient(settings), composer, settings, lock=memory))
 
 
 def _with_seed(injection: ComfyInjection, seed: int) -> ComfyInjection:
@@ -96,9 +110,7 @@ class ComfyImageEngine:
         self.composer = composer
         self.settings = settings
         self.lock = lock
-        table = json.loads((workflows_dir / TABLE_FILE).read_text(encoding='utf-8'))
-        self.workflow: dict[str, Any] = json.loads((workflows_dir / table['workflow']).read_text(encoding='utf-8'))
-        self.ignore = frozenset((p['nodeId'], p['input']) for p in table['params'] if p['label'] in IMAGE_LABELS)
+        self.workflow, self.ignore = load_workflow(workflows_dir)
         self.samplers = frozenset(i for i, n in self.workflow.items() if n['class_type'] in SAMPLER_NODES)
 
     async def render_round(

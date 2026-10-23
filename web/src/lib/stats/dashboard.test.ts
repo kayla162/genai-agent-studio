@@ -17,6 +17,17 @@ describe('jobCost', () => {
     const ideogram = makeJobSnapshot({ engine: 'ideogram' });
     expect(jobCost(ideogram) - jobCost(retried)).toBeCloseTo(8 * (UNIT_COST_USD.ideogramImage - UNIT_COST_USD.comfyImage), 10);
   });
+
+  it('counts the backgrounds ComfyUI generated on the local GPU as free', () => {
+    const local = {
+      ...retried,
+      events: retried.events.map((e) => (e.type === 'render.completed'
+        ? { ...e, renders: e.renders.map((r) => ({ ...r, background: { kind: 'url' as const, url: `/files/jobs/${r.id}.png`, includesProduct: false } })) }
+        : e)),
+    };
+    expect(jobCost(retried) - jobCost(local)).toBeCloseTo(8 * UNIT_COST_USD.comfyImage, 10);
+    expect(jobStat(local)!.renders).toBe(8);
+  });
 });
 
 describe('jobStat', () => {
