@@ -50,6 +50,7 @@ from app.errors import AppError, Invalid, NotFound
 from app.events import EventStore
 from app.files import photo_path, product_folder
 from app.pipeline.ports import Ports
+from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
 from app.queues import TASK_TIMEOUT, Queues, ingest_channel
@@ -99,7 +100,8 @@ class Services:
 
 
 def build_services() -> Services:
-    """RAG_MODE=bge 時檢索換成 BgeRetriever；Agent、生圖與審查仍是模擬版（Plan 6、7 換成真實版）。"""
+    """RAG_MODE=bge 時檢索換成 BgeRetriever；REVIEW_MODE=composer 時排版與審查換成 ComposerPosters 與
+    ComposerReviewer（伺服器端繪製審查用海報、量主色、規則審查）。Agent 與生圖仍是模擬版（Plan 6B、7 換成真實版）。"""
     db = Database(settings.database_url)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     composer = ComposerClient(settings.composer_url)
@@ -111,6 +113,8 @@ def build_services() -> Services:
     )
     if settings.rag_mode == 'bge':
         ports = replace(ports, retriever=BgeRetriever(db, vectors, rag, locks))
+    if settings.review_mode == 'composer':
+        ports = replace(ports, posters=ComposerPosters(composer, settings), reviewer=ComposerReviewer(composer))
     cutouts = CutoutEngine(settings.cutout_model, settings.models_dir, redis)
     store = EventStore(db, redis)
     return Services(db, redis, store, composer, ports, settings.sim_speed, settings, cutouts, rag, vectors, locks)

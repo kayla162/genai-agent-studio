@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { hexToRgb, rgbToHex, mixHex, rgbToLab, deltaE2000, deltaEHex } from './color';
+import { mulberry32 } from '@/lib/core/num';
+import { hexToRgb, rgbToHex, mixHex, rgbToLab, labToHex, deltaE2000, deltaEHex } from './color';
 
 describe('hex conversion', () => {
   it('parses and formats hex colors', () => {
@@ -28,6 +29,21 @@ describe('rgbToLab (D65)', () => {
     expect(red.L).toBeCloseTo(53.24, 1);
     expect(red.a).toBeCloseTo(80.09, 1);
     expect(red.b).toBeCloseTo(67.2, 1);
+  });
+});
+
+describe('labToHex', () => {
+  it('inverts rgbToLab for every 8-bit grey and a deterministic sample of colours', () => {
+    const colours: [number, number, number][] = [[0, 0, 0], [255, 255, 255], [183, 110, 121], [30, 136, 229]];
+    for (let v = 0; v < 256; v++) colours.push([v, v, v]);
+    const rng = mulberry32(7);
+    for (let i = 0; i < 2000; i++) colours.push([0, 1, 2].map(() => Math.floor(rng() * 256)) as [number, number, number]);
+    for (const rgb of colours) expect(labToHex(rgbToLab(rgb))).toBe(rgbToHex(rgb));
+  });
+
+  it('clamps colours outside the sRGB gamut', () => {
+    expect(labToHex({ L: 50, a: 127, b: -127 })).toMatch(/^#[0-9a-f]{6}$/);
+    expect(labToHex({ L: 120, a: 0, b: 0 })).toBe('#ffffff');
   });
 });
 

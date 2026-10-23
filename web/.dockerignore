@@ -10,3 +10,4 @@ playwright*.config.ts
 *.tsbuildinfo
 .env
 .env.*
+composer/fonts

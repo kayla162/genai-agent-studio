@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { CircleCheck, Download, FileDown, LoaderCircle, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Brand, Copy, Product, Render } from '@/types/contract';
+import type { Brand, Copy, Product } from '@/types/contract';
 import { CheckList } from '@/components/poster/check-list';
 import { PosterCanvas } from '@/components/poster/poster-canvas';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { getTemplate } from '@/lib/compose/templates';
+import type { Candidate } from '@/lib/jobs/view';
 import { exportPosterPng, exportPosterZip } from '@/lib/export/posters';
 import { copyBlockers, recheckCopy } from '@/lib/review/recheck';
 import { useStudioStore } from '@/lib/store/studio';
@@ -87,7 +88,7 @@ export function CopyEditor({ brand, product }: { brand: Brand; product: Product 
 
   const selected = input.templateIds
     .map((t) => (selection[t] ? view.renders[selection[t]!] : undefined))
-    .filter((r): r is Render => r !== undefined);
+    .filter((r): r is Candidate => r !== undefined);
   const checks = selected.map((r) => ({ render: r, checks: recheckCopy(r, brand, copy) }));
   const blockers = checks.flatMap((x) => copyBlockers(x.checks));
   const needsConfirm = view.outcome === 'needs_review' || selected.some((r) => !r.passed);

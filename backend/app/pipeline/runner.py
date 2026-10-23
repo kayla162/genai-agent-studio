@@ -43,7 +43,7 @@ from app.db.models import JobRow
 from app.db.session import Database
 from app.errors import AppError
 from app.events import EventStore
-from app.pipeline.ports import Ports, ReviewResult, SpecRequest
+from app.pipeline.ports import ComposedPoster, Ports, ReviewResult, SpecRequest
 from app.repo import catalog, jobs
 from app.templates import get_template
 
@@ -135,6 +135,8 @@ class JobContext:
 class Reviewed:
     render: Render
     result: ReviewResult
+    #: 排版階段繪製的審查用海報；模擬模式為 None
+    poster: ComposedPoster | None
 
 
 async def run_job(job_id: str, db: Database, store: EventStore, ports: Ports, *, speed: float) -> None:
@@ -246,15 +248,25 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
         ]
         await run.emit(RenderCompletedEvent(type='render.completed', round=round, renders=renders))
 
-        # 5. 文字排版合成
+        # 5. 文字排版合成：真實版在伺服器端繪製審查用海報並量主色；模擬版不畫圖（事件與 mock 相同）
         await run.status('composing', round)
         await run.log('compose', f'排版引擎疊加文字圖層（{len(renders)} 張）')
+        posters: list[ComposedPoster | None] = []
+        for r in renders:
+            await run.checkpoint()
+            posters.append(await ports.posters.compose(job_id, r, product, brand))
+        composed = sum(p is not None for p in posters)
+        if composed:
+            await run.log('compose', f'✓ 伺服器端排版 {composed} 張', 'ok')
         await run.pace(PHASE_MS['compose'])
 
         # 6. 合規審查（規則 + VLM）
         await run.status('reviewing', round)
         await run.log('vlm', f'{inp.vlm}：審查 {len(renders)} 張 × 10 項')
-        reviewed = [Reviewed(r, await ports.reviewer.review(brand, r, hash_string(r.id) ^ job_seed)) for r in renders]
+        reviewed = [
+            Reviewed(r, await ports.reviewer.review(brand, r, hash_string(r.id) ^ job_seed, poster), poster)
+            for r, poster in zip(renders, posters, strict=True)
+        ]
         dt = PHASE_MS['review'] / max(1, sum(len(x.result.checks) for x in reviewed))
         for x in reviewed:
             for check in x.result.checks:
@@ -267,6 +279,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
                     render_id=x.render.id,
                     score=x.result.score,
                     passed=x.result.passed,
+                    image=x.poster.url if x.poster else None,
                 )
             )
 

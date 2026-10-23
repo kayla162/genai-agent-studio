@@ -34,6 +34,21 @@ export function rgbToLab([r8, g8, b8]: [number, number, number]): Lab {
   return { L: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
 }
 
+/** CIE Lab（D65 白點）→ sRGB hex，rgbToLab 的反函數；超出 sRGB 色域的分量截斷到 0–255 */
+export function labToHex({ L, a, b }: Lab): Hex {
+  const fy = (L + 16) / 116;
+  const inv = (t: number) => (t ** 3 > 216 / 24389 ? t ** 3 : (116 * t - 16) / (24389 / 27));
+  const x = inv(fy + a / 500) * 0.95047;
+  const y = inv(fy);
+  const z = inv(fy - b / 200) * 1.08883;
+  const gamma = (c: number) => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
+  return rgbToHex([
+    gamma(3.2404542 * x - 1.5371385 * y - 0.4985314 * z),
+    gamma(-0.969266 * x + 1.8760108 * y + 0.041556 * z),
+    gamma(0.0556434 * x - 0.2040259 * y + 1.0572252 * z),
+  ]);
+}
+
 /** CIEDE2000 色差（kL = kC = kH = 1） */
 export function deltaE2000(x: Lab, y: Lab): number {
   const rad = Math.PI / 180;

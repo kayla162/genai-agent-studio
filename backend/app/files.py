@@ -1,6 +1,6 @@
-"""/files/... 網址與檔案的對應（api 提供檔案、worker 讀取商品照共用）：
+"""/files/... 網址與檔案的對應（api 提供檔案、worker 讀取商品照與寫入審查用海報共用）：
 
-- /files/uploads/…、/files/products/{id}/…（去背圖）→ data/
+- /files/uploads/…、/files/products/{id}/…（去背圖）、/files/jobs/{jobId}/{renderId}.png（審查用海報）→ data/
 - /files/local/{檔名} → 本機資料夾 assets/products/
 - /files/brands/… → 品牌設定檔資料夾（Logo 等圖檔）
 """
@@ -23,6 +23,8 @@ FILE_TYPES = {
 PREFIX = '/files/'
 #: 商品 id 要能直接當資料夾名稱：不含路徑分隔字元，也不能是 . 或 ..
 PRODUCT_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
+#: 任務 id 與候選 id（{jobId}_r{round}_{templateId}_v{variant}）同樣直接當資料夾與檔案名稱
+JOB_FILE_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
 
 
 def resolve_file(settings: Settings, path: str) -> Path | None:
@@ -41,9 +43,14 @@ def resolve_file(settings: Settings, path: str) -> Path | None:
     return target
 
 
+def resolve_url(settings: Settings, url: str) -> Path | None:
+    """/files/... 網址（檔名經過 URL 編碼）→ 檔案；不是 /files/ 網址或找不到檔案時為 None。"""
+    return resolve_file(settings, unquote(url.removeprefix(PREFIX))) if url.startswith(PREFIX) else None
+
+
 def photo_path(settings: Settings, url: str) -> Path:
     """商品照的網址（/files/uploads/…、/files/local/…，檔名經過 URL 編碼）→ 檔案。"""
-    target = resolve_file(settings, unquote(url.removeprefix(PREFIX))) if url.startswith(PREFIX) else None
+    target = resolve_url(settings, url)
     if target is None:
         raise NotFound(f'找不到商品照：{unquote(url)}')
     return target
@@ -54,3 +61,12 @@ def product_folder(settings: Settings, product_id: str) -> Path:
     if not PRODUCT_ID.fullmatch(product_id):
         raise Invalid(f'商品 id 格式錯誤：{product_id}')
     return settings.data_dir / 'products' / product_id
+
+
+def poster_file(settings: Settings, job_id: str, render_id: str) -> tuple[Path, str]:
+    """審查用海報的檔案與網址：data/jobs/{jobId}/{renderId}.png 與 /files/jobs/{jobId}/{renderId}.png。
+    id 格式不對時不給路徑，避免寫到 data/jobs 之外。"""
+    for value in (job_id, render_id):
+        if not JOB_FILE_ID.fullmatch(value):
+            raise Invalid(f'任務或候選 id 格式錯誤：{value}')
+    return settings.data_dir / 'jobs' / job_id / f'{render_id}.png', f'{PREFIX}jobs/{job_id}/{render_id}.png'

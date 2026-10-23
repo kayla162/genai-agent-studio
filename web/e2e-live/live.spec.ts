@@ -22,7 +22,7 @@ async function job(page: Page, jobId: string) {
 const roundOne = (page: Page) => page.getByText('第 1 輪', { exact: true }).first();
 const editor = (page: Page) => page.getByText('文字編輯器', { exact: true });
 
-test('一句話需求 → 後端生成（第一輪失敗、重試後通過）→ 匯出並寫入歷史 → Agent 透視與儀表板', async ({ page }) => {
+test('一句話需求 → 後端生成（第一輪失敗、重試後通過）→ 匯出並寫入歷史 → Agent 透視（審查用海報）與儀表板', async ({ page }) => {
   const jobId = await startJob(page);
   await expect(page.getByText('第 1 輪未通過審查，Query Rewriting 後重試')).toBeVisible();
   await expect(editor(page)).toBeVisible();
@@ -39,6 +39,26 @@ test('一句話需求 → 後端生成（第一輪失敗、重試後通過）→
   const { events } = await job(page, jobId);
   await page.goto(`/agent?job=${jobId}`);
   await expect(page.getByText(`${events.length} 則事件`)).toBeVisible();
+
+  // REVIEW_MODE=composer：兩輪各 2 張候選都有伺服器端繪製的審查用海報（data/jobs/{jobId}/{renderId}.png）
+  const images: (string | null)[] = events
+    .filter((e: { type: string }) => e.type === 'review.completed')
+    .map((e: { image: string | null }) => e.image);
+  expect([...images].sort()).toEqual(
+    ['r1_ig-post_v0', 'r1_ig-post_v1', 'r2_ig-post_v0', 'r2_ig-post_v1'].map((id) => `/files/jobs/${jobId}/${jobId}_${id}.png`),
+  );
+  await page.getByRole('tab', { name: '合規報告' }).click();
+  const source = page.getByRole('radiogroup', { name: '預覽／審查用海報' });
+  await expect(source).toBeVisible();
+  await source.getByRole('radio', { name: '審查用海報' }).click();
+  const poster = page.locator('img[src^="/files/jobs/"]');
+  await expect.poll(() => poster.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(1440);
+  const png = await page.request.get((await poster.getAttribute('src'))!);
+  expect(png.headers()['content-type']).toBe('image/png');
+  expect([...(await png.body()).subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  // 系統狀態：composer 在 Docker 內載入了海報字型
+  const status: { components: { id: string; detail: string }[] } = await (await page.request.get('/api/status')).json();
+  expect(status.components.find((c) => c.id === 'composer')!.detail).toMatch(/^REVIEW_MODE=composer・字型：Noto Sans TC、Noto Serif TC/);
   await page.goto('/dashboard');
   await expect(page.getByText(jobId)).toBeVisible();
 });

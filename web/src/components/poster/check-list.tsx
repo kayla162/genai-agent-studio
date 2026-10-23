@@ -1,5 +1,6 @@
 import { CircleCheck, CircleX, TriangleAlert } from 'lucide-react';
 import type { CheckStatus, ReviewCheck } from '@/types/contract';
+import { measuredPrimaryOf } from '@/lib/review/rules';
 import { cn } from '@/lib/utils';
 
 const ICON: Record<CheckStatus, React.ReactNode> = {
@@ -8,7 +9,16 @@ const ICON: Record<CheckStatus, React.ReactNode> = {
   fail: <CircleX className="size-4 text-destructive" />,
 };
 
-/** 審查項目清單（單張審查細節、文字編輯器的即時檢查共用）；compact 只顯示名稱與結果 */
+/** 主色檢查說明旁的色塊：量到的主色（偏色時是實際用錯的顏色） */
+function PrimarySwatch({ check }: { check: ReviewCheck }) {
+  const hex = measuredPrimaryOf(check);
+  if (!hex) return null;
+  return (
+    <span className="inline-block size-3 shrink-0 rounded-sm border" style={{ backgroundColor: hex }} title={`偵測主色 ${hex}`} aria-hidden />
+  );
+}
+
+/** 審查項目清單（單張審查細節、文字編輯器的即時檢查共用）；compact 只顯示名稱與結果，完整清單在主色檢查旁顯示量到的主色色塊 */
 export function CheckList({ checks, compact = false, className }: { checks: ReviewCheck[]; compact?: boolean; className?: string }) {
   if (compact) {
     return (
@@ -34,7 +44,8 @@ export function CheckList({ checks, compact = false, className }: { checks: Revi
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{c.name}</span>
               <span className="rounded bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">{c.kind === 'rule' ? '規則' : 'VLM'}</span>
-              <span className={cn('ml-auto text-xs', c.status === 'pass' ? 'text-muted-foreground' : c.status === 'warn' ? 'text-warning' : 'text-destructive')}>
+              <span className={cn('ml-auto inline-flex items-center gap-1.5 text-xs', c.status === 'pass' ? 'text-muted-foreground' : c.status === 'warn' ? 'text-warning' : 'text-destructive')}>
+                <PrimarySwatch check={c} />
                 {c.value}
               </span>
             </div>

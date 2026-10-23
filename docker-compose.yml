@@ -20,6 +20,9 @@ x-backend: &backend
     DATA_DIR: /app/data
     LOCAL_PHOTOS_DIR: /app/assets/products
     MODELS_DIR: /app/models
+    # 審查：composer（預設，composer 繪製審查用海報存到 data/jobs/，量出主色後審查）或 sim（不畫圖，模擬審查）。
+    # 可在 .env 或環境變數設定 REVIEW_MODE；api（系統狀態）與 worker 一定讀到同一個值
+    REVIEW_MODE: ${REVIEW_MODE:-composer}
   volumes:
     - ./brands:/app/brands:ro
     - ./assets/products:/app/assets/products:ro
@@ -69,7 +72,8 @@ services:
       retries: 30
     restart: unless-stopped
 
-  # 版型與模擬邏輯（直接執行 web/src/lib 的 TypeScript）；只給 api 與 worker 使用，不對外開放
+  # 版型、審查用海報的繪製、規則審查與模擬邏輯（直接執行 web/src/lib 的 TypeScript）；只給 api 與 worker 使用，不對外開放。
+  # 海報字型（Noto Sans／Serif TC，約 29 MB）在建置時下載並核對 SHA-256（web/Dockerfile 的 fonts 階段），不需要掛載資料夾
   composer:
     build:
       context: ./web

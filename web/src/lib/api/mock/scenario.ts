@@ -158,7 +158,9 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
     let k = 0;
     for (const { render, result } of results) {
       for (const check of result.checks) emit(t + ++k * dt, { type: 'review.check', round, renderId: render.id, check });
-      emit(t + k * dt, { type: 'review.completed', round, renderId: render.id, score: result.score, passed: result.passed });
+      emit(t + k * dt, {
+        type: 'review.completed', round, renderId: render.id, score: result.score, passed: result.passed, image: null,
+      });
     }
     t += PHASE_MS.review;
 

@@ -8,6 +8,12 @@ export interface RewriteInfo { round: number; templateId: TemplateId; reasons: C
 export interface LogLine { source: LogSource; level: LogLevel; message: string }
 export interface RenderProgress { round: number; node: RenderNode; step: number; maxStep: number }
 
+/**
+ * 候選圖：合約的 Render 加上 review.completed 帶來的審查用海報網址。
+ * 審查完成前、模擬模式與 mock 為 null（伺服器端沒有繪製）。
+ */
+export interface Candidate extends Render { reviewImage: string | null }
+
 /** 由事件串流累積出來的任務畫面狀態。mock 與 live 共用（UI 只看事件，不看實作）。 */
 export interface JobView {
   jobId: string | null;
@@ -21,7 +27,7 @@ export interface JobView {
   requeryHits: RagHit[];
   /** key 為 specKey(round, templateId) */
   specs: Record<string, PromptSpec>;
-  renders: Record<string, Render>;
+  renders: Record<string, Candidate>;
   /** 依收到的順序 */
   renderIds: string[];
   progress: RenderProgress | null;
@@ -83,7 +89,7 @@ export function reduceJob(v: JobView, e: JobEvent): JobView {
       return { ...v, progress: { round: e.round, node: e.node, step: e.step, maxStep: e.maxStep } };
     case 'render.completed': {
       const renders = { ...v.renders };
-      for (const r of e.renders) renders[r.id] = r;
+      for (const r of e.renders) renders[r.id] = { ...r, reviewImage: null };
       return { ...v, renders, renderIds: [...v.renderIds, ...e.renders.map((r) => r.id).filter((id) => !v.renders[id])] };
     }
     case 'review.check': {
@@ -92,7 +98,9 @@ export function reduceJob(v: JobView, e: JobEvent): JobView {
     }
     case 'review.completed': {
       const r = v.renders[e.renderId];
-      return r ? { ...v, renders: { ...v.renders, [r.id]: { ...r, score: e.score, passed: e.passed } } } : v;
+      // 加上 image 欄位之前存下的事件沒有這個欄位（undefined），視為沒有審查用海報
+      const reviewImage = e.image ?? null;
+      return r ? { ...v, renders: { ...v.renders, [r.id]: { ...r, score: e.score, passed: e.passed, reviewImage } } } : v;
     }
     case 'rewrite.started':
       return {
@@ -114,8 +122,8 @@ export const applyEvents = (events: JobEvent[], jobId: string | null = null): Jo
   events.reduce(reduceJob, emptyJobView(jobId));
 
 /** 每個模板最後一輪的候選（依 variant 排序）；結果牆只顯示這些 */
-export function finalCandidates(v: JobView): Partial<Record<TemplateId, Render[]>> {
-  const out: Partial<Record<TemplateId, Render[]>> = {};
+export function finalCandidates(v: JobView): Partial<Record<TemplateId, Candidate[]>> {
+  const out: Partial<Record<TemplateId, Candidate[]>> = {};
   for (const id of v.renderIds) {
     const r = v.renders[id];
     const list = out[r.templateId];
@@ -129,7 +137,7 @@ export function finalCandidates(v: JobView): Partial<Record<TemplateId, Render[]
 /** 預設選擇：任務的最佳候選優先；需人工審核時取最後一輪分數最高的 */
 export function defaultSelection(v: JobView): Partial<Record<TemplateId, string>> {
   const out: Partial<Record<TemplateId, string>> = {};
-  for (const [templateId, list] of Object.entries(finalCandidates(v)) as [TemplateId, Render[]][]) {
+  for (const [templateId, list] of Object.entries(finalCandidates(v)) as [TemplateId, Candidate[]][]) {
     const best = v.bestRenderIds[templateId];
     out[templateId] = best ?? [...list].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0].id;
   }
