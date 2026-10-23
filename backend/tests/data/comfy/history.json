@@ -1,0 +1,7 @@
+{
+  "p-0001": {
+    "prompt": [1, "p-0001", {}, {}, ["11"]],
+    "outputs": {"11": {"images": [{"filename": "genai_bg_00001_.png", "subfolder": "", "type": "output"}]}},
+    "status": {"status_str": "success", "completed": true, "messages": []}
+  }
+}

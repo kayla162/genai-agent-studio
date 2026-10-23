@@ -571,6 +571,7 @@ dependencies = [
     { name = "tokenizers" },
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -608,6 +609,7 @@ requires-dist = [
     { name = "tokenizers", specifier = ">=0.23.3" },
     { name = "tzdata", specifier = ">=2026.5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
+    { name = "websockets", specifier = ">=17.2" },
 ]
 
 [package.metadata.requires-dev]

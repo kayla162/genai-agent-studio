@@ -1,0 +1,15 @@
+[
+  {"type": "status", "data": {"status": {"exec_info": {"queue_remaining": 1}}, "sid": "c1"}},
+  {"type": "execution_start", "data": {"prompt_id": "p-0001", "timestamp": 1761271200000}},
+  {"type": "execution_cached", "data": {"nodes": ["1"], "prompt_id": "p-0001", "timestamp": 1761271200001}},
+  {"type": "executing", "data": {"node": "3", "display_node": "3", "prompt_id": "p-0001"}},
+  {"type": "executing", "data": {"node": "9", "display_node": "9", "prompt_id": "p-0001"}},
+  {"type": "progress", "data": {"value": 1, "max": 3, "prompt_id": "p-0001", "node": "9"}},
+  {"type": "progress", "data": {"value": 2, "max": 3, "prompt_id": "p-0001", "node": "9"}},
+  {"type": "progress", "data": {"value": 1, "max": 1, "prompt_id": "other-prompt", "node": "9"}},
+  {"type": "progress", "data": {"value": 3, "max": 3, "prompt_id": "p-0001", "node": "9"}},
+  {"type": "executing", "data": {"node": "10", "display_node": "10", "prompt_id": "p-0001"}},
+  {"type": "executed", "data": {"node": "11", "display_node": "11", "output": {"images": [{"filename": "genai_bg_00001_.png", "subfolder": "", "type": "output"}]}, "prompt_id": "p-0001"}},
+  {"type": "execution_success", "data": {"prompt_id": "p-0001", "timestamp": 1761271218400}},
+  {"type": "executing", "data": {"node": null, "prompt_id": "p-0001"}}
+]

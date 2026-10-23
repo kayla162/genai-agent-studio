@@ -1,0 +1,4 @@
+{
+  "error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}},
+  "node_errors": {"1": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "ckpt_name: 'sd_xl_base_1.0.safetensors' not in []", "extra_info": {}}], "dependent_outputs": ["11"], "class_type": "CheckpointLoaderSimple"}}
+}

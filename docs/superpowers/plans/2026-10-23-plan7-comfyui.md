@@ -75,6 +75,12 @@
   - 前端的表在 `web/src/lib/agent/comfy.ts`（`PRODUCT_SCENE`、`plateImageName`、`maskImageName`）；`npm run fixtures` 匯出成 `contracts/fixtures/comfy.json`，pytest 確認與 `comfyui/workflows/product_scene_v1.params.json` 相同。`buildInjection` 的輸入改為 `jobId`、`round`、`templateId`、提示詞與畫布（不再需要 `layout`）；mock 的 `logoCrowding` 失誤不再改 `layout_boxes`。
   - 模擬模式的 timelines 只有 `injection` 改變（以 JSON 比對確認）；記憶體中執行模擬模式的 `_pipeline`，三條 timelines 的事件仍完全相同。
 - **Task 6**：測試與腳本建立 `Settings` 時一律加上 `image_mode='sim'`（conftest 的 `BASE_SETTINGS` 與 api 測試的設定、`test_review`、`test_worker`、`test_api_catalog`、Gemini 相關測試、`gemini_experiment.py`），之後 Task 10 依 `IMAGE_MODE` 選生圖引擎時，測試不會改連 ComfyUI。
+- **Task 7**：
+  - `uv add websockets`：`websockets>=17.2`（`uv.lock` 固定為 17.2）。
+  - 錯誤分兩種：`ComfyError`（連不上、拒絕 workflow、缺少節點或模型、逾時，重試也不會好）與它的子類別 `ComfyExecutionError`（`execution_error`、`execution_interrupted`，`out_of_memory` 標示 GPU 記憶體不足），Task 8 只重試後者。
+  - `missing(workflow, ignore)` 不需要另外傳模型清單：依 `/object_info` 檢查每個節點類型都存在，以及選項型輸入（模型檔名、取樣器、排程器…）的值都在 ComfyUI 的清單裡；`ignore` 排除每個任務上傳的底圖與遮罩。
+  - `POST /free` 的回應沒有內容，只檢查 HTTP 狀態；`/interrupt` 與 `/queue` 失敗時略過（ComfyUI 已經關閉）。HTTP 請求的逾時為 30 秒，等待 prompt 另以 `COMFYUI_TIMEOUT_SECONDS` 計算。
+  - 假的 WebSocket 伺服器送完訊息後等用戶端關閉（`wait_closed`），伺服器才能正常結束；respx 以 `assert_all_called=False` 共用同一組路由。
 
 ## Global Constraints
 

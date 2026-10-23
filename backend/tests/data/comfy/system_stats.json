@@ -1,0 +1,12 @@
+{
+  "system": {
+    "os": "nt", "ram_total": 16856416256, "ram_free": 6213345280, "comfyui_version": "0.3.75",
+    "python_version": "3.12.10", "pytorch_version": "2.9.1+cu128", "embedded_python": true, "argv": ["main.py"]
+  },
+  "devices": [
+    {
+      "name": "cuda:0 NVIDIA GeForce RTX 3060 Laptop GPU : cudaMallocAsync", "type": "cuda", "index": 0,
+      "vram_total": 6441926656, "vram_free": 5368709120, "torch_vram_total": 0, "torch_vram_free": 0
+    }
+  ]
+}
