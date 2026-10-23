@@ -15,7 +15,8 @@
     "fixtures": "tsx scripts/fixtures.ts",
     "composer": "tsx composer/server.ts",
     "fonts": "node scripts/fetch-fonts.mjs",
-    "glyphs": "tsx scripts/glyphs.ts"
+    "glyphs": "tsx scripts/glyphs.ts",
+    "demo:check": "node scripts/check-demo.mjs"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-tc": "^5.3.0",
