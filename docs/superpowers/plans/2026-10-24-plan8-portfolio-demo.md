@@ -50,3 +50,6 @@
 ## 實作時的調整
 
 （實作時與本計畫原文不同的地方記錄在這裡。）
+
+- **Task 2**：`demo:check` 不檢查打包後的 JavaScript（mock 與 live 的程式都會打包，字串比對不可靠），改為檢查執行時的 `NEXT_PUBLIC_API_MODE`：建置與檢查在同一個環境執行，設成 `live` 時直接失敗。
+- **驗證**：這個 worktree 沒有設定 `POSTER_FONTS_DIR`，需要字型的 26 個測試略過；其他 575 個測試、typecheck、lint、build、`demo:check` 與 mock E2E 都通過。部署與 Access 需要使用者的 Cloudflare 帳號，沒有實際部署。

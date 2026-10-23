@@ -41,6 +41,7 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 |---|---|
 | `npm run dev` | 開發伺服器 |
 | `npm run build` | 靜態輸出到 `out/` |
+| `npm run demo:check` | 部署作品集 Demo 前檢查 `out/`：mock 模式、有首頁、`_headers` 與 `robots.txt` 與 `public/` 相同（見 `../docs/demo/cloudflare.md`） |
 | `npm run test` | Vitest 單元測試（含 composer）；需要字型的測試（字型註冊、伺服器端繪製海報、3 個品牌 × 5 個模板的主色量測）在沒有字型時略過並提示 |
 | `npm run e2e` | mock 模式 E2E（建置後在 3100 埠提供靜態輸出；第一次要先執行 `npx playwright install chromium`） |
 | `npm run e2e:live` | live 模式 E2E（以 docker compose 啟動獨立的整套服務，3200 埠，測完移除；開始前先移除上次中斷留下的容器與資料。Agent、RAG 與去背用模擬版（`AGENT_MODE=sim`，不帶 Gemini key），不下載模型；審查用 `REVIEW_MODE=composer`，確認審查用海報） |
