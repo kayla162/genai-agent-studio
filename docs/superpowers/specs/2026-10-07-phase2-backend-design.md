@@ -31,7 +31,7 @@
 | 運作方式 | 只在本機運作，不需要登入；所有連接埠只綁定 `127.0.0.1` |
 | 目標電腦 | 筆電：RTX 3060 Laptop（6 GB VRAM）、i7-11800H、16 GB RAM。開發可在目前的桌機（GTX 1050 Ti 4 GB、64 GB RAM） |
 | 生圖 | ComfyUI 在筆電上以 Windows 原生執行；後端以網址連線，可改連雲端 GPU |
-| LLM／VLM | Gemini API，模型 ID 由設定指定 |
+| LLM／VLM | Gemini API，模型 ID 由設定指定；預設 `gemini-3.8-flash`（LLM 與 VLM 相同，Plan 6B） |
 | 品牌資料 | 每個品牌一個 YAML 設定檔；CI 手冊從「品牌知識庫」頁面上傳 |
 | 架構 | API 與 Worker 分離；排版與規則審查沿用前端 TypeScript |
 | 作品集 Demo | 前端靜態輸出的 mock 版部署到 Cloudflare Pages，以 Access 的 email 名單限制觀看者 |
@@ -94,6 +94,8 @@ worker 只依賴介面；每個介面都有真實版與模擬版，以環境變�
 | `VisionReviewer` | Gemini | composer `/sim/review`：沿用 mock 的 VLM 檢查 |
 | `Retriever` | Chroma＋BGE | 依 mock 的固定召回順序與分數，從品牌切塊產生結果（Python 實作） |
 | `ImageEngine` | ComfyUI | 程序化背景（`Render.background.kind = 'procedural'`） |
+
+Plan 6B：`LlmAgent` 與 `VisionReviewer` 以 `AGENT_MODE=gemini|sim` 一起切換；`VisionReviewer` 的真實版要讀伺服器端繪製的審查用海報，所以需要 `REVIEW_MODE=composer`（`2026-10-23-plan6b-gemini-vlm-design.md` §4.1）。
 
 ### 3.3 目錄
 
@@ -162,7 +164,9 @@ GenAI Agent/
 
 | 情況 | 處理 |
 |---|---|
-| Gemini 429、5xx、逾時（60 秒） | 指數退避重試 3 次；結構化輸出解析失敗時帶著錯誤再試 1 次；仍失敗則任務失敗 |
+| Gemini 429、5xx、逾時（60 秒） | 指數退避重試 3 次；結構化輸出解析失敗時帶著錯誤再試 1 次；仍失敗則任務失敗。等待回應與退避時每 0.5 秒檢查取消（Plan 6B） |
+| Gemini 400、401／403、404、安全性過濾 | 不重試，任務失敗，原因為中文（例如「Gemini API key 無效或沒有權限」）（Plan 6B） |
+| 超過 Gemini 費用上限 | 不送出呼叫，任務失敗；新任務與需求拆解回 429（`2026-10-23-plan6b-gemini-vlm-design.md` §4.7） |
 | ComfyUI 連不上 | 進入 `rendering` 前檢查 `/system_stats`，失敗則任務失敗，原因含網址 |
 | ComfyUI 執行錯誤 | 該 variant 重試 1 次；仍失敗則任務失敗，原因含節點錯誤訊息 |
 | ComfyUI 逾時 | 每個 prompt 預設 10 分鐘，逾時則任務失敗 |
@@ -177,6 +181,7 @@ GenAI Agent/
 
 - `POST /api/briefs/parse`（同步）：Gemini 以結構化輸出產生 `ParsedBrief`，包含新增的 `period`（活動期間，需求中有提到才填）。
 - 任務的 `parsing` 階段沿用 `JobInput.parsedBrief`（使用者已在表單確認），不再呼叫 LLM。Agent 透視只記錄實際發生的呼叫。
+- 護欄（Plan 6B）：`productName` 取自商品資料、賣點為空時用商品特色、需求沒有數字時不填期間、風格只留英文單字（`2026-10-23-plan6b-gemini-vlm-design.md` §4.3）。
 
 ### 5.2 RAG
 
@@ -206,12 +211,18 @@ GenAI Agent/
   - 負向提示詞一定包含基本負向詞
   - `injection` 由 workflow 參數對照表產生（seed、尺寸、提示詞、商品圖、ControlNet 強度、IP-Adapter 權重、打光方向、版面座標）
 - `ragRefs` 為實際放進 Prompt 的切塊 id。
+- Plan 6B 的修改（`2026-10-23-plan6b-gemini-vlm-design.md` §4.4）：
+  - 護欄放在 composer 的 `POST /spec`（`finalizeSpec`），與審查共用同一套文案與幾何函式；
+  - 新增文案缺字（emoji 由程式移除，其他缺字請 Gemini 重寫）、需求沒有的價格或優惠、替代用語之後的禁用詞與字級的護欄；
+  - 版面驗證與 `product_ratio`、`whitespace`、`logo_clearance` 三項規則共用同一套函式；
+  - 有問題時帶著中文說明重問一次，仍不合格的欄位才退回預設文案或預設版型。
 
 ### 5.4 Query Rewriting（Gemini）
 
 - **觸發**：某個模板在該輪的候選全部未通過審查。
 - Gemini 讀取未通過的檢查項、引用的規範與上一輪 spec，為每個未通過項產生一則修正（`Fix`），並判斷是否需要重新檢索；需要時改寫檢索查詢，檢索 origin `alt` 與 tag `law` 的切塊。
 - **事件**：`job.status rewriting` → `rewrite.started`（reasons、fixes、requery）→ 重新檢索時 `rag.retrieved` → 下一輪 `prompting`。
+- Plan 6B：Gemini 沒有給的修正由程式（`planFixes`）補齊，同一個檢查的多個修正合併；禁用詞或誇大用語未通過時一定重新檢索（`2026-10-23-plan6b-gemini-vlm-design.md` §4.5）。
 
 ### 5.5 生圖（ComfyUI）
 
@@ -247,14 +258,14 @@ GenAI Agent/
 - 直接 import `web/src/lib` 的 compose（scene、paint、art、layout）與 review（rules、color）。瀏覽器專用的 `render.ts` 由 composer 的 Node 版本（@napi-rs/canvas）取代。
 - **新增純函式**（以 Vitest 測試，前端也可以使用）：
   - `measurePrimary`：量標題、售價、徽章區塊內的品牌色元素（扣掉商品），以 Lab 直方圖找出佔比 ≥ 2% 的色塊，取與品牌主色 ΔE2000 最小者。原本「排除商品與文字區塊、取背景面積最大的顏色」的做法經實測不可行（程式背景是主色的淺色調），細節與實驗見 `2026-10-22-plan6a-server-compose-design.md` §2.2、§4.2。背景色系檢查留到 Plan 7。
-  - `ocrDiffs`：每個文字元素在 VLM 轉錄結果中找最接近的片段，累計差異字數（Plan 6B）。
+  - `ocrDiffs`：每個文字元素在 VLM 轉錄結果中找最接近的片段，累計差異字數（Plan 6B）。正規化（NFKC、移除空白與標點）、方塊（「□」）、略過換算後字級太小的段落，0 處通過、1 處警告、2 處以上或有方塊不通過（`2026-10-23-plan6b-gemini-vlm-design.md` §4.6）。
 - **字型**：容器內放完整的 Noto Sans TC、Noto Serif TC（前端的 fontsource 套件是分段子集，不適合伺服器端）。
 - **已實測**：@napi-rs/canvas 1.0.10 支援 `ctx.filter`（blur）、`multiply` 與中文字型；SVG 要先轉成 Buffer 才能載入。
 
 ### 5.7 VLM 審查（Gemini）
 
-- **輸入**：composer 輸出的海報（長邊縮到約 1024 px）、品牌禁用詞與效果宣稱詞、預期文案。
-- **結構化輸出**：`vlm_exaggeration`、`vlm_occlusion`（含對應的版面元素）、`vlm_quality` 的狀態與說明，以及畫面上所有文字的轉錄（供 `ocrDiffs` 使用）。
+- **輸入**：composer 輸出的海報、品牌禁用詞與效果宣稱詞、版面元素的方框。Plan 6B：不提供預期文案（避免轉錄被預期文案帶偏）；是否縮小圖片由實驗決定（預設送原尺寸）。
+- **結構化輸出**：`vlm_exaggeration`、`vlm_occlusion`（含對應的版面元素）、`vlm_quality` 的狀態與說明，以及畫面上所有文字的轉錄（供 `ocrDiffs` 使用）；Plan 6B 的格式為 `VlmVerdict`（`2026-10-23-plan6b-gemini-vlm-design.md` §4.6）。
 - 同一輪的 VLM 呼叫可並行（預設上限 4），事件依候選順序送出。
 
 ### 5.8 用量與成本
@@ -262,6 +273,7 @@ GenAI Agent/
 - 於 Plan 6 實作（Plan 5 沒有付費呼叫）。
 - 每次 Gemini 呼叫記錄 input／output tokens（寫入 `job_usage`，並以 `log` 事件顯示）；ComfyUI 記錄 GPU 秒數。
 - 儀表板的每張成本改為實際用量乘以設定中的單價：Gemini 依模型計價；本機 GPU 計 0，雲端 GPU 依秒數計價。
+- Plan 6B（`2026-10-23-plan6b-gemini-vlm-design.md` §4.7）：單價表為 repo 根目錄的 `pricing.yaml`（有生效日期），費用在寫入時計算；單一任務（預設 US$1）與每月（台北時間，預設 US$20）的費用上限在每次呼叫前檢查。
 
 ## 6. 資料
 
@@ -274,7 +286,7 @@ GenAI Agent/
 | `products` | id、brand_id、name、features、price、photo、cutout、created_at |
 | `jobs` | id、brand_id、input、created_at、stage、round、finished、best_render_ids、cancel_requested、failure_reason |
 | `job_events` | job_id、seq、ts、type、payload；主鍵為 (job_id, seq) |
-| `job_usage` | job_id、provider、model、kind、input_tokens、output_tokens、seconds、cost_usd |
+| `job_usage` | id、job_id（可為空：需求拆解）、brand_id、created_at、provider、model、kind、round、target、input_tokens、cached_tokens、output_tokens（含思考）、thinking_tokens、seconds、cost_usd（Plan 6B） |
 | `history` | id、job_id、render_id、brand_id、product_id、input、template_id、render、copy、selected_at、favorite、written_to_rag |
 
 - 候選圖（`Render`）不另外建表，從事件組回（`render.completed` 加上審查事件）。
@@ -397,6 +409,6 @@ GenAI Agent/
 ## 14. 待決事項（不阻擋開始）
 
 - 筆電是否升級到 32 GB 記憶體（影響 SDXL 能同時載入的元件與速度）
-- 實際使用的 Gemini 模型 ID 與單價：實作時以 Google AI Studio 當時提供的為準
+- ~~實際使用的 Gemini 模型 ID 與單價~~：已決定為 `gemini-3.8-flash`，單價見 `pricing.yaml`（`2026-10-23-plan6b-gemini-vlm-design.md` §3、§4.7）
 - SDXL 等模型的商用授權：Plan 7 逐一確認
 - 自己品牌的設定檔內容與 Logo 圖檔：Plan 4 提供範本後由使用者填寫

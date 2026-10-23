@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { SELUNE, MISTY_ISLE, SAMPLE_PRODUCTS } from '@/lib/api/mock/data';
 import { parseBrief } from '@/lib/api/mock/brief';
 import { getTemplate } from '@/lib/compose/templates';
-import { applyReplacements, BASE_NEGATIVE, buildPromptSpec, seedOf, setParam, type PromptBuildInput } from './prompt';
+import {
+  applyReplacements, BASE_NEGATIVE, buildCopy, buildDisclaimer, buildPromptSpec, negativePromptOf, positivePromptOf, seedOf,
+  setParam, type PromptBuildInput,
+} from './prompt';
 
 const serum = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
 const coldbrew = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_misty_coldbrew')!;
@@ -90,5 +93,35 @@ describe('buildPromptSpec', () => {
     const rewritten = buildPromptSpec(input({ product: tainted, brief, round: 2, fixes: ['banned_words'] }));
     expect(rewritten.copy.features).toEqual(['改善外觀暗沉', '神經醯胺']);
     expect(rewritten.copy.productName).toBe(serum.name);
+  });
+});
+
+describe('prompt parts shared with the Gemini guard', () => {
+  it('positivePromptOf without a scene is the simulated positive prompt', () => {
+    const i = input({ brief: parseBrief('簡約高級感的週年慶海報', SELUNE, serum) });
+    const spec = buildPromptSpec(i);
+    expect(positivePromptOf(i.template, SELUNE, i.brief, null)).toBe(spec.positivePrompt);
+    const withScene = positivePromptOf(i.template, SELUNE, i.brief, 'serum bottle on a marble tray');
+    expect(withScene).toBe(spec.positivePrompt.replace(
+      'the provided product photo on a styled surface, ',
+      'the provided product photo on a styled surface, serum bottle on a marble tray, ',
+    ));
+  });
+
+  it('negativePromptOf adds the fixes and the extra terms once each', () => {
+    expect(negativePromptOf([])).toBe(BASE_NEGATIVE);
+    expect(negativePromptOf(['color_delta', 'color_delta'], 'neon, text artifacts ,blurry')).toBe(
+      `${BASE_NEGATIVE}, oversaturated, neon, off-brand colors, text artifacts`,
+    );
+    const spec = buildPromptSpec(input({ round: 2, fixes: ['vlm_quality'] }));
+    expect(negativePromptOf(['vlm_quality'])).toBe(spec.negativePrompt);
+  });
+
+  it('buildDisclaimer is the note buildCopy writes', () => {
+    const brief = parseBrief('週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒', SELUNE, serum);
+    const copy = buildCopy(SELUNE, serum, brief);
+    expect(buildDisclaimer(SELUNE, brief, copy)).toBe(copy.disclaimer);
+    expect(buildDisclaimer(SELUNE, { ...brief, offer: null, period: null }, { ...copy, headline: ['一夜好眠', '醒來發光'], subhead: '專業配方', features: [] }))
+      .toBe('圖片僅供參考');
   });
 });

@@ -37,8 +37,9 @@ from app.worker import Services as WorkerServices
 from app.worker import build_workers
 from tests.fixtures import BRANDS_DIR
 
-#: 預設值加上環境變數，不讀 .env：開發用的 RAG_MODE=sim、REVIEW_MODE 或之後的 API key 都不會影響測試
-BASE_SETTINGS = Settings(_env_file=None)
+#: 預設值加上環境變數，不讀 .env：開發用的 RAG_MODE=sim、REVIEW_MODE 或 GEMINI_API_KEY 都不會影響測試；
+#: 測試一律明確設定 AGENT_MODE（模擬版為 sim）
+BASE_SETTINGS = Settings(_env_file=None, agent_mode='sim')
 TEST_DATABASE = 'genai_test'
 #: 測試使用 Redis 的第 15 個資料庫，開始時清空
 TEST_REDIS_URL = BASE_SETTINGS.redis_url.rsplit('/', 1)[0] + '/15'
@@ -178,6 +179,7 @@ async def api(db: Database, redis: Redis, composer_url: str, tmp_path: Path) -> 
         local_photos_dir=tmp_path / 'local',
         brands_dir=BRANDS_DIR,
         rag_mode='bge',
+        agent_mode='sim',
     )
     services = ApiServices(test_settings, db, redis, EventStore(db, redis), queues, composer, agent)
     await services.sync_brands()

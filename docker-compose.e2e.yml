@@ -12,10 +12,14 @@ x-e2e-backend: &e2e-backend
     RAG_MODE: sim
     # 真正的審查：composer 繪製審查用海報（不受 .env 的 REVIEW_MODE 影響）
     REVIEW_MODE: composer
+    # 模擬 Agent 與 VLM，不呼叫 Gemini；開發者 .env 裡的 key 也不會進到 E2E 的容器
+    AGENT_MODE: sim
+    GEMINI_API_KEY: ''
   volumes: !override
     - ./brands:/app/brands:ro
     - e2e-photos:/app/assets/products:ro
     - e2e-data:/app/data
+    - ./pricing.yaml:/app/pricing.yaml:ro
 
 services:
   postgres:

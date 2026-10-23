@@ -1,5 +1,7 @@
 """成效儀表板：web/src/lib/stats/dashboard.ts 的移植，結果必須完全相同（tests/test_stats.py）。
 
+成本：live 的 /api/stats 傳入每個任務在 job_usage 的實際費用（usage_costs）；不傳入時依事件估算（與前端相同）。
+
 只統計已結束的任務（完成或需人工審核）；取消與失敗的不列入。事件保持原始 JSON。
 浮點數一律依序相加（_fsum）：Python 3.12 起 sum() 對浮點數做補償加總，結果可能和 JavaScript 的 reduce 不同。
 """
@@ -17,7 +19,7 @@ from app.contract import (
 )
 from app.core.clock import parse_iso
 
-#: 估算單價（美元）；Plan 5、6 改用實際用量
+#: 估算單價（美元）：不傳入實際用量時使用（mock 與 parity 測試）
 UNIT_COST_USD = {
     'llm_call': 0.0006,
     'rerank': 0.0002,
@@ -57,7 +59,8 @@ def job_cost(snap: JobSnapshot) -> float:
     )
 
 
-def job_stat(snap: JobSnapshot) -> JobStat | None:
+def job_stat(snap: JobSnapshot, usage_cost: float | None = None) -> JobStat | None:
+    """usage_cost：這個任務的實際費用（job_usage 的加總）；None 時依事件估算。"""
     s = snap.summary
     if not s.finished or s.stage not in ('done', 'needs_review'):
         return None
@@ -73,7 +76,7 @@ def job_stat(snap: JobSnapshot) -> JobStat | None:
         renders=_render_count(snap.events),
         delivered=len(s.best_render_ids),
         duration_ms=round(duration.total_seconds() * 1000) if duration is not None else 0,
-        cost_usd=job_cost(snap),
+        cost_usd=job_cost(snap) if usage_cost is None else usage_cost,
     )
 
 
@@ -150,8 +153,13 @@ def _mean(values: list[float]) -> float:
     return _fsum(values) / len(values) if values else 0
 
 
-def dashboard_stats(snaps: list[JobSnapshot]) -> DashboardStats:
-    finished = [(snap, stat) for snap in snaps if (stat := job_stat(snap)) is not None]
+def dashboard_stats(snaps: list[JobSnapshot], usage_costs: dict[str, float] | None = None) -> DashboardStats:
+    """usage_costs：每個任務的實際費用（美元）；有傳入時沒有紀錄的任務為 0，None 時依事件估算。"""
+
+    def cost_of(snap: JobSnapshot) -> float | None:
+        return None if usage_costs is None else usage_costs.get(snap.summary.id, 0.0)
+
+    finished = [(snap, stat) for snap in snaps if (stat := job_stat(snap, cost_of(snap))) is not None]
     stats = [s for _, s in finished]
     templates = sum(s.templates for s in stats)
     delivered = sum(s.delivered for s in stats)

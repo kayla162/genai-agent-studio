@@ -6,11 +6,17 @@ import re
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 from saq.job import Status
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedError
 
-from app.contract import JobStatusEvent
+from app.adapters.gemini import NOT_CONFIGURED, GeminiClient, GeminiError
+from app.api import jobs as jobs_api
+from app.contract import Brand, JobStatusEvent, ParsedBrief, Product
+from app.errors import BudgetExceeded
+from app.settings import REPO_ROOT
+from app.usage import Pricing, TokenUsage, UsageLedger, UsageScope
 from tests.conftest import LiveApi
 from tests.fixtures import load_fixture
 from tests.test_events import DownPubSub, publish_down
@@ -228,6 +234,14 @@ async def test_select_a_render_then_favorite_it_and_count_the_job(api: LiveApi) 
     assert (await api.http.patch('/api/history/hist_nope', json={'favorite': True})).status_code == 404
     stats = (await api.http.get('/api/stats', params={'brandId': 'selune'})).json()
     assert (stats['jobs'], stats['passRate'], stats['recent'][0]['jobId']) == (1, 1, job_id)
+    # 每張成本依 job_usage 的實際費用：模擬模式沒有用量紀錄，為 0
+    assert (stats['recent'][0]['costUsd'], stats['costPerImage']) == (0, 0)
+    ledger = UsageLedger(api.services.db, Pricing.load(REPO_ROOT / 'pricing.yaml'), job_budget=1, monthly_budget=20)
+    scope = UsageScope(job_id=job_id, brand_id='selune', round=1, target='story')
+    await ledger.record(scope, 'spec', 'gemini-3.8-flash', TokenUsage(0, 0, 1_000_000, 0))
+    stats = (await api.http.get('/api/stats', params={'brandId': 'selune'})).json()
+    assert stats['recent'][0]['costUsd'] == 3.75
+    assert stats['costPerImage'] == 3.75 / stats['recent'][0]['delivered']
     assert (await api.http.get('/api/stats', params={'brandId': 'misty-isle'})).json()['jobs'] == 0
 
 
@@ -251,3 +265,73 @@ async def test_select_answers_written_to_rag_false_when_the_write_back_fails(
     assert entry['writtenToRag'] is False
     assert (await api.http.get('/api/history', params={'brandId': 'selune'})).json() == [entry]
     assert f'歷史回寫失敗：history_id={entry["id"]}' in caplog.text
+
+
+class SlowAgent:
+    """需求拆解：依 behaviour 等待、丟出錯誤或回傳結果。"""
+
+    def __init__(self, error: Exception | None = None, delay: float = 0) -> None:
+        self.error = error
+        self.delay = delay
+
+    async def parse_brief(self, brand: Brand, text: str, product: Product | None) -> ParsedBrief:
+        await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        raise AssertionError('unreachable')
+
+
+async def test_parse_brief_reports_gemini_failures_in_chinese(api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = {'brandId': 'selune', 'text': '週年慶主打買一送一', 'productId': 'prod_selune_serum'}
+    cases: list[tuple[SlowAgent, int, str, str]] = [
+        (SlowAgent(delay=1), 503, 'unavailable', 'Gemini 沒有在 0.05 秒內完成需求拆解，請稍後再試'),
+        (SlowAgent(GeminiError(NOT_CONFIGURED)), 503, 'unavailable', NOT_CONFIGURED),
+        (
+            SlowAgent(BudgetExceeded('本月 Gemini 費用已達上限（US$20.00）')),
+            429,
+            'budget_exceeded',
+            '本月 Gemini 費用已達上限（US$20.00）',
+        ),
+    ]
+    monkeypatch.setattr(jobs_api, 'BRIEF_TIMEOUT', 0.05)
+    for agent, status, code, message in cases:
+        monkeypatch.setattr(api.services, 'agent', agent)
+        res = await api.http.post('/api/briefs/parse', json=body)
+        assert (res.status_code, res.json()) == (status, {'error': {'code': code, 'message': message}})
+
+
+async def test_create_job_needs_a_key_and_room_in_the_monthly_budget(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gemini = api.services.settings.model_copy(update={'agent_mode': 'gemini', 'gemini_monthly_budget_usd': 1.0})
+    monkeypatch.setattr(api.services, 'settings', gemini)
+    data = job_input(llm='gemini-3.8-flash', vlm='gemini-3.8-flash')
+
+    res = await api.http.post('/api/jobs', json=data)
+    assert (res.status_code, res.json()) == (503, {'error': {'code': 'unavailable', 'message': NOT_CONFIGURED}})
+
+    ledger = UsageLedger(api.services.db, Pricing.load(REPO_ROOT / 'pricing.yaml'), job_budget=1, monthly_budget=1)
+    keyed = gemini.model_copy(update={'gemini_api_key': SecretStr('AIza-test-key-0000')})
+    client = GeminiClient(keyed, ledger)
+    monkeypatch.setattr(api.services, 'gemini', client)
+    monkeypatch.setattr(api.services, 'ledger', ledger)
+    try:
+        assert (await api.http.post('/api/jobs', json=data)).status_code == 201
+        # 需求拆解的用量（沒有任務）也算進每月的費用
+        scope = UsageScope(job_id=None, brand_id='selune', round=None, target=None)
+        await ledger.record(scope, 'brief', 'gemini-3.8-flash', TokenUsage(0, 0, 300_000, 0))
+        res = await api.http.post('/api/jobs', json=data)
+        assert (res.status_code, res.json()) == (
+            429,
+            {'error': {'code': 'budget_exceeded', 'message': '本月 Gemini 費用已達上限（US$1.00）'}},
+        )
+    finally:
+        await client.aclose()
+
+
+async def test_validation_errors_are_described_in_chinese(api: LiveApi) -> None:
+    res = await api.http.post('/api/jobs', json=job_input(templateIds=['poster']))
+    assert res.status_code == 400
+    assert res.json()['error']['message'] == (
+        '請求格式錯誤：templateIds.0：必須是 ecom-main、scene、ig-post、story、banner 其中之一'
+    )

@@ -51,6 +51,15 @@ describe('composer server', () => {
     expect(body).toMatchObject({ score: 100, passed: true });
   });
 
+  it('serves the guard and the glyph table as JSON', async () => {
+    const glyphs = await post(base, '/glyphs', JSON.stringify({ texts: ['晞月', '这'] }));
+    expect(glyphs.status).toBe(200);
+    expect(await glyphs.json()).toEqual({ missing: [[], ['这']] });
+    const spec = await post(base, '/spec', JSON.stringify({ draft: null, request: {} }));
+    expect(spec.status).toBe(400);
+    expect(await spec.json()).toEqual({ error: { code: 'invalid', message: 'draft 必須是物件' } });
+  });
+
   it('reports bad requests as JSON errors', async () => {
     const unknown = await post(base, '/nope', '{}');
     expect(unknown.status).toBe(404);

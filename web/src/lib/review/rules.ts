@@ -4,6 +4,7 @@ import { areaRatio, verticalGap } from '@/lib/core/geometry';
 import { clamp, round1 } from '@/lib/core/num';
 import { deltaEHex } from './color';
 import { PRIMARY_MEASURE } from './measure';
+import { ocrCheck, type OcrResult } from './ocr';
 
 export function findBannedWords(texts: string[], banned: string[]): string[] {
   const joined = texts.join('\n');
@@ -61,30 +62,55 @@ export interface RuleContext {
   spec: PromptSpec;
   /** 從海報量到的主色（measurePrimary）；量不到時為 null，主色檢查判定不通過 */
   measuredPrimary: string | null;
-  /** OCR 結果與文案的差異字數 */
-  ocrDiffs?: number;
+  /** VLM 轉錄與海報文字的比對結果（ocrDiffs）；沒有轉錄時（模擬模式）為 0 處差異 */
+  ocr?: OcrResult;
 }
 
-export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: RuleContext): ReviewCheck[] {
+/**
+ * 版面的三項規則：Logo 淨空區、商品主體佔比、留白比例。審查（runRuleChecks）與 Prompt 構建的護欄（finalizeSpec）
+ * 共用這個函式，兩邊的判斷才會一致。
+ */
+export function layoutRuleChecks(spec: Pick<PromptSpec, 'canvas' | 'layout'>, brand: Brand): ReviewCheck[] {
   const B = boxMap(spec.layout);
   const { width: W, height: H } = spec.canvas;
   const pct = (v: number) => `${round1(v * 100)}%`;
 
+  const gap = verticalGap(B.logo, B.headline);
+  const need = Math.round(B.logo.h * 0.5);
+
+  const prod = areaRatio(B.product, W, H);
+  const [lo, hi] = brand.rules.productRatio;
+  const whitespace = 1 - Object.values(B).reduce((s, r) => s + areaRatio(r, W, H), 0);
+
+  return [
+    {
+      id: 'logo_clearance', name: 'Logo 淨空區', kind: 'rule', rule: `間距 ≥ 0.5 × Logo 高（${need}px）`,
+      value: gap < 0 ? `與標題重疊 ${-gap}px` : `間距 ${gap}px`,
+      status: gap >= need ? 'pass' : 'fail', target: 'logo', ragRef: ragRefFor(brand, 'logo'),
+    },
+    {
+      id: 'product_ratio', name: '商品主體佔比', kind: 'rule', rule: `${round1(lo * 100)}% – ${round1(hi * 100)}%`,
+      value: pct(prod), status: prod >= lo && prod <= hi ? 'pass' : 'fail', target: 'product', ragRef: ragRefFor(brand, 'layout'),
+    },
+    {
+      id: 'whitespace', name: '留白比例', kind: 'rule', rule: `≥ ${round1(brand.rules.minWhitespace * 100)}%`,
+      value: pct(whitespace), status: whitespace >= brand.rules.minWhitespace ? 'pass' : 'fail', target: null,
+      ragRef: ragRefFor(brand, 'layout'),
+    },
+  ];
+}
+
+export function runRuleChecks({ brand, spec, measuredPrimary, ocr }: RuleContext): ReviewCheck[] {
   const { words: banned, target: bannedTarget } = bannedWordHits(spec, brand);
 
   const color = measuredPrimary === null
     ? null
     : { hex: measuredPrimary.toUpperCase(), dE: deltaEHex(measuredPrimary, brand.palette.primary) };
 
-  const gap = verticalGap(B.logo, B.headline);
-  const need = Math.round(B.logo.h * 0.5);
-
   const claim = hasClaim(claimTexts(spec.copy), brand.claimWords);
   const hasNote = brand.disclaimerPhrase !== '' && spec.copy.disclaimer.includes(brand.disclaimerPhrase);
 
-  const prod = areaRatio(B.product, W, H);
-  const [lo, hi] = brand.rules.productRatio;
-  const whitespace = 1 - Object.values(B).reduce((s, r) => s + areaRatio(r, W, H), 0);
+  const [logoClearance, productRatio, whitespace] = layoutRuleChecks(spec, brand);
 
   return [
     {
@@ -97,29 +123,17 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocrDiffs = 0 }: Ru
       value: color ? `ΔE ${round1(color.dE)} · ${MEASURED_PRIMARY_LABEL} ${color.hex}` : NO_PRIMARY_MESSAGE,
       status: color && color.dE <= brand.rules.maxDeltaE ? 'pass' : 'fail', target: 'canvas', ragRef: ragRefFor(brand, 'color'),
     },
-    {
-      id: 'logo_clearance', name: 'Logo 淨空區', kind: 'rule', rule: `間距 ≥ 0.5 × Logo 高（${need}px）`,
-      value: gap < 0 ? `與標題重疊 ${-gap}px` : `間距 ${gap}px`,
-      status: gap >= need ? 'pass' : 'fail', target: 'logo', ragRef: ragRefFor(brand, 'logo'),
-    },
+    logoClearance,
     {
       id: 'disclaimer', name: '效果宣稱註記', kind: 'rule',
       rule: brand.disclaimerPhrase ? `效果宣稱需加註「${brand.disclaimerPhrase}」` : '效果宣稱需加註說明',
       value: !claim ? '無效果宣稱' : hasNote ? '已加註' : '含效果宣稱但缺少註記',
       status: !claim || hasNote ? 'pass' : 'warn', target: 'disclaimer', ragRef: ragRefFor(brand, 'law'),
     },
+    productRatio,
+    whitespace,
     {
-      id: 'product_ratio', name: '商品主體佔比', kind: 'rule', rule: `${round1(lo * 100)}% – ${round1(hi * 100)}%`,
-      value: pct(prod), status: prod >= lo && prod <= hi ? 'pass' : 'fail', target: 'product', ragRef: ragRefFor(brand, 'layout'),
-    },
-    {
-      id: 'whitespace', name: '留白比例', kind: 'rule', rule: `≥ ${round1(brand.rules.minWhitespace * 100)}%`,
-      value: pct(whitespace), status: whitespace >= brand.rules.minWhitespace ? 'pass' : 'fail', target: null,
-      ragRef: ragRefFor(brand, 'layout'),
-    },
-    {
-      id: 'ocr_typo', name: 'OCR 錯字比對', kind: 'rule', rule: '渲染文字與文案逐字比對',
-      value: `${ocrDiffs} 處差異`, status: ocrDiffs === 0 ? 'pass' : 'fail', target: 'headline', ragRef: null,
+      id: 'ocr_typo', name: 'OCR 錯字比對', kind: 'rule', rule: '渲染文字與文案逐字比對', ...ocrCheck(ocr), ragRef: null,
     },
   ];
 }

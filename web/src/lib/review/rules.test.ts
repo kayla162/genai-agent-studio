@@ -3,7 +3,8 @@ import type { ReviewCheck } from '@/types/contract';
 import { SELUNE, MISTY_ISLE } from '@/lib/api/mock/data';
 import { makeSpec } from '@/test/fixtures';
 import {
-  bannedWordHits, findBannedWords, hasClaim, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks, scoreChecks,
+  bannedWordHits, findBannedWords, hasClaim, layoutRuleChecks, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks,
+  scoreChecks,
 } from './rules';
 
 const byId = (checks: ReviewCheck[], id: ReviewCheck['id']) => checks.find((c) => c.id === id)!;
@@ -39,6 +40,16 @@ describe('runRuleChecks', () => {
       'banned_words', 'color_delta', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
     ]);
     expect(checks.every((c) => c.status === 'pass' && c.kind === 'rule')).toBe(true);
+  });
+
+  it('shares the layout rules with layoutRuleChecks', () => {
+    const spec = makeSpec();
+    spec.layout = spec.layout.map((b) => (b.id === 'product' ? { ...b, bbox: [600, 700, 200, 200] } : b));
+    const checks = runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' });
+    const layout = layoutRuleChecks(spec, SELUNE);
+    expect(layout.map((c) => c.id)).toEqual(['logo_clearance', 'product_ratio', 'whitespace']);
+    expect(layout).toEqual(checks.filter((c) => layout.some((l) => l.id === c.id)));
+    expect(byId(layout, 'product_ratio').status).toBe('fail');
   });
 
   it('fails banned words and points at the subhead', () => {
@@ -109,9 +120,16 @@ describe('runRuleChecks', () => {
     expect(checks.every((c) => c.status === 'pass')).toBe(true);
   });
 
-  it('fails OCR when diffs are reported', () => {
-    const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', ocrDiffs: 2 }), 'ocr_typo');
-    expect(c.status).toBe('fail');
+  it('warns about one OCR difference and fails on boxes', () => {
+    const one = { diffs: 1, boxes: false, worst: { el: 'subhead', expected: '7天', read: '1天', distance: 1 }, compared: 9, skipped: 0 } as const;
+    const checks = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', ocr: one });
+    expect(byId(checks, 'ocr_typo')).toMatchObject({ status: 'warn', target: 'subhead', value: '1 處差異（副標「7天」讀成「1天」）' });
+    expect(scoreChecks(checks)).toEqual({ score: 94, passed: true });
+
+    const boxes = { diffs: 0, boxes: true, worst: null, compared: 9, skipped: 0 };
+    const failed = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', ocr: boxes });
+    expect(byId(failed, 'ocr_typo')).toMatchObject({ status: 'fail', target: 'canvas' });
+    expect(scoreChecks(failed).passed).toBe(false);
   });
 
   it('scans the price label and product name for banned words', () => {

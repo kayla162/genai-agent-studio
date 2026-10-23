@@ -30,6 +30,7 @@ from saq.types import Context
 from sqlalchemy import select
 
 from app.adapters.composer import ComposerClient
+from app.adapters.gemini import GeminiClient
 from app.contract import (
     FilePhoto,
     IngestChunkedEvent,
@@ -49,6 +50,7 @@ from app.db.session import Database
 from app.errors import AppError, Invalid, NotFound
 from app.events import EventStore
 from app.files import photo_path, product_folder
+from app.pipeline.gemini import gemini_ports
 from app.pipeline.ports import Ports
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.runner import failure_reason, run_job
@@ -62,6 +64,7 @@ from app.rag.store import VectorRecord, VectorStore, collection_name
 from app.rag.sync import UPSERT_BATCH, BrandLocks, sync_all, vector_record
 from app.repo import catalog, history
 from app.settings import Settings, settings
+from app.usage import Pricing, UsageLedger
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +96,8 @@ class Services:
     vectors: VectorStore
     #: 寫入 Chroma 前要取得的品牌鎖（同步、上傳、回寫共用）
     locks: BrandLocks = field(default_factory=BrandLocks)
+    #: AGENT_MODE=gemini 時的 Gemini client（每個 worker 共用一個，同時最多 GEMINI_CONCURRENCY 個呼叫）
+    gemini: GeminiClient | None = None
 
     async def pace(self, ms: float) -> None:
         if self.speed > 0:
@@ -101,7 +106,8 @@ class Services:
 
 def build_services() -> Services:
     """RAG_MODE=bge 時檢索換成 BgeRetriever；REVIEW_MODE=composer 時排版與審查換成 ComposerPosters 與
-    ComposerReviewer（伺服器端繪製審查用海報、量主色、規則審查）。Agent 與生圖仍是模擬版（Plan 6B、7 換成真實版）。"""
+    ComposerReviewer（伺服器端繪製審查用海報、量主色、規則審查）；AGENT_MODE=gemini 時 Agent 與審查換成
+    GeminiAgent 與 GeminiReviewer（需要 REVIEW_MODE=composer），並記錄用量。生圖仍是模擬版（Plan 7 換成 ComfyUI）。"""
     db = Database(settings.database_url)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     composer = ComposerClient(settings.composer_url)
@@ -115,9 +121,21 @@ def build_services() -> Services:
         ports = replace(ports, retriever=BgeRetriever(db, vectors, rag, locks))
     if settings.review_mode == 'composer':
         ports = replace(ports, posters=ComposerPosters(composer, settings), reviewer=ComposerReviewer(composer))
+    gemini: GeminiClient | None = None
+    if settings.agent_mode == 'gemini':
+        ledger = UsageLedger(
+            db,
+            Pricing.load_or_unavailable(settings.pricing_file),
+            job_budget=settings.gemini_job_budget_usd,
+            monthly_budget=settings.gemini_monthly_budget_usd,
+        )
+        gemini = GeminiClient(settings, ledger)
+        ports = gemini_ports(ports, gemini, composer, settings, ledger)
     cutouts = CutoutEngine(settings.cutout_model, settings.models_dir, redis)
     store = EventStore(db, redis)
-    return Services(db, redis, store, composer, ports, settings.sim_speed, settings, cutouts, rag, vectors, locks)
+    return Services(
+        db, redis, store, composer, ports, settings.sim_speed, settings, cutouts, rag, vectors, locks, gemini
+    )
 
 
 async def warm_up_rag(services: Services) -> None:
@@ -319,7 +337,11 @@ async def requeue_cutouts_periodically(
 
 def build_workers(services: Services, queues: Queues, **options: Any) -> tuple[Worker[Context], ...]:
     async def run_job_fn(ctx: Context, *, job_id: str) -> None:
-        await run_job(job_id, services.db, services.store, services.ports, speed=services.speed)
+        # AGENT_MODE=gemini 時不依時間軸等待各階段：實際的呼叫本身就要時間
+        pace_phases = services.settings.agent_mode == 'sim'
+        await run_job(
+            job_id, services.db, services.store, services.ports, speed=services.speed, pace_phases=pace_phases
+        )
 
     async def cutout_fn(ctx: Context, *, product_id: str, photo_url: str) -> None:
         await cutout(services, product_id, photo_url)
@@ -391,6 +413,8 @@ async def main() -> None:
         requeueing.cancel()
         await queues.disconnect()
         await services.composer.aclose()
+        if services.gemini is not None:
+            await services.gemini.aclose()
         await services.db.dispose()
 
 

@@ -101,11 +101,13 @@ class SimAgent:
     async def parse_brief(self, brand: Brand, text: str, product: Product | None) -> ParsedBrief:
         return await self.composer.sim_brief(brand, product, text)
 
-    async def build_spec(self, request: SpecRequest) -> PromptSpec:
+    async def build_spec(self, request: SpecRequest, run: RunContext) -> PromptSpec:
         flawed = self.force_all_fail or (self.first_round_fail and request.round == 1)
         return await self.composer.sim_prompt(request, flawed)
 
-    async def plan_rewrite(self, brand: Brand, spec: PromptSpec, checks: list[ReviewCheck]) -> Rewrite:
+    async def plan_rewrite(
+        self, brand: Brand, spec: PromptSpec, checks: list[ReviewCheck], run: RunContext, *, retries_left: int
+    ) -> Rewrite:
         fixes = await self.composer.sim_fixes(checks, brand, spec)
         failing = {c.id for c in checks if c.status != 'pass'}
         query = f'{brand.category} 禁用詞 合規替代用語' if failing & {'banned_words', 'vlm_exaggeration'} else None
@@ -159,7 +161,9 @@ class SimReviewer:
     def __init__(self, composer: ComposerClient) -> None:
         self.composer = composer
 
-    async def review(self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None) -> ReviewResult:
+    async def review(
+        self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None, run: RunContext
+    ) -> ReviewResult:
         return await self.composer.sim_review(render.spec, brand, render.variant, seed)
 
 

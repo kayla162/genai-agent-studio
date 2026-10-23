@@ -30,3 +30,10 @@ class Unavailable(AppError):
 
     status = 503
     code = 'unavailable'
+
+
+class BudgetExceeded(AppError):
+    """已達 Gemini 的單一任務或每月費用上限。"""
+
+    status = 429
+    code = 'budget_exceeded'

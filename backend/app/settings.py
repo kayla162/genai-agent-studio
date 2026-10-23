@@ -5,14 +5,17 @@
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.rag.state import RagMode
 
 #: 審查：composer（伺服器端繪製審查用海報、量主色、規則審查）或 sim（不畫圖，沿用 mock 的審查；測試與作品集 Demo）
 ReviewMode = Literal['composer', 'sim']
+#: Agent 與 VLM：gemini（Gemini 拆解需求、構建 Prompt、Query Rewriting 與 VLM 審查）或 sim（模擬，測試與作品集 Demo）
+AgentMode = Literal['gemini', 'sim']
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -32,9 +35,31 @@ class Settings(BaseSettings):
     #: 任務 id 使用的本地時間（與前端 mock 的 makeJobId 一樣顯示使用者所在地的日期時間）
     timezone: str = 'Asia/Taipei'
 
-    #: 前端可選的模型（JobInput.llm、JobInput.vlm）；Plan 6 改為實際的 Gemini 模型
+    #: AGENT_MODE=sim 時前端可選的模型名稱（JobInput.llm、JobInput.vlm）；
+    #: gemini 模式改用 gemini_llm_model 與 gemini_vlm_model
     llm_model: str = 'Gemini 3.7 Flash'
     vlm_model: str = 'Gemini 3.7 Vision'
+
+    #: Agent 與 VLM 一起切換：gemini（預設，需要 GEMINI_API_KEY 與 REVIEW_MODE=composer）或 sim
+    agent_mode: AgentMode = 'gemini'
+    #: Gemini API key（repo 根目錄的 .env，不進 git）；只在建立 SDK client 時取值，系統狀態只顯示末 4 碼
+    gemini_api_key: SecretStr = SecretStr('')
+    #: 需求拆解、Prompt 構建、Query Rewriting
+    gemini_llm_model: str = 'gemini-3.8-flash'
+    #: 審查
+    gemini_vlm_model: str = 'gemini-3.8-flash'
+    #: 每次請求的逾時（秒）
+    gemini_timeout_seconds: float = Field(default=60, gt=0)
+    #: 429、5xx、逾時的重試次數
+    gemini_max_retries: int = Field(default=3, ge=0)
+    #: 每個 worker 同時進行的 Gemini 呼叫數
+    gemini_concurrency: int = Field(default=4, ge=1)
+    #: 單一任務的 Gemini 費用上限（美元），0 為不設上限
+    gemini_job_budget_usd: float = Field(default=1, ge=0)
+    #: 每月（台北時間）的 Gemini 費用上限（美元），0 為不設上限
+    gemini_monthly_budget_usd: float = Field(default=20, ge=0)
+    #: Gemini 單價表（Docker 內為 /app/pricing.yaml）
+    pricing_file: Path = REPO_ROOT / 'pricing.yaml'
 
     #: 去背模型：birefnet-general（預設）、birefnet-general-lite，或不需要模型的 sim（測試與 live E2E）
     cutout_model: str = 'birefnet-general'
@@ -57,6 +82,17 @@ class Settings(BaseSettings):
     sim_first_round_fail: bool = True
     #: 模擬模式：每一輪都失誤（展示「需人工審核」）
     sim_force_all_fail: bool = False
+
+    @model_validator(mode='after')
+    def _gemini_needs_the_composer_review(self) -> Self:
+        """Gemini 的 VLM 審查要讀伺服器端繪製的審查用海報，所以 AGENT_MODE=gemini 不能搭配 REVIEW_MODE=sim。
+        settings 在匯入時建立，所以 api 與 worker 會在啟動時失敗並顯示這個原因。"""
+        if self.agent_mode == 'gemini' and self.review_mode == 'sim':
+            raise ValueError(
+                'AGENT_MODE=gemini 需要 REVIEW_MODE=composer（目前為 sim）：'
+                '請改為 REVIEW_MODE=composer，或設定 AGENT_MODE=sim'
+            )
+        return self
 
 
 settings = Settings()

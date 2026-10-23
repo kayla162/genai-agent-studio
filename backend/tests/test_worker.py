@@ -20,6 +20,7 @@ from redis.asyncio.client import PubSub
 from saq.job import Status
 
 from app.adapters.composer import ComposerClient
+from app.adapters.gemini import GeminiClient
 from app.brands import load_brands
 from app.contract import (
     FilePhoto,
@@ -40,6 +41,7 @@ from app.cutout.segmenter import Segmenter, SimSegmenter
 from app.db.session import Database
 from app.errors import Unavailable
 from app.events import EventStore
+from app.pipeline.gemini import GeminiAgent, GeminiReviewer
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.sim import SimPosters, SimRetriever, SimReviewer, sim_ports
 from app.queues import Queues, TaskFailed, cutout_key, ingest_channel
@@ -79,7 +81,11 @@ async def services(db: Database, redis: Redis, composer_url: str, tmp_path: Path
     async with db.session() as s:
         await catalog.sync_brands(s, load_brands(BRANDS_DIR)[0], NOW)
     settings = Settings(
-        _env_file=None, data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=BRANDS_DIR
+        _env_file=None,
+        agent_mode='sim',
+        data_dir=tmp_path / 'data',
+        local_photos_dir=tmp_path / 'local',
+        brands_dir=BRANDS_DIR,
     )
     cutouts = CutoutEngine('sim', tmp_path / 'models', redis)
     rag = RagEngine('sim', tmp_path / 'models', redis)
@@ -525,7 +531,9 @@ async def test_run_task_returns_unfinished_when_the_wait_runs_out(queues: Queues
 async def test_build_services_picks_the_retriever_by_rag_mode(
     mode: RagMode, retriever: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('app.worker.settings', Settings(_env_file=None, brands_dir=BRANDS_DIR, rag_mode=mode))
+    monkeypatch.setattr(
+        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, rag_mode=mode)
+    )
     built = build_services()
     try:
         assert isinstance(built.ports.retriever, retriever)
@@ -547,7 +555,9 @@ async def test_build_services_picks_the_retriever_by_rag_mode(
 async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
     mode: ReviewMode, posters: type, reviewer: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('app.worker.settings', Settings(_env_file=None, brands_dir=BRANDS_DIR, review_mode=mode))
+    monkeypatch.setattr(
+        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, review_mode=mode)
+    )
     built = build_services()
     try:
         assert isinstance(built.ports.posters, posters)
@@ -557,6 +567,26 @@ async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
             assert built.ports.posters.composer is built.composer
             assert built.ports.posters.settings is built.settings
     finally:
+        await built.composer.aclose()
+        await built.redis.aclose()
+        await built.db.dispose()
+
+
+async def test_build_services_uses_gemini_for_the_agent_and_the_review_when_agent_mode_is_gemini(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gemini = Settings(_env_file=None, agent_mode='gemini', gemini_api_key='AIza-test-key-0000', brands_dir=BRANDS_DIR)
+    monkeypatch.setattr('app.worker.settings', gemini)
+    built = build_services()
+    try:
+        assert isinstance(built.ports.agent, GeminiAgent)
+        assert isinstance(built.ports.reviewer, GeminiReviewer)
+        assert isinstance(built.ports.posters, ComposerPosters)
+        assert isinstance(built.gemini, GeminiClient) and built.gemini.configured
+        assert built.ports.usage is not None
+    finally:
+        assert built.gemini is not None
+        await built.gemini.aclose()
         await built.composer.aclose()
         await built.redis.aclose()
         await built.db.dispose()

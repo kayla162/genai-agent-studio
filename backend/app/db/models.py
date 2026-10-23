@@ -1,9 +1,10 @@
 """資料表：合約物件整份存成 JSONB（data），另外拆出查詢用的欄位。"""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, false
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -93,3 +94,32 @@ class HistoryRow(Base):
     brand_id: Mapped[str] = mapped_column(String, index=True)
     data: Mapped[Json]
     selected_at: Mapped[datetime] = mapped_column(index=True)
+
+
+class JobUsageRow(Base):
+    """外部服務的用量與費用：每個有回應的 Gemini 請求一筆（Plan 7 加上 ComfyUI 的 GPU 秒數）。
+    cost_usd 在寫入時依當時的單價計算，之後單價改變也不影響舊紀錄。需求拆解還沒有任務，job_id 為空。"""
+
+    __tablename__ = 'job_usage'
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_id: Mapped[str | None] = mapped_column(ForeignKey('jobs.id', ondelete='CASCADE'), index=True)
+    brand_id: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(index=True)
+    #: gemini（Plan 7 加上 comfyui）
+    provider: Mapped[str]
+    model: Mapped[str]
+    #: brief、spec、rewrite、vlm
+    kind: Mapped[str]
+    round: Mapped[int | None] = mapped_column(Integer)
+    #: 模板 id（spec、rewrite）或候選 id（vlm）
+    target: Mapped[str | None]
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    #: 輸入中命中隱式快取的部分
+    cached_tokens: Mapped[int] = mapped_column(Integer)
+    #: 包含思考（計費方式相同）
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    thinking_tokens: Mapped[int] = mapped_column(Integer)
+    #: Plan 7 的 GPU 秒數
+    seconds: Mapped[float | None] = mapped_column(Float)
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6))

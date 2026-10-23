@@ -43,8 +43,9 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 | `npm run build` | 靜態輸出到 `out/` |
 | `npm run test` | Vitest 單元測試（含 composer）；需要字型的測試（字型註冊、伺服器端繪製海報、3 個品牌 × 5 個模板的主色量測）在沒有字型時略過並提示 |
 | `npm run e2e` | mock 模式 E2E（建置後在 3100 埠提供靜態輸出；第一次要先執行 `npx playwright install chromium`） |
-| `npm run e2e:live` | live 模式 E2E（以 docker compose 啟動獨立的整套服務，3200 埠，測完移除；開始前先移除上次中斷留下的容器與資料。RAG 與去背用模擬版，不下載模型；審查用 `REVIEW_MODE=composer`，確認審查用海報） |
-| `npm run composer` | composer（3900 埠）：後端使用的版型、審查用海報的繪製、規則審查與模擬邏輯；啟動時註冊海報字型，缺少時印出原因並結束 |
+| `npm run e2e:live` | live 模式 E2E（以 docker compose 啟動獨立的整套服務，3200 埠，測完移除；開始前先移除上次中斷留下的容器與資料。Agent、RAG 與去背用模擬版（`AGENT_MODE=sim`，不帶 Gemini key），不下載模型；審查用 `REVIEW_MODE=composer`，確認審查用海報） |
+| `npm run composer` | composer（3900 埠）：後端使用的版型、審查用海報的繪製、規則審查、Gemini 結果的護欄與模擬邏輯；啟動時註冊海報字型，缺少時印出原因並結束 |
+| `npm run glyphs` | 從海報字型重新產生字型涵蓋表 `src/lib/compose/glyphs.json`（兩個字型都有的字；字型以 SHA-256 固定，換字型版本時才需要） |
 | `npm run fonts` | 下載海報字型到 `composer/fonts/`（或 `npm run fonts -- <資料夾>`、`POSTER_FONTS_DIR`），核對大小與 SHA-256；已存在且相符的檔案會略過 |
 | `npm run fixtures` | 產生 `../contracts/fixtures/`（後端的一致性測試使用） |
 | `npm run typecheck` | 型別檢查（含路由型別） |
@@ -94,11 +95,13 @@ src/
 ├─ components/          ui（shadcn）、common（EmptyState、PageHeader）、layout、studio、product、queue、history、brands、poster、agent、dashboard
 ├─ lib/
 │  ├─ api/              ApiClient 介面；mock/（MockApiClient、劇本、示範資料與示範任務、IndexedDB）；http/（HttpApiClient、WebSocket 重新連線）
-│  ├─ agent/            Prompt 構建、修正策略、版本差異、流程節點狀態、事件摘要、透視用的資料整理
-│  ├─ compose/          版型、排版引擎（scene）、程序化素材（art）、Canvas 繪製（paint／render）
-│  ├─ review/           規則型合規審查（rules）、ΔE2000（color）、從像素量測品牌主色（measure）、依內容判斷的 VLM 檢查（vlm）、文案重新檢查（recheck）
+│  ├─ agent/            Prompt 構建、修正策略、Gemini 結果的護欄（guard：finalizeSpec）、版本差異、流程節點狀態、事件摘要、透視用的資料整理
+│  ├─ compose/          版型、排版引擎（scene）、程序化素材（art）、Canvas 繪製（paint／render）、
+│  │                    海報字型涵蓋表與 emoji 移除（glyphs；只給 composer 使用）
+│  ├─ review/           規則型合規審查（rules）、ΔE2000（color）、從像素量測品牌主色（measure）、
+│  │                    VLM 檢查（vlm：Gemini 的判讀，或 AGENT_MODE=sim 時依內容判斷）、OCR 錯字比對（ocr）、文案重新檢查（recheck）
 │  ├─ jobs/             事件 → 畫面狀態（reducer）
-│  ├─ stats/            成效儀表板統計與成本估算
+│  ├─ stats/            成效儀表板統計與成本估算（live 的每張成本改由後端依實際用量計算）
 │  ├─ export/           檔名、zip、下載
 │  ├─ core/             共用的基礎函式：round1／clamp 與可重現的亂數（num）、視覺寬度（text）、矩形運算（geometry）、deepFreeze（freeze）
 │  ├─ history/          歷史紀錄的篩選（品牌、通路、日期、收藏），最新的在前
@@ -106,11 +109,13 @@ src/
 │  ├─ rag/              品牌文件的切塊、標籤與向量預覽（chunk；後端的 Python 移植以 golden fixture 比對）、切塊類型（kind）、歷史回寫切塊（history；與後端格式相同）
 │  └─ store/            Zustand stores
 ├─ test/                測試共用的資料（fixtures）、golden fixtures 的產生（golden）與切塊的範例文件（chunk-samples）
-└─ types/contract.ts    前後端資料約定
-composer/               Node 服務，由後端呼叫：版型（/layout）、審查用海報（/render，poster.ts）、規則審查（/review）、
-                        模擬邏輯（/sim/brief、/sim/prompt、/sim/review、/sim/fixes）、狀態與字型（/health）；
-                        字型註冊（fonts.ts）、字型清單（fonts.lock.json）、下載的字型（fonts/，不進 git）
-scripts/                產生 fixtures、提供靜態輸出（Playwright 使用）、下載海報字型（fetch-fonts.mjs）
+├─ types/contract.ts    前後端資料約定
+└─ types/agent.ts       Gemini 的結構化輸出與護欄的結果（SpecDraft、VlmVerdict、GuardIssue；後端 gemini_types.py 以 golden fixture 比對）
+composer/               Node 服務，由後端呼叫：版型（/layout）、審查用海報（/render，poster.ts）、規則審查（/review；
+                        AGENT_MODE=gemini 時帶 Gemini 的判讀與轉錄）、Prompt 構建的護欄（/spec）、修正項（/fixes）、
+                        字型缺字（/glyphs）、模擬邏輯（/sim/brief、/sim/prompt、/sim/review、/sim/fixes）、狀態與字型（/health）；
+                        字型註冊（fonts.ts）、字型清單（fonts.lock.json）、cmap 解析（cmap.ts）、下載的字型（fonts/，不進 git）
+scripts/                產生 fixtures、提供靜態輸出（Playwright 使用）、下載海報字型（fetch-fonts.mjs）、產生字型涵蓋表（glyphs.ts）
 e2e/                    Playwright（mock）：主流程（含匯出 zip）、Agent 透視重試 diff 與合規報告、儀表板、手機寬度
 e2e-live/               Playwright（live）：主流程（含審查用海報）、重新整理後接續、API 重新啟動後重新連線、取消、文件（Markdown 與 PDF）與商品照上傳
 Dockerfile、nginx.conf  live 版（nginx）與 composer 的映像檔（建置時下載並核對海報字型）

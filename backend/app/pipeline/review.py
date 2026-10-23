@@ -18,7 +18,7 @@ from app.adapters.composer import ComposerClient, ComposerError, PosterImages, P
 from app.contract import Brand, FilePhoto, Product, Render, UrlBackground
 from app.errors import AppError
 from app.files import poster_file, resolve_url
-from app.pipeline.ports import ComposedPoster, ReviewResult
+from app.pipeline.ports import ComposedPoster, ReviewResult, RunContext
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,8 @@ EXIF_ORIENTATION = 0x0112
 COMPOSE_FAILED = '排版服務（composer）無法繪製海報：'
 REVIEW_FAILED = '排版服務（composer）無法審查海報：'
 MISSING_IMAGE = '無法繪製審查用海報：'
+#: 審查一定要有排版階段繪製的審查用海報
+POSTER_REQUIRED = '審查需要伺服器端繪製的審查用海報（REVIEW_MODE=composer 時由 ComposerPosters 繪製）'
 
 
 def fit_image(path: Path) -> bytes:
@@ -136,9 +138,11 @@ class ComposerReviewer:
     def __init__(self, composer: ComposerClient) -> None:
         self.composer = composer
 
-    async def review(self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None) -> ReviewResult:
+    async def review(
+        self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None, run: RunContext
+    ) -> ReviewResult:
         if poster is None:
-            raise AppError('審查需要伺服器端繪製的審查用海報（REVIEW_MODE=composer 時由 ComposerPosters 繪製）')
+            raise AppError(POSTER_REQUIRED)
         try:
             return await self.composer.review(render.spec, brand, poster.measured_primary)
         except ComposerError as error:

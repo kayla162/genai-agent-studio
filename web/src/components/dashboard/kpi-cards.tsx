@@ -3,6 +3,12 @@ import type { LucideIcon } from 'lucide-react';
 import type { DashboardStats } from '@/types/contract';
 import { Card, CardContent } from '@/components/ui/card';
 import { formatDuration } from '@/lib/agent/events';
+import { API_MODE } from '@/lib/api';
+
+/** live：後端依 job_usage 的實際費用；mock：依事件與固定單價估算 */
+const COST_NOTE = API_MODE === 'live'
+  ? '依實際用量：Gemini 呼叫的費用，攤到每張交付圖'
+  : '估算：LLM、Rerank、生圖與 VLM 審查，攤到每張交付圖';
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
@@ -32,7 +38,7 @@ export function KpiCards({ stats }: { stats: DashboardStats }) {
         icon={CircleDollarSign}
         label="每張成本"
         value={stats.costPerImage === null ? '—' : `US$ ${stats.costPerImage.toFixed(3)}`}
-        note="估算：LLM、Rerank、生圖與 VLM 審查，攤到每張交付圖"
+        note={COST_NOTE}
       />
     </div>
   );

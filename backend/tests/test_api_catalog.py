@@ -44,9 +44,13 @@ DRAFT = {
 }
 
 
-async def test_options_templates_and_brands(api: LiveApi) -> None:
+async def test_options_templates_and_brands(api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
     options = (await api.http.get('/api/options')).json()
     assert options == {'llm': ['Gemini 3.7 Flash'], 'vlm': ['Gemini 3.7 Vision'], 'engines': ['comfyui']}
+    gemini = api.services.settings.model_copy(update={'agent_mode': 'gemini'})
+    monkeypatch.setattr(api.services, 'settings', gemini)
+    options = (await api.http.get('/api/options')).json()
+    assert options == {'llm': ['gemini-3.8-flash'], 'vlm': ['gemini-3.8-flash'], 'engines': ['comfyui']}
     fixture = load_fixture('brands.json')
     assert (await api.http.get('/api/templates')).json() == fixture['templates']
     assert (await api.http.get('/api/brands')).json() == sorted(fixture['brands'], key=lambda b: b['id'])
@@ -198,7 +202,7 @@ async def test_ingest_rejects_bad_files_before_streaming(api: LiveApi) -> None:
         ('selune', {'file': ('a.txt', '主色'.encode('big5'))}, 400, '文字檔需為 UTF-8 編碼'),
         ('selune', {'file': ('scan.pdf', blank.getvalue())}, 400, NO_TEXT),
         ('selune', {'file': ('big.md', b'a' * (MAX_BYTES + 1))}, 400, '檔案不可超過 20 MB'),
-        ('selune', {'other': ('a.md', b'x')}, 400, '請求格式錯誤：body.file：Field required'),
+        ('selune', {'other': ('a.md', b'x')}, 400, '請求格式錯誤：file：缺少欄位'),
     ]
     for brand_id, files, status, message in cases:
         code = 'not_found' if status == 404 else 'invalid'
@@ -299,7 +303,7 @@ async def test_errors_use_one_format(api: LiveApi) -> None:
     assert mismatch.json()['error']['message'] == '網址與內容的商品 id 不一致'
     malformed = (await api.http.post('/api/products', json={**DRAFT, 'price': {'sale': 'free'}})).json()
     assert malformed['error']['code'] == 'invalid'
-    assert malformed['error']['message'].startswith('請求格式錯誤：body.price.sale：')
+    assert malformed['error']['message'] == '請求格式錯誤：price.sale：必須是整數'
     no_route = await api.http.get('/api/nope')
     assert no_route.status_code == 404
     assert no_route.json() == {'error': {'code': 'not_found', 'message': '找不到這個網址'}}
@@ -588,7 +592,11 @@ async def test_list_and_import_local_photos(api: LiveApi) -> None:
 
 def test_files_stay_inside_their_folders(tmp_path: Path) -> None:
     settings = Settings(
-        _env_file=None, data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=tmp_path / 'brands'
+        _env_file=None,
+        agent_mode='sim',
+        data_dir=tmp_path / 'data',
+        local_photos_dir=tmp_path / 'local',
+        brands_dir=tmp_path / 'brands',
     )
     files = ['secret.png', 'data/uploads/a.png', 'local/b.jpg', 'brands/assets/logo.svg', 'brands/selune.yaml']
     for name in files:

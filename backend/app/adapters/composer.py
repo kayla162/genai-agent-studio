@@ -1,5 +1,8 @@
-"""composer（web/composer）的用戶端：版型、審查用海報的繪製與審查（REVIEW_MODE=composer），
-以及模擬模式沿用的前端 mock 邏輯（/sim/*）。"""
+"""composer（web/composer）的用戶端：版型、審查用海報的繪製與審查（REVIEW_MODE=composer）、
+Gemini 的護欄（/spec、/fixes、/glyphs，AGENT_MODE=gemini），以及模擬模式沿用的前端 mock 邏輯（/sim/*）。
+
+送出的品牌一律精簡切塊（brand_json）：品牌含上傳的手冊與歷史回寫時最多可達 2,000 個切塊，
+composer 只用到每個 tag 的第一個規範（ragRefFor），所以只保留那些。"""
 
 import base64
 from dataclasses import dataclass
@@ -7,7 +10,19 @@ from typing import Any, Literal
 
 import httpx
 
-from app.contract import Brand, Fix, LayoutBox, ParsedBrief, Product, PromptSpec, Render, ReviewCheck, TemplateId
+from app.contract import (
+    Brand,
+    Fix,
+    LayoutBox,
+    ParsedBrief,
+    Product,
+    PromptSpec,
+    RagTag,
+    Render,
+    ReviewCheck,
+    TemplateId,
+)
+from app.pipeline.gemini_types import GuardIssue, SpecDraft, VlmVerdict
 from app.pipeline.ports import ReviewResult, SpecRequest
 
 
@@ -57,6 +72,37 @@ class RenderedPoster:
 class ComposerHealth:
     #: composer 啟動時註冊的海報字型（字型家族名稱）；舊版 composer 沒有回報時為空
     fonts: list[str]
+
+
+def brand_json(brand: Brand) -> dict[str, Any]:
+    """送給 composer 的品牌：每個 tag 只保留第一個非 -alt 的切塊（與前端 ragRefFor 選的相同，結果不變）。"""
+    data = brand.to_json()
+    seen: set[RagTag] = set()
+    kept = []
+    for chunk in brand.guideline_chunks:
+        if chunk.id.endswith('-alt') or chunk.tag in seen:
+            continue
+        seen.add(chunk.tag)
+        kept.append(chunk.to_json())
+    data['guidelineChunks'] = kept
+    return data
+
+
+def spec_request_json(r: SpecRequest) -> dict[str, Any]:
+    """POST /spec 的 request（composer 的 GuardRequest）"""
+    return {
+        'jobId': r.job_id,
+        'round': r.round,
+        'brand': brand_json(r.brand),
+        'product': r.product.to_json(),
+        'brief': r.brief.to_json(),
+        'text': r.text,
+        'templateId': r.template.id,
+        'engine': r.engine,
+        'seed': r.seed,
+        'ragRefs': r.rag_refs,
+        'fixes': r.fixes,
+    }
 
 
 def _error_message(res: httpx.Response) -> str:
@@ -110,14 +156,14 @@ class ComposerClient:
         return [LayoutBox.model_validate(b) for b in await self._post('/layout', {'templateId': template_id})]
 
     async def sim_brief(self, brand: Brand, product: Product | None, text: str) -> ParsedBrief:
-        body = {'brand': brand.to_json(), 'product': product.to_json() if product else None, 'text': text}
+        body = {'brand': brand_json(brand), 'product': product.to_json() if product else None, 'text': text}
         return ParsedBrief.model_validate(await self._post('/sim/brief', body))
 
     async def sim_prompt(self, r: SpecRequest, flawed: bool) -> PromptSpec:
         body = {
             'jobId': r.job_id,
             'round': r.round,
-            'brand': r.brand.to_json(),
+            'brand': brand_json(r.brand),
             'product': r.product.to_json(),
             'brief': r.brief.to_json(),
             'templateId': r.template.id,
@@ -136,7 +182,7 @@ class ComposerClient:
         body = {
             'render': render.to_json(),
             'product': product.to_json() if product else None,
-            'brand': brand.to_json(),
+            'brand': brand_json(brand),
             'images': images.to_json(),
         }
         res = await self._send('/render', body)
@@ -148,15 +194,41 @@ class ComposerClient:
             primary_share=float(res.headers.get('X-Primary-Share') or 0),
         )
 
-    async def review(self, spec: PromptSpec, brand: Brand, measured_primary: str | None) -> ReviewResult:
-        """live 模式的審查（/review）：7 項規則加 3 項依內容判斷的 VLM 檢查，分數不加隨機抖動。"""
-        body = {'spec': spec.to_json(), 'brand': brand.to_json(), 'measuredPrimary': measured_primary}
+    async def review(
+        self,
+        spec: PromptSpec,
+        brand: Brand,
+        measured_primary: str | None,
+        vlm: VlmVerdict | None = None,
+        vlm_scale: float = 1.0,
+    ) -> ReviewResult:
+        """live 模式的審查（/review）：7 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
+        vlm 有值（AGENT_MODE=gemini）時 VLM 三項用 Gemini 的判讀並比對轉錄（vlm_scale 為送出圖片與畫布的比例）；
+        None 時 VLM 三項依內容判斷。"""
+        body: dict[str, Any] = {'spec': spec.to_json(), 'brand': brand_json(brand), 'measuredPrimary': measured_primary}
+        if vlm is not None:
+            body |= {'vlm': vlm.to_json(), 'vlmScale': vlm_scale}
         return _review_result(await self._post('/review', body))
 
+    async def spec(self, draft: SpecDraft, request: SpecRequest) -> tuple[PromptSpec, list[GuardIssue]]:
+        """Prompt 構建的程式護欄（/spec）：可直接使用的 spec 與發現的問題。"""
+        data = await self._post('/spec', {'draft': draft.to_json(), 'request': spec_request_json(request)})
+        return PromptSpec.model_validate(data['spec']), [GuardIssue.model_validate(i) for i in data['issues']]
+
+    async def fixes(self, checks: list[ReviewCheck], brand: Brand, spec: PromptSpec) -> list[Fix]:
+        """Query Rewriting 的修正項（/fixes，與 /sim/fixes 相同的 planFixes）"""
+        body = {'checks': [c.to_json() for c in checks], 'brand': brand_json(brand), 'spec': spec.to_json()}
+        return [Fix.model_validate(f) for f in await self._post('/fixes', body)]
+
+    async def glyphs(self, texts: list[str]) -> list[list[str]]:
+        """每段文字中海報字型沒有的字（/glyphs）"""
+        data = await self._post('/glyphs', {'texts': texts})
+        return [[str(ch) for ch in missing] for missing in data['missing']]
+
     async def sim_review(self, spec: PromptSpec, brand: Brand, variant: int, seed: int) -> ReviewResult:
-        body = {'spec': spec.to_json(), 'brand': brand.to_json(), 'variant': variant, 'seed': seed}
+        body = {'spec': spec.to_json(), 'brand': brand_json(brand), 'variant': variant, 'seed': seed}
         return _review_result(await self._post('/sim/review', body))
 
     async def sim_fixes(self, checks: list[ReviewCheck], brand: Brand, spec: PromptSpec) -> list[Fix]:
-        body = {'checks': [c.to_json() for c in checks], 'brand': brand.to_json(), 'spec': spec.to_json()}
+        body = {'checks': [c.to_json() for c in checks], 'brand': brand_json(brand), 'spec': spec.to_json()}
         return [Fix.model_validate(f) for f in await self._post('/sim/fixes', body)]
