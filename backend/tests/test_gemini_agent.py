@@ -27,7 +27,7 @@ SELUNE = LOADED['selune'].brand
 SERUM = LOADED['selune'].samples[0]
 TEXT = '週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒'
 GOOD = SpecDraft.model_validate(load_fixture('agent.json')['specDraft'])
-SETTINGS = Settings(_env_file=None, agent_mode='gemini')
+SETTINGS = Settings(_env_file=None, image_mode='sim', agent_mode='gemini')
 
 
 def hit(chunk_id: str) -> RagHit:

@@ -496,7 +496,11 @@ async def main(args: argparse.Namespace) -> None:
     report = Report()
     with tempfile.TemporaryDirectory() as tmp:
         settings = Settings(
-            _env_file=None, agent_mode='gemini', gemini_api_key=api_key(args), data_dir=Path(tmp) / 'data'
+            _env_file=None,
+            image_mode='sim',
+            agent_mode='gemini',
+            gemini_api_key=api_key(args),
+            data_dir=Path(tmp) / 'data',
         )
         experiment = Experiment(args, settings, report)
         try:

@@ -74,6 +74,7 @@
   - 對照表沒有 `width`、`height`：重繪的尺寸由底圖決定（`/plate` 已經是生成尺寸）。多了 `scheduler`；`plate_image`、`mask_image` 的檔名含輪次（`{jobId}_r{round}_{templateId}_plate.png`），因為 Gemini 每輪可能調整版面。
   - 前端的表在 `web/src/lib/agent/comfy.ts`（`PRODUCT_SCENE`、`plateImageName`、`maskImageName`）；`npm run fixtures` 匯出成 `contracts/fixtures/comfy.json`，pytest 確認與 `comfyui/workflows/product_scene_v1.params.json` 相同。`buildInjection` 的輸入改為 `jobId`、`round`、`templateId`、提示詞與畫布（不再需要 `layout`）；mock 的 `logoCrowding` 失誤不再改 `layout_boxes`。
   - 模擬模式的 timelines 只有 `injection` 改變（以 JSON 比對確認）；記憶體中執行模擬模式的 `_pipeline`，三條 timelines 的事件仍完全相同。
+- **Task 6**：測試與腳本建立 `Settings` 時一律加上 `image_mode='sim'`（conftest 的 `BASE_SETTINGS` 與 api 測試的設定、`test_review`、`test_worker`、`test_api_catalog`、Gemini 相關測試、`gemini_experiment.py`），之後 Task 10 依 `IMAGE_MODE` 選生圖引擎時，測試不會改連 ComfyUI。
 
 ## Global Constraints
 

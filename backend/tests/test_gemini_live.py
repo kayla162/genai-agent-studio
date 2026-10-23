@@ -45,7 +45,9 @@ pytestmark = [
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(_env_file=None, agent_mode='gemini', gemini_api_key=KEY or '', data_dir=tmp_path / 'data')
+    return Settings(
+        _env_file=None, image_mode='sim', agent_mode='gemini', gemini_api_key=KEY or '', data_dir=tmp_path / 'data'
+    )
 
 
 @pytest.fixture

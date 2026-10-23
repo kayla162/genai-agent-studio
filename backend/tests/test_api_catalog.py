@@ -593,6 +593,7 @@ async def test_list_and_import_local_photos(api: LiveApi) -> None:
 def test_files_stay_inside_their_folders(tmp_path: Path) -> None:
     settings = Settings(
         _env_file=None,
+        image_mode='sim',
         agent_mode='sim',
         data_dir=tmp_path / 'data',
         local_photos_dir=tmp_path / 'local',

@@ -83,6 +83,7 @@ async def composer(composer_url: str) -> AsyncIterator[RecordingComposer]:
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         _env_file=None,
+        image_mode='sim',
         agent_mode='sim',
         data_dir=tmp_path / 'data',
         local_photos_dir=tmp_path / 'local',

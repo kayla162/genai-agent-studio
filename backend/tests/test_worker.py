@@ -82,6 +82,7 @@ async def services(db: Database, redis: Redis, composer_url: str, tmp_path: Path
         await catalog.sync_brands(s, load_brands(BRANDS_DIR)[0], NOW)
     settings = Settings(
         _env_file=None,
+        image_mode='sim',
         agent_mode='sim',
         data_dir=tmp_path / 'data',
         local_photos_dir=tmp_path / 'local',
@@ -532,7 +533,8 @@ async def test_build_services_picks_the_retriever_by_rag_mode(
     mode: RagMode, retriever: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, rag_mode=mode)
+        'app.worker.settings',
+        Settings(_env_file=None, image_mode='sim', agent_mode='sim', brands_dir=BRANDS_DIR, rag_mode=mode),
     )
     built = build_services()
     try:
@@ -556,7 +558,8 @@ async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
     mode: ReviewMode, posters: type, reviewer: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, review_mode=mode)
+        'app.worker.settings',
+        Settings(_env_file=None, image_mode='sim', agent_mode='sim', brands_dir=BRANDS_DIR, review_mode=mode),
     )
     built = build_services()
     try:
@@ -575,7 +578,13 @@ async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
 async def test_build_services_uses_gemini_for_the_agent_and_the_review_when_agent_mode_is_gemini(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gemini = Settings(_env_file=None, agent_mode='gemini', gemini_api_key='AIza-test-key-0000', brands_dir=BRANDS_DIR)
+    gemini = Settings(
+        _env_file=None,
+        image_mode='sim',
+        agent_mode='gemini',
+        gemini_api_key='AIza-test-key-0000',
+        brands_dir=BRANDS_DIR,
+    )
     monkeypatch.setattr('app.worker.settings', gemini)
     built = build_services()
     try:
