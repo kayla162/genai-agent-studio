@@ -1,4 +1,6 @@
 import type { DemoOptions, JobEvent, JobInput, JobMessage, JobStage, TemplateId } from '@/types/contract';
+import type { GuardIssue, SpecDraft, VlmVerdict } from '@/types/agent';
+import { finalizeSpec, type GuardRequest } from '@/lib/agent/guard';
 import type { JobSnapshot } from '@/lib/api/client';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from '@/lib/api/mock/data';
 import { parseBrief } from '@/lib/api/mock/brief';
@@ -9,6 +11,7 @@ import { hashString, mulberry32 } from '@/lib/core/num';
 import { chunkDocument, embedPreview } from '@/lib/rag/chunk';
 import { dashboardStats } from '@/lib/stats/dashboard';
 import { CHUNK_SAMPLES, PREVIEW_SAMPLES } from './chunk-samples';
+import { cleanSpec, draftOf } from './fixtures';
 
 /**
  * 給後端（Python）一致性測試的固定測資，寫在 repo 根目錄的 contracts/fixtures/。
@@ -121,8 +124,47 @@ function slim(snap: JobSnapshot): unknown {
   };
 }
 
+/**
+ * Gemini 的結構化輸出與護欄結果的範例（後端 gemini_types.py 解析，確認兩邊的欄位一致）：
+ * 合格的 SpecDraft、涵蓋每一種問題代碼的 GuardIssue、三種狀態都有的 VlmVerdict。
+ */
+function agentFixtures(): { specDraft: SpecDraft; guardIssues: GuardIssue[]; vlmVerdict: VlmVerdict } {
+  const spec = cleanSpec();
+  const brand = getBrandById('selune');
+  const product = { ...SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!, name: '極光精華✨这款' };
+  const text = '週年慶 2026/10/15–11/15 溫柔療癒';
+  const request: GuardRequest = {
+    jobId: 'job_agent', round: 1, brand: { ...brand, bannedWords: [...brand.bannedWords, '奇蹟'] }, product,
+    brief: parseBrief(text, brand, product), text, templateId: 'ig-post', engine: 'comfyui', seed: 42, ragRefs: [], fixes: [],
+  };
+  const specDraft = draftOf(spec);
+  const copyFlaws: SpecDraft = {
+    ...specDraft,
+    headline: ['这一夜修護', '醒來透亮發光醒來透亮✨'],
+    subhead: '奇蹟般的透亮光采',
+    features: ['買二送一'],
+    badge: { top: '週年慶限定', main: ' ', sub: 'LIMITED OFFER' },
+    layout: specDraft.layout.filter((b) => b.id !== 'price'),
+    scene: '珍珠托盤上的精華液',
+  };
+  const layoutFlaws: SpecDraft = {
+    ...specDraft,
+    layout: specDraft.layout.map((b) => (b.id === 'headline' ? { ...b, bbox: [101, 216, 864, 30] } : b)),
+  };
+  const ratio = { ...request, brand: { ...request.brand, rules: { ...brand.rules, productRatio: [0.4, 0.6] as [number, number] } } };
+  const guardIssues = [...finalizeSpec(copyFlaws, request).issues, ...finalizeSpec(layoutFlaws, ratio).issues];
+  const vlmVerdict: VlmVerdict = {
+    lines: ['SÉLUNE', '一夜溫柔修護', '醒來透□發光', '7天感受透亮光采・專業修護配方*'],
+    exaggeration: { status: 'pass', phrases: [], reason: '' },
+    occlusion: { status: 'warn', elements: ['logo', 'headline'], reason: 'Logo 與標題太靠近' },
+    quality: { status: 'fail', issues: ['商品邊緣模糊'], reason: '商品主體失焦' },
+  };
+  return { specDraft, guardIssues, vlmVerdict };
+}
+
 export function goldenFixtures(): Record<string, unknown> {
   const out: Record<string, unknown> = {
+    'agent.json': agentFixtures(),
     'brands.json': { brands: BRANDS, products: SAMPLE_PRODUCTS, templates: CHANNEL_TEMPLATES },
     'rng.json': {
       hashString: ['', 'a', 'selune#color', '週年慶', 'job_20261007_1000_a1b2'].map((s) => [s, hashString(s)]),

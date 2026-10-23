@@ -1,6 +1,7 @@
 import type {
   Brand, DemoOptions, Engine, JobInput, JobMessage, JobStage, Product, PromptSpec, TemplateId,
 } from '@/types/contract';
+import type { SpecDraft, VlmVerdict } from '@/types/agent';
 import type { JobSnapshot } from '@/lib/api/client';
 import { buildPromptSpec } from '@/lib/agent/prompt';
 import { parseBrief } from '@/lib/api/mock/brief';
@@ -45,6 +46,26 @@ export function cleanSpec(brand: Brand = SELUNE, product: Product = SERUM, templ
     jobId: 'job_t', round: 1, brand, product, brief: parseBrief('週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒', brand, product),
     template: getTemplate(templateId), engine: 'comfyui', seed: 42, ragRefs: [], fixes: [],
   });
+}
+
+/** 把 PromptSpec 的文案與版面轉成 Gemini 的 SpecDraft（護欄不會有意見的 draft） */
+export function draftOf(spec: PromptSpec, scene = 'serum bottle on a pearl tray with soft aurora light'): SpecDraft {
+  const { copy } = spec;
+  return {
+    headline: [...copy.headline], subhead: copy.subhead, features: [...copy.features], badge: { ...copy.badge },
+    priceLabel: copy.price.label, layout: spec.layout.map((b) => ({ id: b.id, bbox: [...b.bbox] })), scene,
+    negativeExtra: '', rationale: '商品放右下，標題靠左對齊網格',
+  };
+}
+
+/** VLM 的判讀：三項通過，轉錄為 lines */
+export function passingVerdict(lines: string[]): VlmVerdict {
+  return {
+    lines,
+    exaggeration: { status: 'pass', phrases: [], reason: '' },
+    occlusion: { status: 'pass', elements: [], reason: '' },
+    quality: { status: 'pass', issues: [], reason: '' },
+  };
 }
 
 export interface JobFixture {
