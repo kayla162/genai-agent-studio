@@ -2,7 +2,7 @@
 
 用法（在 backend/，需要 GEMINI_API_KEY 與執行中的 composer：在 web/ 執行 npm run composer）：
 
-    uv run python scripts/record_gemini.py [--env-file ../.env] [--composer http://127.0.0.1:3900]
+    uv run python -m scripts.record_gemini [--env-file ../.env] [--composer http://127.0.0.1:3900]
 
 - key 取自環境變數 GEMINI_API_KEY，沒有時只讀 --env-file 的 GEMINI_API_KEY 這一個值。
 - 寫入 brief-ok.json、spec-ok.json、vlm-ok.json：只有回應的狀態碼與本文（不含標頭），並確認不含 key。
