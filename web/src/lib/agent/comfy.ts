@@ -5,8 +5,9 @@ import type { PromptSpec } from '@/types/contract';
  * buildInjection 依這張表產生 PromptSpec.injection；npm run fixtures 把它匯出成 contracts/fixtures/comfy.json，
  * pytest 確認與 comfyui/workflows/product_scene_v1.params.json 相同，而且每個參數都對得到 workflow 的節點。
  *
- * 目前的 workflow 是手寫的（只用 ComfyUI 內建節點與 SDXL base 1.0）；Plan 7 Task 1 在 ComfyUI 實測後，
- * 換成匯出的 workflow 與實驗決定的參數，這張表與 comfyui/ 的兩個檔案一起修改。
+ * workflow 只用 ComfyUI 內建節點：SDXL base 1.0 加上 SDXL-Lightning 8 步的 LoRA（授權見 comfyui/models.md），
+ * 以 InpaintModelConditioning 重繪商品以外的區域。參數依 Plan 7 Task 1 的實測（規格 §12）；修改時這張表與
+ * comfyui/ 的兩個檔案一起改。
  */
 
 export type ComfyParamType = 'string' | 'int' | 'float' | 'image';
@@ -30,15 +31,16 @@ export const PRODUCT_SCENE: ComfyWorkflowTable = {
   workflow: 'product_scene_v1.json',
   params: [
     { label: 'checkpoint', nodeId: '1', input: 'ckpt_name', type: 'string', default: 'sd_xl_base_1.0.safetensors' },
+    { label: 'lora', nodeId: '2', input: 'lora_name', type: 'string', default: 'sdxl_lightning_8step_lora.safetensors' },
     { label: 'positive_prompt', nodeId: '3', input: 'text', type: 'string' },
     { label: 'negative_prompt', nodeId: '4', input: 'text', type: 'string' },
     { label: 'plate_image', nodeId: '5', input: 'image', type: 'image' },
     { label: 'mask_image', nodeId: '6', input: 'image', type: 'image' },
     { label: 'seed', nodeId: '9', input: 'seed', type: 'int' },
-    { label: 'steps', nodeId: '9', input: 'steps', type: 'int', default: 20 },
-    { label: 'cfg', nodeId: '9', input: 'cfg', type: 'float', default: 6 },
+    { label: 'steps', nodeId: '9', input: 'steps', type: 'int', default: 8 },
+    { label: 'cfg', nodeId: '9', input: 'cfg', type: 'float', default: 1 },
     { label: 'sampler', nodeId: '9', input: 'sampler_name', type: 'string', default: 'euler' },
-    { label: 'scheduler', nodeId: '9', input: 'scheduler', type: 'string', default: 'normal' },
+    { label: 'scheduler', nodeId: '9', input: 'scheduler', type: 'string', default: 'sgm_uniform' },
     { label: 'denoise', nodeId: '9', input: 'denoise', type: 'float', default: 1 },
   ],
 };

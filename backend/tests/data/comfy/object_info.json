@@ -1,14 +1,205 @@
 {
-  "CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["sd_xl_base_1.0.safetensors"], {}]}}},
-  "CLIPTextEncode": {"input": {"required": {"text": ["STRING", {"multiline": true}], "clip": ["CLIP"]}}},
-  "LoadImage": {"input": {"required": {"image": [["example.png"], {"image_upload": true}]}}},
-  "LoadImageMask": {"input": {"required": {"image": [["example.png"], {"image_upload": true}], "channel": [["alpha", "red", "green", "blue"]]}}},
-  "InpaintModelConditioning": {"input": {"required": {"positive": ["CONDITIONING"], "negative": ["CONDITIONING"], "vae": ["VAE"], "pixels": ["IMAGE"], "mask": ["MASK"], "noise_mask": ["BOOLEAN", {"default": true}]}}},
-  "KSampler": {"input": {"required": {
-    "model": ["MODEL"], "seed": ["INT", {"default": 0}], "steps": ["INT", {"default": 20}], "cfg": ["FLOAT", {"default": 8.0}],
-    "sampler_name": [["euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_sde"]], "scheduler": [["normal", "karras", "sgm_uniform"]],
-    "positive": ["CONDITIONING"], "negative": ["CONDITIONING"], "latent_image": ["LATENT"], "denoise": ["FLOAT", {"default": 1.0}]
-  }}},
-  "VAEDecode": {"input": {"required": {"samples": ["LATENT"], "vae": ["VAE"]}}},
-  "SaveImage": {"input": {"required": {"images": ["IMAGE"], "filename_prefix": ["STRING", {"default": "ComfyUI"}]}}}
+  "CheckpointLoaderSimple": {
+    "input": {
+      "required": {
+        "ckpt_name": [
+          [
+            "sd_xl_base_1.0.safetensors"
+          ],
+          {}
+        ]
+      }
+    }
+  },
+  "CLIPTextEncode": {
+    "input": {
+      "required": {
+        "text": [
+          "STRING",
+          {
+            "multiline": true
+          }
+        ],
+        "clip": [
+          "CLIP"
+        ]
+      }
+    }
+  },
+  "LoadImage": {
+    "input": {
+      "required": {
+        "image": [
+          [
+            "example.png"
+          ],
+          {
+            "image_upload": true
+          }
+        ]
+      }
+    }
+  },
+  "LoadImageMask": {
+    "input": {
+      "required": {
+        "image": [
+          [
+            "example.png"
+          ],
+          {
+            "image_upload": true
+          }
+        ],
+        "channel": [
+          [
+            "alpha",
+            "red",
+            "green",
+            "blue"
+          ]
+        ]
+      }
+    }
+  },
+  "InpaintModelConditioning": {
+    "input": {
+      "required": {
+        "positive": [
+          "CONDITIONING"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "vae": [
+          "VAE"
+        ],
+        "pixels": [
+          "IMAGE"
+        ],
+        "mask": [
+          "MASK"
+        ],
+        "noise_mask": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      }
+    }
+  },
+  "KSampler": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 20
+          }
+        ],
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 8.0
+          }
+        ],
+        "sampler_name": [
+          [
+            "euler",
+            "euler_ancestral",
+            "dpmpp_2m",
+            "dpmpp_2m_sde"
+          ]
+        ],
+        "scheduler": [
+          [
+            "normal",
+            "karras",
+            "sgm_uniform"
+          ]
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "latent_image": [
+          "LATENT"
+        ],
+        "denoise": [
+          "FLOAT",
+          {
+            "default": 1.0
+          }
+        ]
+      }
+    }
+  },
+  "VAEDecode": {
+    "input": {
+      "required": {
+        "samples": [
+          "LATENT"
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    }
+  },
+  "SaveImage": {
+    "input": {
+      "required": {
+        "images": [
+          "IMAGE"
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "default": "ComfyUI"
+          }
+        ]
+      }
+    }
+  },
+  "LoraLoader": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "clip": [
+          "CLIP"
+        ],
+        "lora_name": [
+          [
+            "sdxl_lightning_8step_lora.safetensors"
+          ]
+        ],
+        "strength_model": [
+          "FLOAT",
+          {
+            "default": 1.0
+          }
+        ],
+        "strength_clip": [
+          "FLOAT",
+          {
+            "default": 1.0
+          }
+        ]
+      }
+    }
+  }
 }
