@@ -1,5 +1,6 @@
 """BgeRetriever：FakeEncoder 與 Chroma 的 genai_test database（示範品牌的切塊，再加上幾份上傳的切塊）。"""
 
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 
 import pytest
@@ -30,8 +31,13 @@ JOB_INPUT = JobInput.model_validate(load_fixture('timelines/selune-retry.json')[
 class RecordingRun:
     """記錄 log 的 RunContext。"""
 
+    job_id = 'job_rag'
+
     def __init__(self) -> None:
         self.logs: list[tuple[LogSource, str]] = []
+
+    async def wait[T](self, awaitable: Awaitable[T], note: str | None = None) -> T:
+        return await awaitable
 
     async def emit(self, event: JobEvent) -> None:
         pass

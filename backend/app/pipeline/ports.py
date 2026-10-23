@@ -1,7 +1,8 @@
 """任務流程依賴的外部服務介面。每個介面都有真實版與模擬版（app/pipeline/sim.py），由設定切換。"""
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from app.contract import (
     Brand,
@@ -22,6 +23,12 @@ from app.contract import (
     ReviewCheck,
     TemplateId,
 )
+
+T = TypeVar('T')
+
+
+class JobCancelled(Exception):
+    """使用者取消了任務：runner 停下來並送出 job.status cancelled。"""
 
 
 @dataclass(frozen=True)
@@ -54,13 +61,20 @@ class ReviewResult:
 
 
 class RunContext(Protocol):
-    """任務執行中可用的動作（ImageEngine 回報進度用）。"""
+    """任務執行中可用的動作：送出事件與 log、依時間軸等待、可取消的等待。"""
+
+    job_id: str
 
     async def emit(self, event: JobEvent) -> None: ...
 
     async def log(self, source: LogSource, message: str, level: LogLevel = 'info') -> None: ...
 
     async def pace(self, ms: float) -> None: ...
+
+    async def wait(self, awaitable: Awaitable[T], note: str | None = None) -> T:
+        """等待 awaitable，期間每 0.5 秒檢查取消旗標。取消時中斷 awaitable，note 有值時先寫一則 warn log，
+        再丟出 JobCancelled（例如等待 Gemini 回應時：已中斷的呼叫可能仍會計費）。"""
+        ...
 
 
 class Retriever(Protocol):

@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "body": {
+    "promptFeedback": {
+      "blockReason": "SAFETY"
+    },
+    "usageMetadata": {
+      "promptTokenCount": 812,
+      "totalTokenCount": 812
+    },
+    "modelVersion": "gemini-3.8-flash",
+    "responseId": "recorded-blocked"
+  }
+}

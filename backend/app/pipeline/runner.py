@@ -9,7 +9,9 @@ import asyncio
 import logging
 import math
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass
+from typing import TypeVar
 
 from app.contract import (
     Brand,
@@ -43,7 +45,7 @@ from app.db.models import JobRow
 from app.db.session import Database
 from app.errors import AppError
 from app.events import EventStore
-from app.pipeline.ports import ComposedPoster, Ports, ReviewResult, SpecRequest
+from app.pipeline.ports import ComposedPoster, JobCancelled, Ports, ReviewResult, SpecRequest
 from app.repo import catalog, jobs
 from app.templates import get_template
 
@@ -63,12 +65,13 @@ PHASE_MS = {
 }
 #: 取消旗標最多隔多久檢查一次（秒）
 CANCEL_CHECK_INTERVAL = 0.25
+#: 可取消的等待（RunContext.wait）每隔多久檢查一次取消旗標（秒）
+WAIT_CHECK_INTERVAL = 0.5
 #: Rerank 後進入 Prompt 的切塊數（ragRefs）；真實版召回 8 筆，模擬版只有 5 筆
 PROMPT_REFS = 5
 
 
-class JobCancelled(Exception):
-    pass
+T = TypeVar('T')
 
 
 def truncate(s: str, n: int) -> str:
@@ -110,6 +113,27 @@ class JobRun:
 
     async def log(self, source: LogSource, message: str, level: LogLevel = 'info') -> None:
         await self.emit(LogEvent(type='log', source=source, level=level, message=message))
+
+    async def wait(self, awaitable: Awaitable[T], note: str | None = None) -> T:
+        """可取消的等待：每 WAIT_CHECK_INTERVAL 秒檢查取消旗標；取消時中斷 awaitable（例如進行中的 HTTP 請求），
+        note 有值時直接寫入一則 warn log（不經過 emit 的取消檢查），再丟出 JobCancelled。"""
+        task = asyncio.ensure_future(awaitable)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=WAIT_CHECK_INTERVAL)
+                if done:
+                    return task.result()
+                await self.checkpoint(force=True)
+        except JobCancelled:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if note:
+                await self.store.append(self.job_id, LogEvent(type='log', source='api', level='warn', message=note))
+            raise
+        except BaseException:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise
 
     async def pace(self, ms: float) -> None:
         if self.speed <= 0 or ms <= 0:

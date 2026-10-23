@@ -1,0 +1,10 @@
+{
+  "status": 404,
+  "body": {
+    "error": {
+      "code": 404,
+      "message": "models/gemini-x is not found for API version v1beta, or is not supported for generateContent.",
+      "status": "NOT_FOUND"
+    }
+  }
+}

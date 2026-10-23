@@ -1,0 +1,27 @@
+{
+  "status": 200,
+  "body": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "{\"headline\": \"醒來透亮發光\", \"points\": \"5重玻尿酸\"}"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 4120,
+      "candidatesTokenCount": 120,
+      "totalTokenCount": 4560,
+      "thoughtsTokenCount": 320
+    },
+    "modelVersion": "gemini-3.8-flash",
+    "responseId": "recorded-invalid"
+  }
+}
