@@ -53,6 +53,19 @@
 
 執行時若結果與預期不同，先檢查是否漏了步驟，不要修改測試來配合。
 
+## 實作時的調整
+
+以下是實作時與本計畫原文不同的地方（程式碼以 commit 為準）：
+
+- **Task 1**：實驗腳本 `backend/scripts/gemini_experiment.py` 先寫好並加上 `--offline`（以假的回應跑完整個流程，檢查腳本本身），commit 為 `feat: add the Gemini experiment script…`；實際的實驗與規格 §12 的結果仍待有 key。腳本以模組執行：`uv run python -m scripts.gemini_experiment …`（`scripts/record_gemini.py` 也是）。mypy 也檢查 `scripts/`。
+- **Task 3**：`expectedSegments(scene)` 不需要 `logoImage` 參數，改依場景的 `LogoOp.image` 判斷有沒有向量字標。
+- **Task 6**：`agent.json` 由 `web/src/test/golden.ts`（`npm run fixtures` 呼叫它）產生，不是 `web/scripts/fixtures.ts`；`draftOf`、`passingVerdict` 放在 `web/src/test/fixtures.ts` 供測試共用。golden 測試確認範例涵蓋每一種 `GuardCode`。
+- **Task 7、12**：`UsageRecorder.check(scope, model)` 多一個 `model`：沒有單價的模型在送出前就被拒絕（規格 §4.7「沒有單價就無法套用上限」）。`Pricing.load_or_unavailable` 讓單價表讀不到時 api 與 worker 照常啟動，原因顯示在系統狀態。另外新增 `MemoryLedger`（不寫資料庫，給腳本與 live 測試使用）。
+- **Task 8**：`JobCancelled` 移到 `ports.py`，`JobRun.wait` 也在這個 Task 實作（`RunContext` 加上 `wait` 後 mypy 要求）；測試用的 `RunContext` 為 `tests/fake_run.py`。
+- **Task 9**：worker 傳 `pace_phases` 給 `run_job` 的修改在 Task 12（與服務選用一起）。
+- **Task 13**：品牌設定檔的缺字檢查抽成 `glyph_warnings(composer, brands)`，以不需要資料庫的測試涵蓋。
+- **Task 14**：沒有現成的測試讀取 compose 檔，改新增 `backend/tests/test_compose.py`（解析 YAML，確認掛載與 E2E 的設定）。三種正式呼叫的回應（`brief-ok.json`、`spec-ok.json`、`vlm-ok.json`）也以 respx 重播，錄製腳本會取代它們。`live` 測試以 `skipif` 在準備 fixture 之前略過。
+
 ## Global Constraints
 
 - **指令位置**：前端在 `web/`，後端在 `backend/`，`docker compose` 在 repo 根目錄。
@@ -82,7 +95,7 @@
 | `web/src/lib/agent/guard.ts` | `finalizeSpec`：Prompt 構建的程式護欄 |
 | `web/src/lib/agent/prompt.ts` | 匯出 `NEGATIVE_BY_FIX`；抽出 `buildDisclaimer`、`positivePromptOf` 供護欄共用 |
 | `web/composer/handlers.ts` | `/spec`、`/review`（`vlm`）、`/fixes`、`/glyphs` |
-| `web/scripts/fixtures.ts`、`contracts/fixtures/agent.json` | `SpecDraft`、`VlmVerdict`、`GuardIssue` 的範例 |
+| `web/src/test/golden.ts`、`contracts/fixtures/agent.json` | `SpecDraft`、`VlmVerdict`、`GuardIssue` 的範例 |
 | `pricing.yaml` | Gemini 單價表（有生效日） |
 | `backend/app/settings.py` | `AGENT_MODE`、`GEMINI_*`、`PRICING_FILE`；`gemini` 加 `REVIEW_MODE=sim` 為設定錯誤 |
 | `backend/app/usage.py` | 單價表、費用計算、台北時間的月份、`UsageLedger`（寫入、加總、上限） |
@@ -115,7 +128,7 @@
 
 **Interfaces:**
 - Consumes：Task 2–14 的全部程式；composer 以 `npm run composer` 在 3900 執行（需要字型）。
-- Produces：`uv run python scripts/gemini_experiment.py <probe|spec|ocr|vlm|stability|all> [--thinking low|high] [--limit N]`；報告 JSON 寫到 `data/experiments/plan6b-<時間>.json`（`data/` 不進 git），並在終端機印出摘要表。
+- Produces：`uv run python -m scripts.gemini_experiment <probe|spec|ocr|vlm|stability|all> [--thinking low|high] [--limit N] [--offline]`；報告 JSON 寫到 `data/experiments/plan6b-<時間>.json`（`data/` 不進 git），並在終端機印出摘要表。
 
 **實驗的品牌與商品**：SÉLUNE、misty-isle、Kayla 精緻少女（`brands/my-brand-01.yaml`）。Kayla 沒有示範商品，實驗腳本以 `serum` 向量素材建立一個暫時的示範商品（不寫入資料庫）。
 
