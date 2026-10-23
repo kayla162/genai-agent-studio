@@ -33,7 +33,7 @@ uv sync
 | `AGENT_MODE` | `gemini` | `gemini`：Gemini 負責需求拆解、Prompt 構建、Query Rewriting 與 VLM 審查（需要 `REVIEW_MODE=composer`，否則 api 與 worker 啟動失敗）；`sim`：模擬 Agent 與 VLM（測試、live E2E 與作品集 Demo） |
 | `GEMINI_API_KEY` | （空） | 放在 repo 根目錄的 `.env`。沒有時服務照常啟動，系統狀態顯示提示，需求拆解與新任務回 503 |
 | `GEMINI_LLM_MODEL`、`GEMINI_VLM_MODEL` | `gemini-3.8-flash` | 必須在單價表內，否則所有 Gemini 呼叫都被拒絕 |
-| `GEMINI_TIMEOUT_SECONDS`、`GEMINI_MAX_RETRIES`、`GEMINI_CONCURRENCY` | `60`、`3`、`4` | 每次請求的逾時；429、5xx、逾時與連線錯誤的重試次數；每個 worker 同時進行的呼叫數 |
+| `GEMINI_TIMEOUT_SECONDS`、`GEMINI_MAX_RETRIES`、`GEMINI_CONCURRENCY` | `120`、`3`、`4` | 每次請求的逾時；429、5xx、逾時與連線錯誤的重試次數；每個 worker 同時進行的呼叫數 |
 | `GEMINI_JOB_BUDGET_USD`、`GEMINI_MONTHLY_BUDGET_USD` | `1`、`20` | 單一任務與每月（台北時間）的費用上限，0 為不設上限 |
 | `PRICING_FILE` | repo 根目錄的 `pricing.yaml` | Gemini 單價表（Docker 內為 `/app/pricing.yaml`） |
 | `COMPOSER_URL` | `http://127.0.0.1:3900` | Docker 內為 `http://composer:3900`。`REVIEW_MODE=composer` 時 composer 要有海報字型（在 `web/` 執行 `npm run fonts`） |

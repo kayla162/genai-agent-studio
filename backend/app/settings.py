@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     #: 審查
     gemini_vlm_model: str = 'gemini-3.8-flash'
     #: 每次請求的逾時（秒）
-    gemini_timeout_seconds: float = Field(default=60, gt=0)
+    gemini_timeout_seconds: float = Field(default=120, gt=0)
     #: 429、5xx、逾時的重試次數
     gemini_max_retries: int = Field(default=3, ge=0)
     #: 每個 worker 同時進行的 Gemini 呼叫數
