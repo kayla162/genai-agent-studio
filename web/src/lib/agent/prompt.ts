@@ -3,6 +3,7 @@ import type {
 } from '@/types/contract';
 import { computeLayout } from '@/lib/compose/layout';
 import { claimTexts, hasClaim } from '@/lib/review/rules';
+import { maskImageName, PRODUCT_SCENE, plateImageName } from './comfy';
 
 export const BASE_NEGATIVE = 'lowres, blurry, watermark, deformed product, extra objects, garbled text';
 
@@ -111,13 +112,17 @@ export interface PromptBuildInput {
   fixes: CheckId[];
 }
 
+/**
+ * 送給生圖引擎的參數。ComfyUI 依 product_scene_v1 的參數對照表（comfy.ts）：提示詞、seed、底圖與遮罩的檔名
+ * 由 spec 填入，其他用表上的預設值；這就是 worker 實際送出的參數（Plan 7 規格 §4.4）。
+ */
 export function buildInjection(
-  spec: Pick<PromptSpec, 'positivePrompt' | 'negativePrompt' | 'canvas' | 'layout'>,
+  spec: Pick<PromptSpec, 'jobId' | 'round' | 'templateId' | 'positivePrompt' | 'negativePrompt' | 'canvas'>,
   engine: Engine,
   productId: string,
   seed: number,
 ): ComfyInjection {
-  const { width, height, ratio } = spec.canvas;
+  const { ratio } = spec.canvas;
   if (engine === 'ideogram') {
     return {
       engine,
@@ -132,26 +137,21 @@ export function buildInjection(
       ],
     };
   }
+  const fromSpec: Record<string, string | number> = {
+    positive_prompt: spec.positivePrompt,
+    negative_prompt: spec.negativePrompt,
+    seed,
+    plate_image: plateImageName(spec),
+    mask_image: maskImageName(spec),
+  };
   return {
     engine,
-    workflowFile: 'workflows/product_scene_v1.json',
-    params: [
-      { nodeId: '4', input: 'ckpt_name', label: 'checkpoint', value: 'sd_xl_base_1.0.safetensors' },
-      { nodeId: '6', input: 'text', label: 'positive_prompt', value: spec.positivePrompt },
-      { nodeId: '7', input: 'text', label: 'negative_prompt', value: spec.negativePrompt },
-      { nodeId: '10', input: 'image', label: 'product_image', value: `${productId}.png` },
-      { nodeId: '11', input: 'model', label: 'cutout_model', value: 'BiRefNet-general' },
-      { nodeId: '14', input: 'strength', label: 'controlnet_depth', value: 0.65 },
-      { nodeId: '15', input: 'weight', label: 'ip_adapter_style', value: 0.55 },
-      { nodeId: '20', input: 'width', label: 'width', value: width },
-      { nodeId: '20', input: 'height', label: 'height', value: height },
-      { nodeId: '3', input: 'seed', label: 'seed', value: seed },
-      { nodeId: '3', input: 'sampler_name', label: 'sampler', value: 'dpmpp_2m_sde' },
-      { nodeId: '3', input: 'steps', label: 'steps', value: 28 },
-      { nodeId: '3', input: 'cfg', label: 'cfg', value: 6 },
-      { nodeId: '30', input: 'light_direction', label: 'ic_light', value: 'top-left' },
-      { nodeId: '40', input: 'boxes', label: 'layout_boxes', value: JSON.stringify(spec.layout.map((b) => [b.id, ...b.bbox])) },
-    ],
+    workflowFile: `workflows/${PRODUCT_SCENE.workflow}`,
+    params: PRODUCT_SCENE.params.map(({ nodeId, input, label, default: fixed }) => {
+      const value = fixed ?? fromSpec[label];
+      if (value === undefined) throw new Error(`參數 ${label} 沒有預設值，也不是由 spec 填入`);
+      return { nodeId, input, label, value };
+    }),
   };
 }
 
@@ -182,7 +182,10 @@ export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
     layout,
     positivePrompt,
     negativePrompt,
-    injection: buildInjection({ positivePrompt, negativePrompt, canvas, layout }, input.engine, product.id, input.seed),
+    injection: buildInjection(
+      { jobId: input.jobId, round: input.round, templateId: template.id, positivePrompt, negativePrompt, canvas },
+      input.engine, product.id, input.seed,
+    ),
     ragRefs: [...input.ragRefs],
   };
 }

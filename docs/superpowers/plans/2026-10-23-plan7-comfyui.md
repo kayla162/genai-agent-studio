@@ -69,6 +69,11 @@
   - 商品已刪除時沒有 `productRect`，遮罩全白（整張重繪）。
   - `renderPlate(input, grow)` 的 `grow` 參數讓測試比較有無擴張；遮罩擴張為正方形鄰域（`dilateMask`，先橫向再縱向）。
   - 上傳的商品還沒去背時，底圖照樣畫出原照片（給模型參考），遮罩保留整個照片矩形。
+- **Task 5**：
+  - Task 1 還沒做，先手寫 `comfyui/workflows/product_scene_v1.json`（方式 A：`InpaintModelConditioning` 讀底圖與遮罩），只用 ComfyUI 內建節點與 SDXL base 1.0（規格 §4.2 的授權為 CreativeML Open RAIL++-M）。Lightning LoRA 的授權還沒確認，依 Global Constraints 先不放進 workflow，步數暫為 20；Task 1 實測後換成匯出的 workflow。
+  - 對照表沒有 `width`、`height`：重繪的尺寸由底圖決定（`/plate` 已經是生成尺寸）。多了 `scheduler`；`plate_image`、`mask_image` 的檔名含輪次（`{jobId}_r{round}_{templateId}_plate.png`），因為 Gemini 每輪可能調整版面。
+  - 前端的表在 `web/src/lib/agent/comfy.ts`（`PRODUCT_SCENE`、`plateImageName`、`maskImageName`）；`npm run fixtures` 匯出成 `contracts/fixtures/comfy.json`，pytest 確認與 `comfyui/workflows/product_scene_v1.params.json` 相同。`buildInjection` 的輸入改為 `jobId`、`round`、`templateId`、提示詞與畫布（不再需要 `layout`）；mock 的 `logoCrowding` 失誤不再改 `layout_boxes`。
+  - 模擬模式的 timelines 只有 `injection` 改變（以 JSON 比對確認）；記憶體中執行模擬模式的 `_pipeline`，三條 timelines 的事件仍完全相同。
 
 ## Global Constraints
 

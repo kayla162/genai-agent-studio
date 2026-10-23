@@ -1,5 +1,6 @@
 import type { DemoOptions, JobEvent, JobInput, JobMessage, JobStage, TemplateId } from '@/types/contract';
 import type { GuardIssue, SpecDraft, VlmVerdict } from '@/types/agent';
+import { PRODUCT_SCENE } from '@/lib/agent/comfy';
 import { finalizeSpec, type GuardRequest } from '@/lib/agent/guard';
 import type { JobSnapshot } from '@/lib/api/client';
 import { BRANDS, getBrandById, SAMPLE_PRODUCTS } from '@/lib/api/mock/data';
@@ -173,6 +174,8 @@ function agentFixtures(): {
 export function goldenFixtures(): Record<string, unknown> {
   const out: Record<string, unknown> = {
     'agent.json': agentFixtures(),
+    // ComfyUI 的參數對照表：pytest 確認與 comfyui/workflows/product_scene_v1.params.json 相同
+    'comfy.json': PRODUCT_SCENE,
     'brands.json': { brands: BRANDS, products: SAMPLE_PRODUCTS, templates: CHANNEL_TEMPLATES },
     'rng.json': {
       hashString: ['', 'a', 'selune#color', '週年慶', 'job_20261007_1000_a1b2'].map((s) => [s, hashString(s)]),

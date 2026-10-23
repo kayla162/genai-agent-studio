@@ -50,7 +50,6 @@ export function applyFlaws(spec: PromptSpec, flaws: readonly Flaw[], brand: Pick
     const logo = out.layout.find((b) => b.id === 'logo')!;
     const head = out.layout.find((b) => b.id === 'headline')!;
     logo.bbox[1] = head.bbox[1] - Math.round(logo.bbox[3] * 0.55);
-    out.injection = setParam(out.injection, 'layout_boxes', JSON.stringify(out.layout.map((b) => [b.id, ...b.bbox])));
   }
   if (flaws.includes('missingDisclaimer')) {
     const parts = out.copy.disclaimer.split('｜').filter((p) => !p.startsWith('*'));

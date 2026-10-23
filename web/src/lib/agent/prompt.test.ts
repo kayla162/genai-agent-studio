@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { SELUNE, MISTY_ISLE, SAMPLE_PRODUCTS } from '@/lib/api/mock/data';
 import { parseBrief } from '@/lib/api/mock/brief';
 import { getTemplate } from '@/lib/compose/templates';
+import { maskImageName, PRODUCT_SCENE, plateImageName } from './comfy';
 import {
   applyReplacements, BASE_NEGATIVE, buildCopy, buildDisclaimer, buildPromptSpec, negativePromptOf, positivePromptOf, seedOf,
   setParam, type PromptBuildInput,
@@ -38,14 +39,28 @@ describe('buildPromptSpec', () => {
     expect(spec.copy.disclaimer).toBe('*使用者感受，效果因個人膚況而異｜數量有限，售完為止');
   });
 
-  it('injects prompt, seed, size and layout boxes into the ComfyUI workflow', () => {
+  it('injects every parameter of the product_scene_v1 table into the ComfyUI workflow', () => {
     const spec = buildPromptSpec(input());
     expect(spec.injection.workflowFile).toBe('workflows/product_scene_v1.json');
+    expect(spec.injection.params.map(({ label, nodeId, input: field }) => ({ label, nodeId, input: field })))
+      .toEqual(PRODUCT_SCENE.params.map(({ label, nodeId, input: field }) => ({ label, nodeId, input: field })));
     expect(param(spec, 'positive_prompt')).toBe(spec.positivePrompt);
-    expect(param(spec, 'width')).toBe(1440);
-    expect(param(spec, 'height')).toBe(1800);
+    expect(param(spec, 'negative_prompt')).toBe(spec.negativePrompt);
     expect(seedOf(spec)).toBe(123456789);
-    expect(JSON.parse(String(param(spec, 'layout_boxes')))).toHaveLength(8);
+    // 底圖與遮罩的檔名：每個任務、每輪、每個模板一份（版面可能每輪不同）
+    expect(param(spec, 'plate_image')).toBe('job_t_r1_ig-post_plate.png');
+    expect(param(spec, 'mask_image')).toBe('job_t_r1_ig-post_mask.png');
+    expect(plateImageName(spec)).toBe('job_t_r1_ig-post_plate.png');
+    expect(maskImageName(spec)).toBe('job_t_r1_ig-post_mask.png');
+    // 其他參數用對照表的預設值
+    for (const p of PRODUCT_SCENE.params.filter((x) => x.default !== undefined)) expect(param(spec, p.label)).toBe(p.default);
+  });
+
+  it('no longer sends the placeholder parameters of Plan 6', () => {
+    const labels = buildPromptSpec(input()).injection.params.map((p) => p.label);
+    for (const old of ['cutout_model', 'ip_adapter_style', 'ic_light', 'layout_boxes', 'product_image', 'width', 'height']) {
+      expect(labels).not.toContain(old);
+    }
   });
 
   it('builds an Ideogram request body when engine is ideogram', () => {
