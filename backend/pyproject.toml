@@ -53,7 +53,7 @@ asyncio_default_test_loop_scope = "session"
 filterwarnings = ["ignore:Call to deprecated setex:DeprecationWarning"]
 markers = [
     "model: 需要真正的模型檔（models/；去背另外需要 CUTOUT_TEST_PHOTO 指定的照片），沒有時略過",
-    "live: 呼叫真的 Gemini API（需要 GEMINI_API_KEY，會產生費用）；只以 uv run pytest -m live 手動執行",
+    "live: 呼叫真的 Gemini API（需要 GEMINI_API_KEY，會產生費用）或本機的 ComfyUI（需要 GPU）；只以 uv run pytest -m live 手動執行",
 ]
 # 一般的 pytest 不執行 live 測試；命令列的 -m live 會取代這個設定
 addopts = "-m 'not live'"

@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     comfyui_free_after_job: bool = False
     #: 生圖與商品去背互斥（16 GB 記憶體的筆電兩者同時執行會不夠）
     memory_lock: bool = True
+    #: workflow 與參數對照表（Docker 內為 /app/comfyui/workflows，唯讀掛載）
+    comfyui_workflows_dir: Path = REPO_ROOT / 'comfyui' / 'workflows'
 
     #: 去背模型：birefnet-general（預設）、birefnet-general-lite，或不需要模型的 sim（測試與 live E2E）
     cutout_model: str = 'birefnet-general'

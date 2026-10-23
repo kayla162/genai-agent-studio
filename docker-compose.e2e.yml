@@ -15,6 +15,8 @@ x-e2e-backend: &e2e-backend
     # 模擬 Agent 與 VLM，不呼叫 Gemini；開發者 .env 裡的 key 也不會進到 E2E 的容器
     AGENT_MODE: sim
     GEMINI_API_KEY: ''
+    # 程序化背景：不需要 GPU 與 ComfyUI
+    IMAGE_MODE: sim
   volumes: !override
     - ./brands:/app/brands:ro
     - e2e-photos:/app/assets/products:ro

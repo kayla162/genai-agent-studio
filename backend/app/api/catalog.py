@@ -209,7 +209,7 @@ async def _comfyui(services: ApiServices) -> str | tuple[ComponentState, str]:
     if comfy is None:
         raise Unavailable('IMAGE_MODE=comfyui，但 api 沒有建立 ComfyUI client')
     stats = await comfy.system_stats()
-    workflow, ignore = load_workflow()
+    workflow, ignore = load_workflow(services.settings.comfyui_workflows_dir)
     missing = await comfy.missing(workflow, ignore=ignore)
     if missing:
         raise ComfyError(f'ComfyUI 缺少 workflow 需要的項目：{"、".join(missing)}（安裝方式見 comfyui/README.md）')

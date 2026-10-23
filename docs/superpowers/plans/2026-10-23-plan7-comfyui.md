@@ -97,6 +97,11 @@
   - 系統狀態的 ComfyUI 一項名稱改為「ComfyUI（生圖）」；`/object_info` 由 `ComfyClient` 快取 60 秒。沒有做「背景更新、第一次逾時顯示檢查中」：ComfyUI 回應 `/object_info` 很快（本機），逾時時照現有規則顯示「3 秒內沒有回應」，Task 1 實測後若太慢再處理。
   - 前端的節點圖本來就只顯示目前執行中的節點群組與步數（`COMFY_STEP[progress.node]`），不需修改。已知限制：精簡進度條（`jobProgress`）依節點估算比例，ComfyUI 每個 variant 的 `generate` 進度會從頭開始，所以進度條在生圖階段會來回；之後可在 `render.progress` 加上 variant 再改。
   - 結果牆的 seed 改用 `renderSeed(render)`（`prompt.ts`）；儀表板的成本說明在 live 模式加上「生圖在本機 GPU，不計費」（live 的成本本來就只有 `job_usage`）。模擬 Agent 的估算以每張 `Render.background.kind` 判斷（`url` 不計生圖費用），任務摘要不需要新欄位。
+- **Task 11**：
+  - 新增設定 `COMFYUI_WORKFLOWS_DIR`（預設 repo 的 `comfyui/workflows`）：容器內的 `REPO_ROOT` 是 `/`，所以與 `PRICING_FILE` 一樣由 compose 指定 `/app/comfyui/workflows` 並唯讀掛載（api 與 worker 的 `volumes` 都加上）。`ComfyImageEngine` 與系統狀態都讀這個設定。
+  - `extra_hosts: host.docker.internal:host-gateway` 放在 `x-backend`（api 與 worker 都有）；Docker Desktop 已內建，加上也不影響。
+  - `.env.example` 的 `COMFYUI_URL` 是註解：docker compose 也讀 `.env` 做變數替換，設成 `127.0.0.1` 會讓容器連不到 Windows 上的 ComfyUI（測試確認沒有未註解的 `COMFYUI_URL=`）。
+  - `record_comfy.py` 用真的 `ComfyImageEngine` 跑一次，以 httpx 的 response hook 與包住 WebSocket 的物件錄下回應；`test_comfy_live.py` 以 `/layout` 換出 5 個模板的 spec，每個模板生成一張。兩者在這台機器都還沒對真的 ComfyUI 執行過。
 
 ## Global Constraints
 

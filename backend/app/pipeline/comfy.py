@@ -42,11 +42,10 @@ from app.files import poster_file
 from app.pipeline.memory import HeavyMemoryLock
 from app.pipeline.ports import Ports, RunContext
 from app.pipeline.review import product_image
-from app.settings import REPO_ROOT, Settings
+from app.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-WORKFLOWS_DIR = REPO_ROOT / 'comfyui' / 'workflows'
 #: 參數對照表（web/src/lib/agent/comfy.ts 匯出、與這個檔案相同）
 TABLE_FILE = 'product_scene_v1.params.json'
 #: 回報進度的節點類型（取樣）；其他節點很快，不回報
@@ -57,7 +56,7 @@ PLATE_FAILED = '排版服務（composer）無法產生商品底圖：'
 MISSING_PRODUCT_IMAGE = '無法產生商品底圖：'
 
 
-def load_workflow(workflows_dir: Path = WORKFLOWS_DIR) -> tuple[dict[str, Any], frozenset[tuple[str, str]]]:
+def load_workflow(workflows_dir: Path) -> tuple[dict[str, Any], frozenset[tuple[str, str]]]:
     """讀參數對照表指定的 workflow，以及底圖與遮罩的 (nodeId, input)（每個任務上傳，檢查模型時略過）。"""
     table = json.loads((workflows_dir / TABLE_FILE).read_text(encoding='utf-8'))
     workflow: dict[str, Any] = json.loads((workflows_dir / table['workflow']).read_text(encoding='utf-8'))
@@ -103,14 +102,14 @@ class ComfyImageEngine:
         comfy: ComfyClient,
         composer: ComposerClient,
         settings: Settings,
-        workflows_dir: Path = WORKFLOWS_DIR,
+        workflows_dir: Path | None = None,
         lock: HeavyMemoryLock | None = None,
     ) -> None:
         self.comfy = comfy
         self.composer = composer
         self.settings = settings
         self.lock = lock
-        self.workflow, self.ignore = load_workflow(workflows_dir)
+        self.workflow, self.ignore = load_workflow(workflows_dir or settings.comfyui_workflows_dir)
         self.samplers = frozenset(i for i, n in self.workflow.items() if n['class_type'] in SAMPLER_NODES)
 
     async def render_round(

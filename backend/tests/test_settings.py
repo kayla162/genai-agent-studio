@@ -30,6 +30,7 @@ def test_comfyui_defaults() -> None:
     assert s.comfyui_timeout_seconds == 600
     assert s.comfyui_free_after_job is False
     assert s.memory_lock is True
+    assert s.comfyui_workflows_dir == REPO_ROOT / 'comfyui' / 'workflows'
 
 
 def test_comfyui_needs_the_composer_review() -> None:
