@@ -141,15 +141,46 @@ def _source(kind: UsageKind) -> LogSource:
     return 'vlm' if kind == 'vlm' else 'agent'
 
 
-def _retry_delay(error: errors.APIError) -> float | None:
-    """429 的 RetryInfo.retryDelay（例如 "20s"）；沒有時為 None。"""
+def _details(error: errors.APIError) -> list[dict[str, Any]]:
     details = error.details.get('error', {}).get('details', []) if isinstance(error.details, dict) else []
-    for item in details if isinstance(details, list) else []:
-        if isinstance(item, dict) and str(item.get('@type', '')).endswith('RetryInfo'):
+    return [d for d in details if isinstance(d, dict)] if isinstance(details, list) else []
+
+
+def _retry_delay(error: errors.APIError) -> float | None:
+    """429 的 RetryInfo.retryDelay（例如 "20s"，秒數不設上限）；沒有時為 None。"""
+    for item in _details(error):
+        if str(item.get('@type', '')).endswith('RetryInfo'):
             match = re.fullmatch(r'(\d+(?:\.\d+)?)s', str(item.get('retryDelay', '')))
             if match:
-                return min(float(match.group(1)), MAX_RETRY_DELAY)
+                return float(match.group(1))
     return None
+
+
+def _quota_exhausted(error: errors.APIError) -> str | None:
+    """配額用完、要等很久才恢復的 429（每日配額，或建議等待超過 MAX_RETRY_DELAY 秒）：不重試，回傳中文原因。
+    免費方案每個模型每天只有少量請求（實測 gemini-3.8-flash 為 20 次），一個任務就可能用完。"""
+    delay = _retry_delay(error)
+    violation = next(
+        (v for item in _details(error) if str(item.get('@type', '')).endswith('QuotaFailure')
+         for v in item.get('violations', []) if isinstance(v, dict)),
+        {},
+    )  # fmt: skip
+    quota_id = str(violation.get('quotaId', ''))
+    if 'PerDay' not in quota_id and (delay is None or delay <= MAX_RETRY_DELAY):
+        return None
+    wait = ''
+    if delay is not None:
+        wait = (
+            f'，約 {round(delay / 3600)} 小時後恢復'
+            if delay >= 3600
+            else f'，約 {max(1, round(delay / 60))} 分鐘後恢復'
+        )
+    if 'PerDay' in quota_id and 'FreeTier' in quota_id:
+        return (
+            f'Gemini 免費方案今天的請求數已用完（每天 {violation.get("quotaValue", "?")} 次）{wait}；'
+            '或在 Google AI Studio 為這個 key 的專案啟用付費方案'
+        )
+    return f'Gemini 的配額已用完{wait}'
 
 
 def _key_rejected(error: errors.APIError) -> bool:
@@ -307,7 +338,13 @@ class GeminiClient(LlmClient):
         """可以重試的錯誤回傳 _Retryable；其他丟出中文的 GeminiError。"""
         code = error.code
         if code == 429:
-            return _Retryable('Gemini 請求太頻繁或超過配額（HTTP 429）', _retry_delay(error))
+            exhausted = _quota_exhausted(error)
+            if exhausted is not None:
+                raise self._error(exhausted) from None
+            delay = _retry_delay(error)
+            return _Retryable(
+                'Gemini 請求太頻繁或超過配額（HTTP 429）', None if delay is None else min(delay, MAX_RETRY_DELAY)
+            )
         if code == 408 or code >= 500:
             return _Retryable(f'Gemini 暫時無法使用（HTTP {code}）')
         if _key_rejected(error):

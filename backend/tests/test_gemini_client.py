@@ -158,7 +158,8 @@ async def test_replays_a_response_of_each_call(
     assert isinstance(result, schema)
     ((_, recorded_kind, _, usage),) = h.usage.records
     assert recorded_kind == kind
-    assert usage.input_tokens > 0 and usage.output_tokens > usage.thinking_tokens > 0
+    # 思考程度 LOW 時可能完全沒有思考 tokens（錄製的需求拆解就是如此）
+    assert usage.input_tokens > 0 and usage.output_tokens > usage.thinking_tokens >= 0
 
 
 async def test_vlm_calls_log_to_the_vlm_source(make: MakeHarness) -> None:
@@ -178,6 +179,32 @@ async def test_retries_429_with_the_suggested_delay(make: MakeHarness) -> None:
     assert h.sleeps == [2.0]
     assert len(h.usage.records) == 1
     assert any('2.0 秒後重試（1/3）' in m for m in h.run.messages('warn'))
+
+
+async def test_does_not_retry_when_the_daily_quota_is_used_up(make: MakeHarness) -> None:
+    h = make()
+    with respx.mock() as mock:
+        route = mock.post(url__regex=GENERATE).mock(return_value=recorded('error-429-daily.json'))
+        with pytest.raises(GeminiError) as caught:
+            await h.client.generate(h.call(), h.run)
+    assert caught.value.message == (
+        'Gemini 免費方案今天的請求數已用完（每天 20 次），約 22 小時後恢復；'
+        '或在 Google AI Studio 為這個 key 的專案啟用付費方案'
+    )
+    assert route.call_count == 1
+    assert h.sleeps == []
+
+
+async def test_a_long_suggested_wait_is_not_retried_either(make: MakeHarness) -> None:
+    h = make()
+    body = {'error': {'code': 429, 'message': 'Quota exceeded', 'status': 'RESOURCE_EXHAUSTED', 'details': [
+        {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '600s'},
+    ]}}  # fmt: skip
+    with respx.mock() as mock:
+        route = mock.post(url__regex=GENERATE).mock(return_value=httpx.Response(429, json=body))
+        with pytest.raises(GeminiError, match=r'^Gemini 的配額已用完，約 10 分鐘後恢復$'):
+            await h.client.generate(h.call(), h.run)
+    assert route.call_count == 1
 
 
 async def test_gives_up_on_5xx_after_the_retries(make: MakeHarness) -> None:

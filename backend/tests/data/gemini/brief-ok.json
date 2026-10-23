@@ -6,7 +6,8 @@
         "content": {
           "parts": [
             {
-              "text": "{\"sellingPoints\": [\"5重玻尿酸\", \"神經醯胺\"], \"audience\": \"熬夜的上班族\", \"tone\": \"gentle\", \"campaign\": \"週年慶\", \"offer\": \"買一送一\", \"period\": null, \"style\": [\"soft\", \"premium\"]}"
+              "text": "{\"sellingPoints\":[],\"audience\":\"重視日常保養的敏弱肌客群\",\"tone\":\"gentle\",\"campaign\":\"週年慶\",\"offer\":\"買一送一\",\"period\":\"10/15–11/15\",\"style\":[\"soft\",\"gentle\",\"healing\",\"minimal\"]}",
+              "thoughtSignature": "EmkKZwFpFH0TtId/5EikEuLIZFFQK0HGveIpkn0YxnJtzt4WM3ZVnkDXDZy81S5MJTZJm/23zspYdT7au4P5G6M8BF6NtE8WXZTM69JXO8xto4gapMNRD793khtNYdnFO5lFDUw0LvefIJc="
             }
           ],
           "role": "model"
@@ -16,12 +17,18 @@
       }
     ],
     "usageMetadata": {
-      "promptTokenCount": 1480,
-      "candidatesTokenCount": 96,
-      "totalTokenCount": 2010,
-      "thoughtsTokenCount": 434
+      "promptTokenCount": 629,
+      "candidatesTokenCount": 61,
+      "totalTokenCount": 690,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 629
+        }
+      ],
+      "serviceTier": "standard"
     },
     "modelVersion": "gemini-3.8-flash",
-    "responseId": "handwritten-brief"
+    "responseId": "5STbau-RF57mrfcPh9XriAE"
   }
 }
