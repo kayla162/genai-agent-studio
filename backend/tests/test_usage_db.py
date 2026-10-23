@@ -13,11 +13,12 @@ from app.db.session import Database
 from app.errors import BudgetExceeded
 from app.repo import jobs
 from app.settings import REPO_ROOT
-from app.usage import Pricing, TokenUsage, UsageLedger, UsageScope
+from app.usage import Pricing, PricingError, TokenUsage, UsageLedger, UsageScope
 from tests.fixtures import load_fixture
 
 PRICING = Pricing.load(REPO_ROOT / 'pricing.yaml')
 NOW = datetime(2026, 10, 23, 2, 0, tzinfo=UTC)
+MODEL = 'gemini-3.8-flash'
 #: 1,000,000 個輸出 tokens：目前單價 US$3.75
 MILLION_OUT = TokenUsage(input_tokens=0, cached_tokens=0, output_tokens=1_000_000, thinking_tokens=400_000)
 
@@ -48,15 +49,15 @@ async def test_records_usage_with_the_price_at_the_time(db: Database, session: A
 async def test_the_job_budget_stops_the_next_call(db: Database, session: AsyncSession) -> None:
     await create_job(session)
     book = ledger(db, job=1)
-    await book.check(job_scope())
+    await book.check(job_scope(), MODEL)
     await book.record(job_scope(), 'spec', 'gemini-3.8-flash', TokenUsage(0, 0, 136_000, 0))
-    await book.check(job_scope())
+    await book.check(job_scope(), MODEL)
     await book.record(job_scope(), 'spec', 'gemini-3.8-flash', TokenUsage(0, 0, 136_000, 0))
     with pytest.raises(BudgetExceeded, match=r'^已達單一任務的 Gemini 費用上限（US\$1\.00，已用 US\$1\.02）$'):
-        await book.check(job_scope())
+        await book.check(job_scope(), MODEL)
     # 其他任務與需求拆解不受影響
-    await book.check(job_scope(job_id='job_other'))
-    await book.check(job_scope(job_id=None, round=None, target=None))
+    await book.check(job_scope(job_id='job_other'), MODEL)
+    await book.check(job_scope(job_id=None, round=None, target=None), MODEL)
 
 
 async def test_the_monthly_budget_counts_taipei_months_including_briefs(db: Database, session: AsyncSession) -> None:
@@ -66,11 +67,19 @@ async def test_the_monthly_budget_counts_taipei_months_including_briefs(db: Data
     await october.record(job_scope(), 'spec', 'gemini-3.8-flash', MILLION_OUT)
     assert await october.month_total() == Decimal('7.500000')
     with pytest.raises(BudgetExceeded, match=r'^本月 Gemini 費用已達上限（US\$5\.00）$'):
-        await october.check(job_scope(job_id=None, round=None, target=None))
+        await october.check(job_scope(job_id=None, round=None, target=None), MODEL)
     # 台北時間 11/01 00:30：上個月的紀錄不算
     november = ledger(db, monthly=5, now=datetime(2026, 10, 31, 16, 30, tzinfo=UTC))
     assert await november.month_total() == Decimal('0')
-    await november.check(job_scope())
+    await november.check(job_scope(), MODEL)
+
+
+async def test_models_without_a_price_are_refused_before_calling(db: Database, session: AsyncSession) -> None:
+    with pytest.raises(PricingError, match='沒有 gemini-x 的單價'):
+        await ledger(db).check(job_scope(), 'gemini-x')
+    broken = UsageLedger(db, Pricing({}, problem='找不到單價表：/app/pricing.yaml'), job_budget=1, monthly_budget=20)
+    with pytest.raises(PricingError, match='找不到單價表'):
+        await broken.check(job_scope(), MODEL)
 
 
 async def test_zero_budgets_mean_no_limit(db: Database, session: AsyncSession) -> None:
@@ -78,7 +87,7 @@ async def test_zero_budgets_mean_no_limit(db: Database, session: AsyncSession) -
     book = ledger(db, job=0, monthly=0)
     for _ in range(3):
         await book.record(job_scope(), 'spec', 'gemini-3.8-flash', MILLION_OUT)
-    await book.check(job_scope())
+    await book.check(job_scope(), MODEL)
 
 
 async def test_usage_is_deleted_with_its_job_and_summed_per_job(db: Database, session: AsyncSession) -> None:

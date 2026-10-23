@@ -5,7 +5,6 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -18,18 +17,13 @@ from app.api.services import ApiServices, start_services, stop_services
 from app.errors import AppError
 from app.pipeline.runner import failure_reason
 from app.settings import settings
+from app.validation import describe_error
 
 HTTP_CODES = {404: 'not_found', 405: 'method_not_allowed'}
 
 
 def error_response(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse({'error': {'code': code, 'message': message}}, status_code=status)
-
-
-def _describe(error: Any) -> str:
-    """Pydantic 的錯誤 → 「body.templateIds.0：Input should be ...」"""
-    location = '.'.join(str(part) for part in error['loc'])
-    return f'{location}：{error["msg"]}'
 
 
 def create_app(services: ApiServices | None = None) -> FastAPI:
@@ -60,7 +54,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
         errors = error.errors()
-        return error_response(400, 'invalid', '請求格式錯誤' + (f'：{_describe(errors[0])}' if errors else ''))
+        return error_response(400, 'invalid', '請求格式錯誤' + (f'：{describe_error(errors[0])}' if errors else ''))
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException) -> JSONResponse:

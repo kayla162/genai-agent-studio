@@ -53,9 +53,20 @@ class _PricingFile(RootModel[dict[str, list[Price]]]):
 
 
 class Pricing:
-    def __init__(self, table: dict[str, list[Price]], source: str = 'pricing.yaml') -> None:
+    def __init__(self, table: dict[str, list[Price]], source: str = 'pricing.yaml', problem: str | None = None) -> None:
         self.source = source
+        #: 單價表讀不到或格式錯誤時的原因（load_or_unavailable）；這時所有呼叫都被拒絕
+        self.problem = problem
         self._table = {model: sorted(prices, key=lambda p: p.from_) for model, prices in table.items()}
+
+    @classmethod
+    def load_or_unavailable(cls, path: Path) -> 'Pricing':
+        """與 load 相同，但讀不到或格式錯誤時不丟出例外：回傳沒有任何單價的表，原因記在 problem
+        （api 與 worker 照常啟動，系統狀態顯示原因，Gemini 呼叫一律被拒絕）。"""
+        try:
+            return cls.load(path)
+        except PricingError as error:
+            return cls({}, path.name, problem=error.message)
 
     @classmethod
     def load(cls, path: Path) -> 'Pricing':
@@ -73,6 +84,8 @@ class Pricing:
 
     def price(self, model: str, at: datetime) -> Price:
         """at（台北時間）當天已生效的最新一筆單價。"""
+        if self.problem is not None:
+            raise PricingError(self.problem)
         prices = self._table.get(model)
         if not prices:
             raise PricingError(f'{self.source} 沒有 {model} 的單價，無法計算費用與套用上限')
@@ -135,8 +148,8 @@ class TokenUsage:
 
 
 class UsageRecorder(Protocol):
-    async def check(self, scope: UsageScope) -> None:
-        """呼叫前檢查上限；達到時丟出 BudgetExceeded。"""
+    async def check(self, scope: UsageScope, model: str) -> None:
+        """呼叫前檢查：model 有單價（否則丟出 PricingError），且還沒達到上限（否則丟出 BudgetExceeded）。"""
         ...
 
     async def record(self, scope: UsageScope, kind: UsageKind, model: str, usage: TokenUsage) -> Decimal:
@@ -162,7 +175,9 @@ class UsageLedger(UsageRecorder):
         self.monthly_budget = Decimal(str(monthly_budget))
         self.clock = clock
 
-    async def check(self, scope: UsageScope) -> None:
+    async def check(self, scope: UsageScope, model: str) -> None:
+        # 沒有單價就無法計算費用與套用上限：不送出
+        self.pricing.price(model, self.clock())
         if self.monthly_budget > 0 and await self.month_total() >= self.monthly_budget:
             raise BudgetExceeded(f'本月 Gemini 費用已達上限（{usd(self.monthly_budget)}）')
         if self.job_budget > 0 and scope.job_id is not None:

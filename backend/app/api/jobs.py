@@ -12,6 +12,7 @@ from fastapi import APIRouter, Query, WebSocket
 from pydantic import Field
 from sqlalchemy.exc import IntegrityError
 
+from app.adapters.gemini import NOT_CONFIGURED, GeminiError
 from app.api.catalog import api_options
 from app.api.services import ApiServices, Services
 from app.contract import (
@@ -34,6 +35,7 @@ from app.errors import Invalid, NotFound, Unavailable
 from app.queues import TaskFailed
 from app.repo import catalog, history, jobs
 from app.stats import dashboard_stats
+from app.usage import UsageScope
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,8 @@ router = APIRouter(tags=['任務'])
 WRITE_BACK_WAIT = 10
 #: WebSocket 關閉代碼：任務不存在（前端不再重新連線）
 WS_NOT_FOUND = 4404
+#: 需求拆解最多等待的秒數（AGENT_MODE=gemini 時含 Gemini 的重試）
+BRIEF_TIMEOUT = 90
 
 
 class BriefRequest(Model):
@@ -73,7 +77,10 @@ async def parse_brief(body: BriefRequest, services: Services) -> ParsedBrief:
         raise Invalid(f'找不到品牌：{body.brand_id}')
     if body.product_id and product is None:
         raise Invalid(f'找不到商品：{body.product_id}')
-    return await services.agent.parse_brief(brand, body.text, product)
+    try:
+        return await asyncio.wait_for(services.agent.parse_brief(brand, body.text, product), BRIEF_TIMEOUT)
+    except TimeoutError as error:
+        raise Unavailable(f'Gemini 沒有在 {BRIEF_TIMEOUT} 秒內完成需求拆解，請稍後再試') from error
 
 
 async def _validate(services: ApiServices, job_input: JobInput) -> None:
@@ -102,6 +109,21 @@ async def _validate(services: ApiServices, job_input: JobInput) -> None:
         raise Invalid(f'目前不支援這個 VLM：{job_input.vlm}')
     if job_input.engine not in options.engines:
         raise Invalid(f'目前不支援這個生圖引擎：{job_input.engine}')
+    await _check_gemini(services, job_input)
+
+
+async def _check_gemini(services: ApiServices, job_input: JobInput) -> None:
+    """AGENT_MODE=gemini：沒有 key、單價表有問題（503），或本月已達費用上限（429）時不建立任務。"""
+    settings = services.settings
+    if settings.agent_mode != 'gemini':
+        return
+    if services.gemini is None or not services.gemini.configured:
+        raise GeminiError(NOT_CONFIGURED)
+    if services.ledger is None:
+        return
+    scope = UsageScope(job_id=None, brand_id=job_input.brand_id, round=None, target=None)
+    services.ledger.pricing.price(settings.gemini_vlm_model, utc_now())
+    await services.ledger.check(scope, settings.gemini_llm_model)
 
 
 @router.post('/api/jobs', status_code=201)

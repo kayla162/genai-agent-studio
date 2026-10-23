@@ -58,7 +58,7 @@ class MemoryUsage:
         self.checks = 0
         self.exceeded = exceeded
 
-    async def check(self, scope: UsageScope) -> None:
+    async def check(self, scope: UsageScope, model: str) -> None:
         self.checks += 1
         if self.exceeded:
             raise BudgetExceeded(self.exceeded)

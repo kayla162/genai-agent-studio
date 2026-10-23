@@ -30,6 +30,15 @@ def test_unknown_models_and_dates_before_any_price_are_errors() -> None:
     assert issubclass(PricingError, AppError)
 
 
+def test_load_or_unavailable_keeps_the_reason_instead_of_raising(tmp_path: Path) -> None:
+    pricing = Pricing.load_or_unavailable(tmp_path / 'missing.yaml')
+    assert pricing.problem is not None and pricing.problem.startswith('找不到單價表')
+    assert not pricing.has('gemini-3.8-flash')
+    with pytest.raises(PricingError, match='找不到單價表'):
+        pricing.price('gemini-3.8-flash', datetime(2026, 10, 23, tzinfo=UTC))
+    assert Pricing.load_or_unavailable(REPO_ROOT / 'pricing.yaml').problem is None
+
+
 def test_broken_pricing_files_are_reported_in_chinese(tmp_path: Path) -> None:
     missing = tmp_path / 'missing.yaml'
     with pytest.raises(PricingError, match='找不到單價表'):

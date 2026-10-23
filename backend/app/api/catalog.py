@@ -66,6 +66,9 @@ LOCAL_TYPES = frozenset({'.png', '.jpg', '.jpeg', '.webp'})
 
 
 def api_options(settings: Settings) -> ApiOptions:
+    """AGENT_MODE=gemini 時為實際的模型 ID；模擬模式為與 mock 相同的名稱。"""
+    if settings.agent_mode == 'gemini':
+        return ApiOptions(llm=[settings.gemini_llm_model], vlm=[settings.gemini_vlm_model], engines=['comfyui'])
     return ApiOptions(llm=[settings.llm_model], vlm=[settings.vlm_model], engines=['comfyui'])
 
 

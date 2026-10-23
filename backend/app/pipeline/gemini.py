@@ -14,6 +14,7 @@ import json
 import logging
 import re
 from collections.abc import Awaitable
+from dataclasses import replace
 from functools import cache
 from pathlib import Path
 from typing import Any, TypeVar
@@ -41,7 +42,17 @@ from app.contract import (
 from app.errors import AppError
 from app.files import resolve_url
 from app.pipeline.gemini_types import BriefDraft, GuardIssue, RewriteDraft, SpecDraft, VlmVerdict
-from app.pipeline.ports import Agent, ComposedPoster, Reviewer, ReviewResult, Rewrite, RunContext, SpecRequest
+from app.pipeline.ports import (
+    Agent,
+    ComposedPoster,
+    Ports,
+    Reviewer,
+    ReviewResult,
+    Rewrite,
+    RunContext,
+    SpecRequest,
+    UsageReport,
+)
 from app.pipeline.review import POSTER_REQUIRED, REVIEW_FAILED
 from app.settings import Settings
 from app.usage import UsageScope
@@ -448,3 +459,15 @@ class GeminiReviewer(Reviewer):
             return await self.composer.review(render.spec, brand, poster.measured_primary, verdict, scale)
         except ComposerError as error:
             raise AppError(f'{REVIEW_FAILED}{error}') from error
+
+
+def gemini_ports(
+    base: Ports, client: LlmClient, composer: ComposerClient, settings: Settings, usage: UsageReport
+) -> Ports:
+    """AGENT_MODE=gemini：Agent 與審查換成 Gemini 版，加上用量（任務結束時送出費用合計）；檢索、生圖與排版沿用 base。"""
+    return replace(
+        base,
+        agent=GeminiAgent(client, composer, settings),
+        reviewer=GeminiReviewer(client, composer, settings),
+        usage=usage,
+    )

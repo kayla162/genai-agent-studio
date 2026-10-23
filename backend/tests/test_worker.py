@@ -20,6 +20,7 @@ from redis.asyncio.client import PubSub
 from saq.job import Status
 
 from app.adapters.composer import ComposerClient
+from app.adapters.gemini import GeminiClient
 from app.brands import load_brands
 from app.contract import (
     FilePhoto,
@@ -40,6 +41,7 @@ from app.cutout.segmenter import Segmenter, SimSegmenter
 from app.db.session import Database
 from app.errors import Unavailable
 from app.events import EventStore
+from app.pipeline.gemini import GeminiAgent, GeminiReviewer
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.sim import SimPosters, SimRetriever, SimReviewer, sim_ports
 from app.queues import Queues, TaskFailed, cutout_key, ingest_channel
@@ -565,6 +567,26 @@ async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
             assert built.ports.posters.composer is built.composer
             assert built.ports.posters.settings is built.settings
     finally:
+        await built.composer.aclose()
+        await built.redis.aclose()
+        await built.db.dispose()
+
+
+async def test_build_services_uses_gemini_for_the_agent_and_the_review_when_agent_mode_is_gemini(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gemini = Settings(_env_file=None, agent_mode='gemini', gemini_api_key='AIza-test-key-0000', brands_dir=BRANDS_DIR)
+    monkeypatch.setattr('app.worker.settings', gemini)
+    built = build_services()
+    try:
+        assert isinstance(built.ports.agent, GeminiAgent)
+        assert isinstance(built.ports.reviewer, GeminiReviewer)
+        assert isinstance(built.ports.posters, ComposerPosters)
+        assert isinstance(built.gemini, GeminiClient) and built.gemini.configured
+        assert built.ports.usage is not None
+    finally:
+        assert built.gemini is not None
+        await built.gemini.aclose()
         await built.composer.aclose()
         await built.redis.aclose()
         await built.db.dispose()

@@ -230,7 +230,7 @@ class GeminiClient(LlmClient):
             thinking_config=types.ThinkingConfig(thinking_level=THINKING[call.kind]),
         )
         for attempt in (1, 2):
-            await self.usage.check(call.scope)
+            await self.usage.check(call.scope, call.model)
             response = await self._send(call, contents, config, run)
             usage = token_usage(response)
             cost = await self.usage.record(call.scope, call.kind, call.model, usage)
