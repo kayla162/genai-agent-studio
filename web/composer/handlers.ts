@@ -17,6 +17,7 @@ import type { BackgroundPalette } from '@/lib/review/background';
 import { expectedSegments, ocrDiffs } from '@/lib/review/ocr';
 import { runRuleChecks, scoreChecks } from '@/lib/review/rules';
 import { contentVlmChecks, geminiVlmChecks } from '@/lib/review/vlm';
+import { renderPlate, type PlateInput } from './plate';
 import { renderPoster, type RenderPosterInput } from './poster';
 
 /** 找不到路徑（伺服器回 404） */
@@ -140,6 +141,9 @@ const HANDLERS: Record<string, Handler> = {
   },
 
   '/review': reviewPoster,
+
+  /** ComfyUI 生成背景用的商品底圖與遮罩（JSON，PNG 為 base64）；IMAGE_MODE=comfyui 時 worker 呼叫 */
+  '/plate': (input: PlateInput) => renderPlate(input),
 
   /** Prompt 構建的程式護欄（AGENT_MODE=gemini）：{ spec, issues } */
   '/spec': ({ draft, request }: { draft: unknown; request: unknown }) => {

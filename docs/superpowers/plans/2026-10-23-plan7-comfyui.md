@@ -63,6 +63,12 @@
   - composer 的 `measureBackground(image, spec, brand)`：把背景以海報相同的拉伸方式縮小到長邊 256 再量，色票用品牌設定檔的（不是 spec 的，偏色的 spec 畫出的背景也要判定為色系外）；`measureBackgroundPalette` 的商品方框為 `BBox`，由呼叫端從 `boxMap` 的矩形轉換。
   - 程式產生的背景（3 個品牌 × 5 個模板 × 6 個 seed）色系外最多 0.7%（SÉLUNE），其他兩個品牌為 0%，與 15% 的門檻有很大的餘裕。
   - 審查清單在背景色系的說明旁畫出色系外的主要顏色（與主色色塊共用元件）。
+- **Task 4**：
+  - 生成尺寸用 SDXL 常用的尺寸，邊長都是 64 的倍數：4:3 為 1152 × 896、4:5 為 896 × 1152（規格原本寫 1152 × 864、896 × 1120，邊長不是 64 的倍數）；與模板比例相差都 < 5%，放大後只裁掉一點。規格 §4.3 一併修改。
+  - `/plate` 的回應：`{ width, height, scale, crop: { x, y }, productRect, plate, mask, warning }`（`scale` 與 `crop` 給 worker 放大與裁切用）；Python 為 `PlateResult`（`crop_x`、`crop_y`、`product_rect: PlateRect | None`）。
+  - 商品已刪除時沒有 `productRect`，遮罩全白（整張重繪）。
+  - `renderPlate(input, grow)` 的 `grow` 參數讓測試比較有無擴張；遮罩擴張為正方形鄰域（`dilateMask`，先橫向再縱向）。
+  - 上傳的商品還沒去背時，底圖照樣畫出原照片（給模型參考），遮罩保留整個照片矩形。
 
 ## Global Constraints
 

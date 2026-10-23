@@ -64,8 +64,8 @@ function fromBase64(label: string, field: string, image: { base64: string } | nu
 /** SVG 的 data URL（svgDataUrl 產生的 `data:image/svg+xml;charset=utf-8,…`）轉成 Buffer，交給 loadImage */
 const svgBuffer = (dataUrl: string) => Buffer.from(decodeURIComponent(dataUrl.slice(dataUrl.indexOf(',') + 1)), 'utf8');
 
-/** 示範商品依 productImage 產生 SVG；上傳商品用 worker 傳來的圖檔與 blend */
-async function loadProduct(
+/** 示範商品依 productImage 產生 SVG；上傳商品用 worker 傳來的圖檔與 blend（/render 與 /plate 共用） */
+export async function loadProduct(
   product: Product | null, brand: Brand, upload: PosterImages['product'] | undefined,
 ): Promise<{ image: Image; blend: 'normal' | 'multiply' } | null> {
   if (!product) return null;
