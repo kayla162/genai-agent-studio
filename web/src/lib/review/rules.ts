@@ -70,7 +70,7 @@ export interface RuleContext {
  * 版面的三項規則：Logo 淨空區、商品主體佔比、留白比例。審查（runRuleChecks）與 Prompt 構建的護欄（finalizeSpec）
  * 共用這個函式，兩邊的判斷才會一致。
  */
-export function layoutRuleChecks(spec: PromptSpec, brand: Brand): ReviewCheck[] {
+export function layoutRuleChecks(spec: Pick<PromptSpec, 'canvas' | 'layout'>, brand: Brand): ReviewCheck[] {
   const B = boxMap(spec.layout);
   const { width: W, height: H } = spec.canvas;
   const pct = (v: number) => `${round1(v * 100)}%`;

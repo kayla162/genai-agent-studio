@@ -13,7 +13,7 @@ const OFFER_SUB: [RegExp, string][] = [
 ];
 
 /** 上一輪未通過的檢查 → 這一輪 negative prompt 要加強的詞 */
-const NEGATIVE_BY_FIX: Partial<Record<CheckId, string>> = {
+export const NEGATIVE_BY_FIX: Partial<Record<CheckId, string>> = {
   color_delta: 'oversaturated, neon, off-brand colors',
   vlm_occlusion: 'cluttered composition, overlapping elements',
   vlm_quality: 'overexposed highlights',
@@ -45,14 +45,6 @@ export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief, re
     .filter((f) => f !== '');
   const baseBadge = makeBadge(brief);
   const badge = { ...baseBadge, top: fix(baseBadge.top), main: fix(baseBadge.main) };
-  // 與審查（runRuleChecks）使用同一個宣稱範圍，確保需要註記時一定會加上
-  const claim = hasClaim(claimTexts({ headline, subhead, features, badge }), brand.claimWords);
-  const notes = [
-    claim && brand.disclaimerPhrase ? `*使用者感受，${brand.disclaimerPhrase}` : null,
-    brief.period ? `活動期間 ${brief.period}` : null,
-    brief.offer ? '數量有限，售完為止' : null,
-  ].filter((s): s is string => s !== null);
-
   return {
     headline,
     subhead,
@@ -60,8 +52,48 @@ export function buildCopy(brand: Brand, product: Product, brief: ParsedBrief, re
     badge,
     price: { label: fix(`${brief.campaign ?? '限時'}活動價`), sale: product.price.sale, original: product.price.original },
     productName: product.name,
-    disclaimer: notes.length ? notes.join('｜') : '圖片僅供參考',
+    disclaimer: buildDisclaimer(brand, brief, { headline, subhead, features, badge }),
   };
+}
+
+/** 頁尾註記：效果宣稱的說明、活動期間、數量有限。宣稱範圍與審查（runRuleChecks）相同，確保需要註記時一定會加上 */
+export function buildDisclaimer(
+  brand: Brand, brief: ParsedBrief, copy: Pick<Copy, 'headline' | 'subhead' | 'features' | 'badge'>,
+): string {
+  const claim = hasClaim(claimTexts(copy), brand.claimWords);
+  const notes = [
+    claim && brand.disclaimerPhrase ? `*使用者感受，${brand.disclaimerPhrase}` : null,
+    brief.period ? `活動期間 ${brief.period}` : null,
+    brief.offer ? '數量有限，售完為止' : null,
+  ].filter((s): s is string => s !== null);
+  return notes.length ? notes.join('｜') : '圖片僅供參考';
+}
+
+/**
+ * 正向提示詞：程式固定的開頭（比例、商品攝影、提供的商品照）＋ 場景 ＋ 品牌視覺風格 ＋ 色票 ＋ 需求的風格 ＋ 固定的結尾。
+ * scene 為 null 時就是模擬版的提示詞句型（Gemini 的場景描述不合法時也用它）。
+ */
+export function positivePromptOf(template: ChannelTemplate, brand: Brand, brief: ParsedBrief, scene: string | null): string {
+  const palette = brand.palette;
+  return [
+    `${template.ratio} commercial product photography`,
+    'the provided product photo on a styled surface',
+    ...(scene ? [scene] : []),
+    brand.visualStyle,
+    `${palette.primary} and ${palette.secondary} color palette with ${palette.accent} accents`,
+    ...brief.style,
+    'clean negative space for typography',
+    'high-end editorial lighting',
+  ].join(', ');
+}
+
+/** 負向提示詞：BASE_NEGATIVE ＋ 依先前未通過的檢查加強的詞 ＋ extra，以逗號拆開後去除空白與重複 */
+export function negativePromptOf(fixes: CheckId[], extra = ''): string {
+  const parts = [BASE_NEGATIVE, ...fixes.map((id) => NEGATIVE_BY_FIX[id] ?? ''), extra]
+    .flatMap((s) => s.split(','))
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  return [...new Set(parts)].join(', ');
 }
 
 export interface PromptBuildInput {
@@ -133,19 +165,8 @@ export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
   const { brand, product, brief, template } = input;
   const palette = { ...brand.palette };
   const layout = computeLayout(template);
-  const positivePrompt = [
-    `${template.ratio} commercial product photography`,
-    'the provided product photo on a styled surface',
-    brand.visualStyle,
-    `${palette.primary} and ${palette.secondary} color palette with ${palette.accent} accents`,
-    ...brief.style,
-    'clean negative space for typography',
-    'high-end editorial lighting',
-  ].join(', ');
-  const extra = [...new Set(input.fixes)]
-    .map((id) => NEGATIVE_BY_FIX[id])
-    .filter((s): s is string => s !== undefined);
-  const negativePrompt = [BASE_NEGATIVE, ...extra].join(', ');
+  const positivePrompt = positivePromptOf(template, brand, brief, null);
+  const negativePrompt = negativePromptOf(input.fixes);
   const rewrite = input.fixes.some((id) => id === 'banned_words' || id === 'vlm_exaggeration');
   const canvas = { width: template.width, height: template.height, ratio: template.ratio };
 
