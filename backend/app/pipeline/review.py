@@ -18,7 +18,7 @@ from app.adapters.composer import ComposerClient, ComposerError, PosterImages, P
 from app.contract import Brand, FilePhoto, Product, Render, UrlBackground
 from app.errors import AppError
 from app.files import poster_file, resolve_url
-from app.pipeline.ports import ComposedPoster, ReviewResult
+from app.pipeline.ports import ComposedPoster, ReviewResult, RunContext
 from app.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -136,7 +136,9 @@ class ComposerReviewer:
     def __init__(self, composer: ComposerClient) -> None:
         self.composer = composer
 
-    async def review(self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None) -> ReviewResult:
+    async def review(
+        self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None, run: RunContext
+    ) -> ReviewResult:
         if poster is None:
             raise AppError('審查需要伺服器端繪製的審查用海報（REVIEW_MODE=composer 時由 ComposerPosters 繪製）')
         try:

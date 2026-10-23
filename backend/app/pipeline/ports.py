@@ -1,7 +1,8 @@
 """任務流程依賴的外部服務介面。每個介面都有真實版與模擬版（app/pipeline/sim.py），由設定切換。"""
 
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Protocol, TypeVar
 
 from app.contract import (
@@ -32,6 +33,15 @@ class JobCancelled(Exception):
 
 
 @dataclass(frozen=True)
+class PreviousRound:
+    """某個模板上一輪最高分候選的 spec、檢查結果與 Query Rewriting 的修正項（下一輪的 Prompt 構建參考）。"""
+
+    spec: PromptSpec
+    checks: list[ReviewCheck]
+    fixes: list[Fix]
+
+
+@dataclass(frozen=True)
 class SpecRequest:
     job_id: str
     round: int
@@ -44,6 +54,12 @@ class SpecRequest:
     rag_refs: list[str]
     #: 之前各輪未通過的檢查（依出現順序，不重複）
     fixes: list[CheckId]
+    #: 使用者的一句話需求
+    text: str = ''
+    #: rag_refs 對應的切塊全文（Rerank 後前 5 筆，加上重新檢索的切塊）；Gemini 的提示詞只放這些
+    hits: list[RagHit] = field(default_factory=list)
+    #: 這個模板上一輪的結果；第一輪為 None
+    previous: PreviousRound | None = None
 
 
 @dataclass(frozen=True)
@@ -92,9 +108,13 @@ class Retriever(Protocol):
 class Agent(Protocol):
     async def parse_brief(self, brand: Brand, text: str, product: Product | None) -> ParsedBrief: ...
 
-    async def build_spec(self, request: SpecRequest) -> PromptSpec: ...
+    async def build_spec(self, request: SpecRequest, run: RunContext) -> PromptSpec: ...
 
-    async def plan_rewrite(self, brand: Brand, spec: PromptSpec, checks: list[ReviewCheck]) -> Rewrite: ...
+    async def plan_rewrite(
+        self, brand: Brand, spec: PromptSpec, checks: list[ReviewCheck], run: RunContext, *, retries_left: int
+    ) -> Rewrite:
+        """checks 為某個模板最高分候選的檢查結果；retries_left 為含這次在內還剩幾次重試。"""
+        ...
 
 
 class ImageEngine(Protocol):
@@ -120,8 +140,16 @@ class PosterComposer(Protocol):
 
 
 class Reviewer(Protocol):
-    async def review(self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None) -> ReviewResult:
+    async def review(
+        self, brand: Brand, render: Render, seed: int, poster: ComposedPoster | None, run: RunContext
+    ) -> ReviewResult:
         """poster 是排版階段繪製的審查用海報（模擬版為 None）。"""
+        ...
+
+
+class UsageReport(Protocol):
+    async def job_summary(self, job_id: str) -> tuple[Decimal, int]:
+        """一個任務的外部服務費用合計（美元）與呼叫次數。"""
         ...
 
 
@@ -132,3 +160,5 @@ class Ports:
     image: ImageEngine
     posters: PosterComposer
     reviewer: Reviewer
+    #: 用量與費用（AGENT_MODE=gemini）；模擬模式為 None，不送出費用合計
+    usage: UsageReport | None = None

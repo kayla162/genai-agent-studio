@@ -38,6 +38,7 @@ from app.pipeline.sim import sim_ports
 from app.repo import catalog, jobs
 from app.settings import Settings
 from tests.conftest import LiveApi
+from tests.fake_run import FakeRun
 from tests.fixtures import BRANDS_DIR, load_fixture
 
 NOW = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
@@ -129,16 +130,18 @@ async def test_a_clean_spec_measures_the_brand_primary_and_passes_color_delta(
     posters, reviewer = ComposerPosters(composer, settings), ComposerReviewer(composer)
     clean = await posters.compose(JOB_ID, CLEAN, SERUM, SELUNE)
     assert clean.measured_primary == SELUNE.palette.primary.lower()
-    result = await reviewer.review(SELUNE, CLEAN, 1, clean)
+    result = await reviewer.review(SELUNE, CLEAN, 1, clean, FakeRun())
     assert len(result.checks) == 10
     assert next(c for c in result.checks if c.id == 'color_delta').status == 'pass'
     assert result.passed
     # 分數不加隨機抖動：seed 不同，結果相同
-    assert await reviewer.review(SELUNE, CLEAN, 2, clean) == result
+    assert await reviewer.review(SELUNE, CLEAN, 2, clean, FakeRun()) == result
 
     flawed = await posters.compose(JOB_ID, FLAWED, SERUM, SELUNE)
     assert flawed.measured_primary is not None
-    color = next(c for c in (await reviewer.review(SELUNE, FLAWED, 1, flawed)).checks if c.id == 'color_delta')
+    color = next(
+        c for c in (await reviewer.review(SELUNE, FLAWED, 1, flawed, FakeRun())).checks if c.id == 'color_delta'
+    )
     # 說明文字顯示實際用錯的顏色
     assert color.status == 'fail'
     assert f'偵測主色 {flawed.measured_primary.upper()}' in color.value
