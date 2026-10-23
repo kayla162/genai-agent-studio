@@ -81,6 +81,12 @@
   - `missing(workflow, ignore)` 不需要另外傳模型清單：依 `/object_info` 檢查每個節點類型都存在，以及選項型輸入（模型檔名、取樣器、排程器…）的值都在 ComfyUI 的清單裡；`ignore` 排除每個任務上傳的底圖與遮罩。
   - `POST /free` 的回應沒有內容，只檢查 HTTP 狀態；`/interrupt` 與 `/queue` 失敗時略過（ComfyUI 已經關閉）。HTTP 請求的逾時為 30 秒，等待 prompt 另以 `COMFYUI_TIMEOUT_SECONDS` 計算。
   - 假的 WebSocket 伺服器送完訊息後等用戶端關閉（`wait_closed`），伺服器才能正常結束；respx 以 `assert_all_called=False` 共用同一組路由。
+- **Task 8**：
+  - `render_round` 的新參數 `product` 放在 `brand` 之後、`run` 之前；`SimImageEngine` 與測試的 `FakeImage` 接受但不使用。
+  - `ComfyImageEngine(comfy, composer, settings, workflows_dir)`：讀參數對照表找 workflow 與底圖、遮罩的節點，商品圖由 `review.py` 抽出的 `product_image`（與 `required_image`）讀取，原本 `ComposerPosters` 的私有方法改用這兩個函式。
+  - 進度只回報取樣節點（`KSampler` 等）的 `generate`；手寫的 workflow 沒有放大節點（放大在 worker 以 Lanczos 進行），所以不送 `upscale`。
+  - `comfy.queued` 的 `promptId` 是 `{jobId}_r{round}_{templateId}_v{variant}`（ComfyUI 的 prompt_id 要送出後才知道），`injection` 的 seed 已加上 variant。
+  - 輸出圖與底圖尺寸不同時任務失敗（放大與裁切的方式會不同，商品對不上原始去背圖）。
 
 ## Global Constraints
 

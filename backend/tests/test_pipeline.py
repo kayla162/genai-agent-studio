@@ -120,7 +120,14 @@ class FakeImage:
         self.on_render = on_render
 
     async def render_round(
-        self, job_id: str, round: int, specs: list[PromptSpec], variants: int, brand: Brand, run: RunContext
+        self,
+        job_id: str,
+        round: int,
+        specs: list[PromptSpec],
+        variants: int,
+        brand: Brand,
+        product: Product,
+        run: RunContext,
     ) -> dict[tuple[TemplateId, int], RenderBackground]:
         if self.on_render is not None:
             await self.on_render(run)

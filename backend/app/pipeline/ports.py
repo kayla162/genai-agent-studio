@@ -120,8 +120,17 @@ class Agent(Protocol):
 
 class ImageEngine(Protocol):
     async def render_round(
-        self, job_id: str, round: int, specs: list[PromptSpec], variants: int, brand: Brand, run: RunContext
-    ) -> dict[tuple[TemplateId, int], RenderBackground]: ...
+        self,
+        job_id: str,
+        round: int,
+        specs: list[PromptSpec],
+        variants: int,
+        brand: Brand,
+        product: Product,
+        run: RunContext,
+    ) -> dict[tuple[TemplateId, int], RenderBackground]:
+        """一輪的生圖：每個模板 × variant 一張背景。product 給 ComfyUI 的商品底圖用（模擬版不使用）。"""
+        ...
 
 
 class BackgroundPalette(Model):

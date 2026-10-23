@@ -65,6 +65,28 @@ def fit_image(path: Path) -> bytes:
 IMAGE_ERRORS = (OSError, UnidentifiedImageError, Image.DecompressionBombError, ValueError, SyntaxError)
 
 
+def required_image(settings: Settings, url: str, label: str, prefix: str = MISSING_IMAGE) -> bytes:
+    """審查用海報與商品底圖是紀錄，不像瀏覽器預覽那樣略過讀不到的圖：找不到或無法讀取時任務失敗。"""
+    path = resolve_url(settings, url)
+    if path is None:
+        raise AppError(f'{prefix}找不到{label}（{url}）')
+    try:
+        return fit_image(path)
+    except IMAGE_ERRORS as error:
+        raise AppError(f'{prefix}{label}無法讀取（{url}）：{error}') from error
+
+
+def product_image(settings: Settings, product: Product, prefix: str = MISSING_IMAGE) -> ProductImage | None:
+    """與前端 productImage 相同：去背完成用去背圖（normal），否則用原圖並以色彩增值（multiply）合成。
+    示範商品由 composer 依 productImage 產生 SVG。審查用海報與 ComfyUI 的商品底圖共用。"""
+    if not isinstance(product.photo, FilePhoto):
+        return None
+    cut = product.cutout
+    if cut is not None and cut.status == 'done' and cut.url:
+        return ProductImage(required_image(settings, cut.url, '商品去背圖', prefix), 'normal')
+    return ProductImage(required_image(settings, product.photo.url, '商品圖', prefix), 'multiply')
+
+
 class ComposerPosters:
     """真實版的排版：composer 繪製審查用海報並量主色，worker 存檔。"""
 
@@ -85,22 +107,12 @@ class ComposerPosters:
     def _images(self, render: Render, product: Product, brand: Brand) -> PosterImages:
         """在執行緒裡讀圖與縮圖（大張照片解碼約需數百毫秒）。"""
         return PosterImages(
-            product=self._product(product),
+            product=product_image(self.settings, product),
             logo=self._logo(brand),
-            background=self._required(render.background.url, '背景圖')
+            background=required_image(self.settings, render.background.url, '背景圖')
             if isinstance(render.background, UrlBackground)
             else None,
         )
-
-    def _product(self, product: Product) -> ProductImage | None:
-        """與前端 productImage 相同：去背完成用去背圖（normal），否則用原圖並以色彩增值（multiply）合成。
-        示範商品由 composer 依 productImage 產生 SVG。"""
-        if not isinstance(product.photo, FilePhoto):
-            return None
-        cut = product.cutout
-        if cut is not None and cut.status == 'done' and cut.url:
-            return ProductImage(self._required(cut.url, '商品去背圖'), 'normal')
-        return ProductImage(self._required(product.photo.url, '商品圖'), 'multiply')
 
     def _logo(self, brand: Brand) -> bytes | None:
         """與前端相同：Logo 圖檔找不到或無法讀取時改畫向量標誌與字標。"""
@@ -115,16 +127,6 @@ class ComposerPosters:
         except IMAGE_ERRORS:
             logger.warning('品牌 Logo 圖檔無法讀取，審查用海報改畫向量標誌：%s', brand.logo.url, exc_info=True)
             return None
-
-    def _required(self, url: str, label: str) -> bytes:
-        """審查用海報是紀錄，不像瀏覽器預覽那樣略過讀不到的圖：找不到或無法讀取時任務失敗。"""
-        path = resolve_url(self.settings, url)
-        if path is None:
-            raise AppError(f'{MISSING_IMAGE}找不到{label}（{url}）')
-        try:
-            return fit_image(path)
-        except IMAGE_ERRORS as error:
-            raise AppError(f'{MISSING_IMAGE}{label}無法讀取（{url}）：{error}') from error
 
 
 def _write(target: Path, png: bytes) -> None:

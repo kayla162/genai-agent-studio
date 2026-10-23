@@ -299,7 +299,9 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
 
         # 4. 生圖
         await run.status('rendering', round)
-        backgrounds = await ports.image.render_round(job_id, round, specs, inp.variants_per_template, brand, run)
+        backgrounds = await ports.image.render_round(
+            job_id, round, specs, inp.variants_per_template, brand, product, run
+        )
         renders = [
             Render(
                 id=f'{job_id}_r{round}_{spec.template_id}_v{v}',
