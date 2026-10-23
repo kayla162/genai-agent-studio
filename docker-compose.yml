@@ -23,10 +23,16 @@ x-backend: &backend
     # 審查：composer（預設，composer 繪製審查用海報存到 data/jobs/，量出主色後審查）或 sim（不畫圖，模擬審查）。
     # 可在 .env 或環境變數設定 REVIEW_MODE；api（系統狀態）與 worker 一定讀到同一個值
     REVIEW_MODE: ${REVIEW_MODE:-composer}
+    # Agent 與 VLM：gemini（預設，需要 .env 的 GEMINI_API_KEY 與 REVIEW_MODE=composer）或 sim（模擬，不需要 key）。
+    # api（需求拆解、系統狀態）與 worker 一定讀到同一個值；其他 GEMINI_* 由 .env 傳入
+    AGENT_MODE: ${AGENT_MODE:-gemini}
+    # Gemini 單價表（repo 根目錄的 pricing.yaml，唯讀掛載）
+    PRICING_FILE: /app/pricing.yaml
   volumes:
     - ./brands:/app/brands:ro
     - ./assets/products:/app/assets/products:ro
     - ./data:/app/data
+    - ./pricing.yaml:/app/pricing.yaml:ro
   restart: unless-stopped
 
 services:
@@ -110,6 +116,7 @@ services:
       - ./brands:/app/brands:ro
       - ./assets/products:/app/assets/products:ro
       - ./data:/app/data
+      - ./pricing.yaml:/app/pricing.yaml:ro
       # 去背模型（BiRefNet，約 1 GB）與 RAG 模型（BGE-M3＋Reranker，約 1.2 GB）：第一次啟動時下載
       - models:/app/models
     depends_on:

@@ -50,7 +50,12 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 # SAQ 0.26 在 redis-py 8 上呼叫已棄用的 setex
 filterwarnings = ["ignore:Call to deprecated setex:DeprecationWarning"]
-markers = ["model: 需要真正的模型檔（models/；去背另外需要 CUTOUT_TEST_PHOTO 指定的照片），沒有時略過"]
+markers = [
+    "model: 需要真正的模型檔（models/；去背另外需要 CUTOUT_TEST_PHOTO 指定的照片），沒有時略過",
+    "live: 呼叫真的 Gemini API（需要 GEMINI_API_KEY，會產生費用）；只以 uv run pytest -m live 手動執行",
+]
+# 一般的 pytest 不執行 live 測試；命令列的 -m live 會取代這個設定
+addopts = "-m 'not live'"
 
 [tool.ruff]
 line-length = 120
@@ -64,7 +69,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["app", "tests", "migrations"]
+files = ["app", "tests", "migrations", "scripts"]
 
 [[tool.mypy.overrides]]
 module = ["asyncpg", "asyncpg.*"]

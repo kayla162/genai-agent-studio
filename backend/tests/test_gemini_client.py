@@ -26,6 +26,7 @@ from app.adapters.gemini import (
     usage_message,
 )
 from app.errors import BudgetExceeded
+from app.pipeline.gemini_types import BriefDraft, SpecDraft, VlmVerdict
 from app.pipeline.ports import JobCancelled
 from app.settings import Settings
 from app.usage import TokenUsage, UsageKind, UsageScope
@@ -138,6 +139,26 @@ async def test_parses_structured_output_and_records_usage(make: MakeHarness) -> 
     assert usage_message('gemini-3.8-flash', usage, Decimal('0.006960')) == (
         'gemini-3.8-flash：輸入 4,120（快取 1,000）／輸出 1,032（思考 640）tokens・US$0.0070'
     )
+
+
+@pytest.mark.parametrize(
+    ('response', 'kind', 'schema'),
+    [('brief-ok.json', 'brief', BriefDraft), ('spec-ok.json', 'spec', SpecDraft), ('vlm-ok.json', 'vlm', VlmVerdict)],
+)
+async def test_replays_a_response_of_each_call(
+    make: MakeHarness, response: str, kind: UsageKind, schema: type[BriefDraft | SpecDraft | VlmVerdict]
+) -> None:
+    h = make()
+    call = GeminiCall(
+        kind=kind, model='gemini-3.8-flash', system='系統指示', parts=['資料'], schema=schema, scope=SCOPE
+    )
+    with respx.mock() as mock:
+        mock.post(url__regex=GENERATE).mock(return_value=recorded(response))
+        result = await h.client.generate(call, h.run)
+    assert isinstance(result, schema)
+    ((_, recorded_kind, _, usage),) = h.usage.records
+    assert recorded_kind == kind
+    assert usage.input_tokens > 0 and usage.output_tokens > usage.thinking_tokens > 0
 
 
 async def test_vlm_calls_log_to_the_vlm_source(make: MakeHarness) -> None:

@@ -1,0 +1,27 @@
+{
+  "status": 200,
+  "body": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "{\"sellingPoints\": [\"5重玻尿酸\", \"神經醯胺\"], \"audience\": \"熬夜的上班族\", \"tone\": \"gentle\", \"campaign\": \"週年慶\", \"offer\": \"買一送一\", \"period\": null, \"style\": [\"soft\", \"premium\"]}"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 1480,
+      "candidatesTokenCount": 96,
+      "totalTokenCount": 2010,
+      "thoughtsTokenCount": 434
+    },
+    "modelVersion": "gemini-3.8-flash",
+    "responseId": "handwritten-brief"
+  }
+}

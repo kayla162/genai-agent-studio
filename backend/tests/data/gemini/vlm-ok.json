@@ -1,0 +1,37 @@
+{
+  "status": 200,
+  "body": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "{\"lines\": [\"SÉLUNE\", \"一夜溫柔修護\", \"醒來透□發光\", \"7天感受透亮光采・專業修護配方*\"], \"exaggeration\": {\"status\": \"pass\", \"phrases\": [], \"reason\": \"\"}, \"occlusion\": {\"status\": \"warn\", \"elements\": [\"logo\", \"headline\"], \"reason\": \"Logo 與標題太靠近\"}, \"quality\": {\"status\": \"fail\", \"issues\": [\"商品邊緣模糊\"], \"reason\": \"商品主體失焦\"}}"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 3010,
+      "candidatesTokenCount": 602,
+      "totalTokenCount": 4560,
+      "thoughtsTokenCount": 948,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 430
+        },
+        {
+          "modality": "IMAGE",
+          "tokenCount": 2580
+        }
+      ]
+    },
+    "modelVersion": "gemini-3.8-flash",
+    "responseId": "handwritten-vlm"
+  }
+}

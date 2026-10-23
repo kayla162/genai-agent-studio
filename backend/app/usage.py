@@ -220,3 +220,26 @@ class UsageLedger(UsageRecorder):
     async def costs_by_job(self, job_ids: list[str]) -> dict[str, float]:
         async with self.db.session() as s:
             return {job_id: float(total) for job_id, total in (await repo.costs_by_job(s, job_ids)).items()}
+
+
+class MemoryLedger(UsageRecorder):
+    """記憶體版的用量：依單價計算費用但不寫入資料庫、不套用上限（錄製腳本、實驗腳本與 live 測試使用）。"""
+
+    def __init__(self, pricing: Pricing, clock: Callable[[], datetime] = utc_now) -> None:
+        self.pricing = pricing
+        self.clock = clock
+        self.records: list[tuple[UsageScope, UsageKind, str, TokenUsage, Decimal]] = []
+
+    async def check(self, scope: UsageScope, model: str) -> None:
+        self.pricing.price(model, self.clock())
+
+    async def record(self, scope: UsageScope, kind: UsageKind, model: str, usage: TokenUsage) -> Decimal:
+        cost = cost_usd(
+            self.pricing.price(model, self.clock()), usage.input_tokens, usage.cached_tokens, usage.output_tokens
+        )
+        self.records.append((scope, kind, model, usage, cost))
+        return cost
+
+    @property
+    def total(self) -> Decimal:
+        return sum((r[4] for r in self.records), Decimal(0))
