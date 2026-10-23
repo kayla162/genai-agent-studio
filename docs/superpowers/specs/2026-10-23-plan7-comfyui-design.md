@@ -211,7 +211,7 @@
 ### 4.11 成本
 
 - `AGENT_MODE=gemini` 時，儀表板的每張成本已經只用 `job_usage` 的加總（`stats.job_stat` 的 `usage_cost`），本機生圖本來就不計入，不需修改。
-- `AGENT_MODE=sim` 時仍依事件估算（`stats.job_cost`）：`IMAGE_MODE=comfyui` 的任務不再乘上 `comfy_image` 的估算單價（US$0.0042），生圖成本為 0；`IMAGE_MODE=sim` 維持現狀，golden 統計不變。任務摘要需要記錄生圖模式，估算時才分得出來（實作時確認摘要現有的欄位）。
+- `AGENT_MODE=sim` 時仍依事件估算（`stats.job_cost`）：`IMAGE_MODE=comfyui` 的任務不再乘上 `comfy_image` 的估算單價（US$0.0042），生圖成本為 0；`IMAGE_MODE=sim` 維持現狀，golden 統計不變。生圖模式由 `render.completed` 事件中每張 `Render.background.kind` 判斷（`url` 為 ComfyUI 生成），任務摘要不需要新增欄位。
 - `job_usage` 不新增 ComfyUI 的資料列（修改第二階段規格 §5.8 的「ComfyUI 記錄 GPU 秒數」）。
 
 ## 5. 模擬模式（`IMAGE_MODE=sim`）
