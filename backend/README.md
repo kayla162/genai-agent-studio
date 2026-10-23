@@ -15,8 +15,9 @@ uv sync
 |---|---|
 | `uv run uvicorn app.api.main:app --port 8000 --reload` | api（啟動時執行 migration 並匯入 `brands/*.yaml`） |
 | `uv run python -m app.worker` | worker（啟動時把中斷的任務標記失敗，排隊中的重新放回佇列；在背景準備去背與 RAG 模型，再把品牌同步到 Chroma） |
-| `uv run pytest` | 測試：重建 PostgreSQL 的 `genai_test` 資料庫、使用 Redis 第 15 號資料庫與 Chroma 的 `genai_test` database（需要 `docker compose up -d postgres redis chroma`），並在 3902 埠啟動 composer（需要 `web/` 已 `npm ci` 與 `npm run fonts`；composer 缺少字型就結束，測試立即失敗並提示）。測試不讀 `.env`（設定一律以 `_env_file=None` 建立並明確設定 `agent_mode`），環境變數仍然有效。不呼叫真的 Gemini API |
-| `uv run pytest -m live` | 手動執行：呼叫真的 Gemini API（需要 `GEMINI_API_KEY`，取自環境變數或 repo 根目錄 `.env` 的這一個值；會產生少量費用）。一般的 `pytest` 以 `addopts` 排除 `live`，沒有 key 時略過 |
+| `uv run pytest` | 測試：重建 PostgreSQL 的 `genai_test` 資料庫、使用 Redis 第 15 號資料庫與 Chroma 的 `genai_test` database（需要 `docker compose up -d postgres redis chroma`），並在 3902 埠啟動 composer（需要 `web/` 已 `npm ci` 與 `npm run fonts`；composer 缺少字型就結束，測試立即失敗並提示）。測試不讀 `.env`（設定一律以 `_env_file=None` 建立並明確設定 `agent_mode` 與 `image_mode`），環境變數仍然有效。不呼叫真的 Gemini API，也不連 ComfyUI |
+| `uv run pytest -m live` | 手動執行：呼叫真的 Gemini API（需要 `GEMINI_API_KEY`，取自環境變數或 repo 根目錄 `.env` 的這一個值；會產生少量費用），以及本機的 ComfyUI（`COMFYUI_URL`，預設 `http://127.0.0.1:8188`；每個模板生成一張）。一般的 `pytest` 以 `addopts` 排除 `live`，沒有 key 或 ComfyUI 沒有回應時略過 |
+| `uv run python -m scripts.record_comfy` | 有 ComfyUI 之後錄製測試重播用的回應（`tests/data/comfy/` 的 `system_stats.json`、`object_info.json`、`history.json`、`ws-success.json`；需要執行中的 composer） |
 | `uv run python -m scripts.record_gemini` | 有 key 之後錄製 respx 重播用的回應（`tests/data/gemini/brief-ok.json`、`spec-ok.json`、`vlm-ok.json`；需要執行中的 composer） |
 | `uv run python -m scripts.gemini_experiment all` | 規格 §2 的實驗（約呼叫 110 次）；`--offline` 以假的回應跑完整個流程，`--limit`、`--thinking` 控制範圍與思考程度，報告寫到 `data/experiments/` |
 | `uv run pytest -m model` | 只跑真模型的測試（標記 `model`）：repo 根目錄的 `models/` 有模型檔時才執行，否則略過。去背模型的測試另外需要以 `CUTOUT_TEST_PHOTO` 指定一張商品照（例如 `CUTOUT_TEST_PHOTO=../data/uploads/xxx.jpg uv run pytest -m model`） |
@@ -36,6 +37,12 @@ uv sync
 | `GEMINI_TIMEOUT_SECONDS`、`GEMINI_MAX_RETRIES`、`GEMINI_CONCURRENCY` | `120`、`3`、`4` | 每次請求的逾時；429、5xx、逾時與連線錯誤的重試次數；每個 worker 同時進行的呼叫數 |
 | `GEMINI_JOB_BUDGET_USD`、`GEMINI_MONTHLY_BUDGET_USD` | `1`、`20` | 單一任務與每月（台北時間）的費用上限，0 為不設上限 |
 | `PRICING_FILE` | repo 根目錄的 `pricing.yaml` | Gemini 單價表（Docker 內為 `/app/pricing.yaml`） |
+| `IMAGE_MODE` | `comfyui` | `comfyui`：ComfyUI 依商品底圖生成背景（需要 `REVIEW_MODE=composer`，否則 api 與 worker 啟動失敗）；`sim`：程序化背景（測試、live E2E 與作品集 Demo） |
+| `COMFYUI_URL` | `http://127.0.0.1:8188` | Docker 內為 `http://host.docker.internal:8188` |
+| `COMFYUI_TIMEOUT_SECONDS` | `600` | 每個 prompt 的逾時，含排隊與第一次載入模型；逾時時中斷 prompt，任務失敗 |
+| `COMFYUI_FREE_AFTER_JOB` | `false` | 任務結束（完成、失敗或取消）後呼叫 ComfyUI 的 `/free` 卸載模型 |
+| `MEMORY_LOCK` | `true` | 生圖與商品去背以 Redis 鎖（`heavy-memory`）互斥 |
+| `COMFYUI_WORKFLOWS_DIR` | repo 根目錄的 `comfyui/workflows` | workflow 與參數對照表（Docker 內為 `/app/comfyui/workflows`） |
 | `COMPOSER_URL` | `http://127.0.0.1:3900` | Docker 內為 `http://composer:3900`。`REVIEW_MODE=composer` 時 composer 要有海報字型（在 `web/` 執行 `npm run fonts`） |
 | `CHROMA_URL` | `http://127.0.0.1:8001` | Docker 內為 `http://chroma:8000` |
 | `MODELS_DIR` | repo 根目錄的 `models/` | 去背與 RAG 的模型檔（Docker 為 `models` volume） |
@@ -52,7 +59,7 @@ $env:RAG_MODE='sim'; uv run python -m app.worker
 $env:REVIEW_MODE='sim'; $env:AGENT_MODE='sim'; uv run python -m app.worker
 ```
 
-`REVIEW_MODE=sim` 時一定要同時設 `AGENT_MODE=sim`（Gemini 的 VLM 審查要讀審查用海報）。
+`REVIEW_MODE=sim` 時一定要同時設 `AGENT_MODE=sim` 與 `IMAGE_MODE=sim`（Gemini 的 VLM 審查要讀審查用海報，ComfyUI 要 composer 畫的商品底圖）。
 
 ## API
 
@@ -82,12 +89,21 @@ $env:REVIEW_MODE='sim'; $env:AGENT_MODE='sim'; uv run python -m app.worker
 3. 每則事件在同一個交易中鎖定任務列並取得下一個 `seq`，commit 後發布到 Redis 頻道 `job:{id}`；結束任務的 `job.status` 一定是最後一則。
 4. 取消：排隊中的直接取消；執行中的設定旗標，worker 在步驟之間停止。
 
-外部服務都經過 `app/pipeline/ports.py` 的介面。檢索由 `app/rag/retriever.py` 的 `BgeRetriever` 實作（`RAG_MODE=sim` 時改用模擬版）；排版與審查由 `app/pipeline/review.py` 的 `ComposerPosters` 與 `ComposerReviewer` 實作（`REVIEW_MODE=sim` 時改用模擬版）；`AGENT_MODE=gemini` 時 Agent 與審查換成 `app/pipeline/gemini.py` 的 `GeminiAgent` 與 `GeminiReviewer`；生圖仍由 `app/pipeline/sim.py` 的模擬版實作，Plan 7 換成 ComfyUI。
+外部服務都經過 `app/pipeline/ports.py` 的介面。檢索由 `app/rag/retriever.py` 的 `BgeRetriever` 實作（`RAG_MODE=sim` 時改用模擬版）；排版與審查由 `app/pipeline/review.py` 的 `ComposerPosters` 與 `ComposerReviewer` 實作（`REVIEW_MODE=sim` 時改用模擬版）；`AGENT_MODE=gemini` 時 Agent 與審查換成 `app/pipeline/gemini.py` 的 `GeminiAgent` 與 `GeminiReviewer`；`IMAGE_MODE=comfyui` 時生圖由 `app/pipeline/comfy.py` 的 `ComfyImageEngine` 實作（`IMAGE_MODE=sim` 時為 `app/pipeline/sim.py` 的程序化背景）。
 
 - 同一輪的 Prompt 構建、審查與 Query Rewriting 並行（同時最多 `GEMINI_CONCURRENCY` 個 Gemini 呼叫），事件依模板與候選的順序送出。
 - 下一輪的 Prompt 構建收到每個未通過模板上一輪最高分候選的 spec、檢查結果與修正項（`PreviousRound`），以及放進 Prompt 的切塊全文（`SpecRequest.hits`）。
 - 等待 Gemini 的回應與退避都經過 `RunContext.wait()`：每 0.5 秒檢查取消旗標，取消時中斷進行中的請求（送出警告：這次呼叫可能仍會計費，未記錄用量）。
-- `AGENT_MODE=gemini` 時不依 1× 時間軸（`PHASE_MS`）等待各階段；模擬生圖的進度照舊依時間軸。
+- `AGENT_MODE=gemini` 時不依 1× 時間軸（`PHASE_MS`）等待各階段；模擬生圖的進度照舊依時間軸，ComfyUI 的進度來自它的 WebSocket。
+- 任務結束（完成、失敗或取消）時呼叫 `ImageEngine.finish`（`COMFYUI_FREE_AFTER_JOB` 時請 ComfyUI 釋放記憶體）。
+
+## ComfyUI（IMAGE_MODE=comfyui）
+
+- **client**（`app/adapters/comfyui.py`）：httpx 與 websockets。`system_stats`（版本與 GPU）、`missing`（依 `/object_info` 檢查 workflow 的節點類型與選項型輸入，例如模型檔名；結果快取 60 秒）、`upload`、`run`、`free`。`run` 先連上 WebSocket 再送出 prompt，只回報這個 prompt 的 `progress`；WebSocket 斷線時改以 `/history` 輪詢；完成後從 `/history` 找到輸出圖並以 `/view` 下載。等待經過 `RunContext.wait()`：取消或逾時時以 `/interrupt` 中斷並從 `/queue` 刪除。錯誤分為 `ComfyError`（連不上、拒絕 workflow、缺少節點或模型、逾時）與 `ComfyExecutionError`（執行時失敗；GPU 記憶體不足時附上建議），訊息為中文。
+- **生圖**（`app/pipeline/comfy.py`）：每輪先檢查連線與節點、模型；每個模板以 composer 的 `/plate` 畫商品底圖與遮罩並上傳；每個 variant 一個 prompt（參數為 `PromptSpec.injection`，seed 加上 variant 編號），依序執行，執行錯誤時重試一次；取樣節點的進度換成 `render.progress`（`generate`）；輸出放大（Lanczos）並置中裁切成模板尺寸，存成 `data/jobs/{jobId}/bg-{模板}-r{輪}-v{variant}.png`，`Render.background` 為 `{ kind: 'url', includesProduct: false }`。整輪持有 `heavy-memory` 鎖。
+- **workflow**：`comfyui/workflows/product_scene_v1.json`（API 格式）與參數對照表 `product_scene_v1.params.json`；前端的 `buildInjection` 依同一張表（`web/src/lib/agent/comfy.ts`）產生參數，`tests/test_comfy_params.py` 確認兩者相同、每個參數都對得到 workflow 的節點。
+- **互斥**（`app/pipeline/memory.py`）：`HeavyMemoryLock` 以 redis-py 的鎖實作，持有期間每 20 秒延長，worker 異常結束時 60 秒後自動釋放；生圖與去背（`cutout`）都取得同一個鎖。
+- **測試**：`tests/fake_comfy.py`（HTTP 以 respx、WebSocket 以 127.0.0.1 隨機埠的假伺服器）重播 `tests/data/comfy/`（目前依 ComfyUI 的格式手寫，有 ComfyUI 之後以 `scripts.record_comfy` 錄製取代）；任務流程的測試用假的 ComfyClient 與 composer。
 
 ## Gemini（AGENT_MODE=gemini）
 
@@ -101,9 +117,9 @@ $env:REVIEW_MODE='sim'; $env:AGENT_MODE='sim'; uv run python -m app.worker
 ## 審查（REVIEW_MODE=composer）
 
 - **排版**：`composing` 階段對每張候選呼叫 `PosterComposer.compose`。worker 以 `resolve_file` 讀商品圖（去背圖以 normal 合成，否則原圖以 multiply 合成，與前端的 `productImage` 相同）與 Logo，長邊超過 2048 px 或 EXIF 方向不是正向的圖先以 Pillow 轉正、縮小，再以 base64 送到 composer 的 `/render`（請求上限 30 MB）。composer 以前端的 `scene.ts` 與 `paint.ts` 在伺服器端繪製，回傳 PNG 與量到的主色；worker 把 PNG 存到 `data/jobs/{jobId}/{renderId}.png`（由 `/files/jobs/…` 提供，每張約 0.3–1 MB，不會自動清理），記錄「✓ 伺服器端排版 N 張」。示範商品不送圖檔，由 composer 自己畫；Logo 圖檔不存在或無法讀取時改畫向量標誌並記錄警告。
-- **審查**：`ComposerReviewer` 以量到的主色呼叫 `/review`：7 項規則加 3 項 VLM，分數為 `scoreChecks(checks, 0)`，不加抖動。`AGENT_MODE=sim` 時 VLM 三項依內容判斷（誇大用語看禁用詞、遮擋看 Logo 是否與標題重疊、品質一律通過），說明加上「（模擬：AGENT_MODE=sim）」；`AGENT_MODE=gemini` 時改由 `GeminiReviewer` 審查（見上一節）。`review.completed` 的 `image` 是審查用海報的網址（模擬版為 `null`）。
+- **審查**：`ComposerReviewer` 以量到的主色與背景色系呼叫 `/review`：8 項規則加 3 項 VLM，分數為 `scoreChecks(checks, 0)`，不加抖動。`AGENT_MODE=sim` 時 VLM 三項依內容判斷（誇大用語看禁用詞、遮擋看 Logo 是否與標題重疊、品質一律通過），說明加上「（模擬：AGENT_MODE=sim）」；`AGENT_MODE=gemini` 時改由 `GeminiReviewer` 審查（見上一節）。`review.completed` 的 `image` 是審查用海報的網址（模擬版為 `null`）。
 - **主色量測**（`web/src/lib/review/measure.ts`）：範圍是 `headline`、`price`、`badge` 三個區塊的聯集扣掉 `product`；4×4 像素一格取平均、轉 Lab，濾掉彩度低於門檻（10 與品牌主色 C* 的一半取小）的格子，以 Lab 直方圖找出佔比 2% 以上的色塊，取與品牌主色 ΔE2000 最小的一個。最小 ΔE 超過 `rules.maxDeltaE` 時，改回報彩度最高的色塊，說明文字顯示實際用錯的顏色；沒有色塊時判定不通過，說明為「未偵測到主色（主色區塊 < 2%）」。
-- **限制**：主色檢查只確認排版上的品牌色元素，不檢查背景。程式產生的背景依品牌色繪製；Plan 7 換成 AI 生成的照片背景時，再新增「背景色系」檢查。
+- **背景色系**（`web/src/lib/review/background.ts`）：`/render` 量疊上文字與商品之前的背景（縮小到長邊 256 px，扣掉向外擴張畫布短邊 2% 的商品方框），以 `X-Background-Palette` 標頭（JSON）回傳；worker 原樣送回 `/review` 產生 `bg_palette`。判定與門檻見 repo 根目錄 README 的「背景色系」。
 - **錯誤**：composer 無法連線或回傳錯誤時任務失敗，原因為「排版服務（composer）無法繪製海報：…」或「…無法審查海報：…」；找不到或讀不到上傳的商品圖時為「無法繪製審查用海報：找不到商品圖（網址）」或「…商品圖無法讀取（網址）：…」。
 - **模擬版**（`REVIEW_MODE=sim`）：`SimPosters` 不畫圖，`SimReviewer` 呼叫 composer 的 `/sim/review`，事件與前端 mock 完全相同（parity 測試只多比對 `image: null`）。
 
@@ -123,8 +139,10 @@ $env:REVIEW_MODE='sim'; $env:AGENT_MODE='sim'; uv run python -m app.worker
 app/
 ├─ api/            FastAPI：main.py（入口與錯誤格式）、catalog、jobs、files、services
 ├─ pipeline/       任務流程（runner）、外部服務介面（ports）、審查用海報與審查（review）、模擬版（sim）、
-│                  Gemini 的 Agent 與審查（gemini）、結構化輸出的型別（gemini_types）、提示詞（prompts/*.md）
-├─ adapters/       composer 用戶端（版型、/render、/review、/spec、/fixes、/glyphs、/sim/*、/health）、Gemini client（gemini）
+│                  Gemini 的 Agent 與審查（gemini）、結構化輸出的型別（gemini_types）、提示詞（prompts/*.md）、
+│                  ComfyUI 生圖（comfy）、生圖與去背互斥（memory）
+├─ adapters/       composer 用戶端（版型、/render、/review、/plate、/spec、/fixes、/glyphs、/sim/*、/health）、Gemini client（gemini）、
+│                  ComfyUI client（comfyui）
 ├─ cutout/         商品照去背：前後處理（processing）、BiRefNet 與模擬版（segmenter）、模型清單（models）、狀態鍵（state）、準備與狀態（engine）
 ├─ rag/            RAG：切塊（chunking）、抽字（extract：Markdown、純文字、PDF）、模型清單（models）、ONNX 推論（encoder）、
 │                  準備與狀態（engine、state）、錯誤（errors）、Chroma 用戶端（store）、PostgreSQL → Chroma 同步（sync）、
@@ -147,8 +165,8 @@ app/
 ├─ stats.py        成效儀表板統計（與前端的結果完全相同）
 └─ settings.py
 migrations/        Alembic
-scripts/           需要 Gemini API key 的手動腳本：錄製 respx 回應（record_gemini）、規格 §2 的實驗（gemini_experiment）
+scripts/           需要 Gemini API key 或 ComfyUI 的手動腳本：錄製回應（record_gemini、record_comfy）、Plan 6B 規格 §2 的實驗（gemini_experiment）
 tests/             pytest；與前端的一致性測試讀取 contracts/fixtures/（由 web 的 npm run fixtures 產生）；
-                   fake_encoder.py（不需要模型檔的 Encoder）、fake_gemini.py、fake_run.py、
-                   data/ci-sample.pdf（含中文文字層的 PDF）、data/gemini/（respx 重播的 Gemini 回應）
+                   fake_encoder.py（不需要模型檔的 Encoder）、fake_gemini.py、fake_comfy.py、fake_run.py、
+                   data/ci-sample.pdf（含中文文字層的 PDF）、data/gemini/、data/comfy/（重播的 Gemini 與 ComfyUI 回應）
 ```

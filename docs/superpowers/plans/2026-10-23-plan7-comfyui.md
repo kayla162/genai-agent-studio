@@ -102,6 +102,7 @@
   - `extra_hosts: host.docker.internal:host-gateway` 放在 `x-backend`（api 與 worker 都有）；Docker Desktop 已內建，加上也不影響。
   - `.env.example` 的 `COMFYUI_URL` 是註解：docker compose 也讀 `.env` 做變數替換，設成 `127.0.0.1` 會讓容器連不到 Windows 上的 ComfyUI（測試確認沒有未註解的 `COMFYUI_URL=`）。
   - `record_comfy.py` 用真的 `ComfyImageEngine` 跑一次，以 httpx 的 response hook 與包住 WebSocket 的物件錄下回應；`test_comfy_live.py` 以 `/layout` 換出 5 個模板的 spec，每個模板生成一張。兩者在這台機器都還沒對真的 ComfyUI 執行過。
+- **Task 12**：`comfyui/README.md` 先建立（安裝、記憶體、驗證與錄製），ComfyUI 版本、啟動參數、加速模型與記憶體的實測數字標示「待實測」，Task 1 補上；`models.md`、`custom_nodes.md`、`setup.ps1` 仍在 Task 1 建立。README 的進度表把 Plan 7 寫成「程式完成；ComfyUI 的安裝、模型授權確認與實測待執行」。
 
 ## Global Constraints
 

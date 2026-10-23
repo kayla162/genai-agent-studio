@@ -282,4 +282,10 @@
 
 ## 12. 實驗結果
 
-（實作計畫的第一個 Task 完成後填入，見 §2。）
+§2 的實驗還沒執行：需要先在筆電安裝 ComfyUI 並確認模型授權（實作計畫 Task 1）。實驗決定的數值目前都是預設值（`PLATE_MASK_GROW = 8`、背景色系的 `NEUTRAL_C = 12`、`HUE_TOL = 30`、`CHROMA_MARGIN = 25` 與 15%／30% 的門檻、`COMFYUI_FREE_AFTER_JOB = false`、放大用 Lanczos），workflow 是只用 SDXL base 1.0 與內建節點的手寫版本。
+
+**實作時不需要 ComfyUI 就能確認的結果**：
+
+- **背景色系的校準**：程式產生的背景（3 個品牌 × 5 個模板 × 6 個 seed）色系外最多 0.7%（SÉLUNE），另外兩個品牌為 0%，都通過；純藍的背景對 SÉLUNE 為 100% 色系外、不通過。
+- **商品位置**：`plateGeometry` 換算回模板尺寸的商品矩形與 `paint` 畫的矩形誤差 ≤ 1 像素（5 個模板 × 2 個商品 × 3 種長寬比）。
+- **模擬模式**：timelines 只因 `bg_palette`（模擬為通過）與 `injection` 的參數改變；在記憶體中執行模擬模式的任務流程，三條 timelines 的事件完全相同。

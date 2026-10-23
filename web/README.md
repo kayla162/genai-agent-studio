@@ -95,11 +95,13 @@ src/
 ├─ components/          ui（shadcn）、common（EmptyState、PageHeader）、layout、studio、product、queue、history、brands、poster、agent、dashboard
 ├─ lib/
 │  ├─ api/              ApiClient 介面；mock/（MockApiClient、劇本、示範資料與示範任務、IndexedDB）；http/（HttpApiClient、WebSocket 重新連線）
-│  ├─ agent/            Prompt 構建、修正策略、Gemini 結果的護欄（guard：finalizeSpec）、版本差異、流程節點狀態、事件摘要、透視用的資料整理
-│  ├─ compose/          版型、排版引擎（scene）、程序化素材（art）、Canvas 繪製（paint／render）、
+│  ├─ agent/            Prompt 構建、ComfyUI 的參數對照表（comfy）、修正策略、Gemini 結果的護欄（guard：finalizeSpec）、版本差異、
+│  │                    流程節點狀態、事件摘要、透視用的資料整理
+│  ├─ compose/          版型、排版引擎（scene）、程序化素材（art）、Canvas 繪製（paint／render）、ComfyUI 商品底圖的幾何（plate）、
 │  │                    海報字型涵蓋表與 emoji 移除（glyphs；只給 composer 使用）
 │  ├─ review/           規則型合規審查（rules）、ΔE2000（color）、從像素量測品牌主色（measure）、
-│  │                    VLM 檢查（vlm：Gemini 的判讀，或 AGENT_MODE=sim 時依內容判斷）、OCR 錯字比對（ocr）、文案重新檢查（recheck）
+│  │                    背景色系（background）、VLM 檢查（vlm：Gemini 的判讀，或 AGENT_MODE=sim 時依內容判斷）、
+│  │                    OCR 錯字比對（ocr）、文案重新檢查（recheck）
 │  ├─ jobs/             事件 → 畫面狀態（reducer）
 │  ├─ stats/            成效儀表板統計與成本估算（live 的每張成本改由後端依實際用量計算）
 │  ├─ export/           檔名、zip、下載
@@ -111,7 +113,8 @@ src/
 ├─ test/                測試共用的資料（fixtures）、golden fixtures 的產生（golden）與切塊的範例文件（chunk-samples）
 ├─ types/contract.ts    前後端資料約定
 └─ types/agent.ts       Gemini 的結構化輸出與護欄的結果（SpecDraft、VlmVerdict、GuardIssue；後端 gemini_types.py 以 golden fixture 比對）
-composer/               Node 服務，由後端呼叫：版型（/layout）、審查用海報（/render，poster.ts）、規則審查（/review；
+composer/               Node 服務，由後端呼叫：版型（/layout）、審查用海報與背景色系（/render，poster.ts）、
+                        ComfyUI 的商品底圖與遮罩（/plate，plate.ts）、規則審查（/review；
                         AGENT_MODE=gemini 時帶 Gemini 的判讀與轉錄）、Prompt 構建的護欄（/spec）、修正項（/fixes）、
                         字型缺字（/glyphs）、模擬邏輯（/sim/brief、/sim/prompt、/sim/review、/sim/fixes）、狀態與字型（/health）；
                         字型註冊（fonts.ts）、字型清單（fonts.lock.json）、cmap 解析（cmap.ts）、下載的字型（fonts/，不進 git）
