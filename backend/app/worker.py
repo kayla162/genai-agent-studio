@@ -51,6 +51,7 @@ from app.errors import AppError, Invalid, NotFound
 from app.events import EventStore
 from app.files import photo_path, product_folder
 from app.pipeline.gemini import gemini_ports
+from app.pipeline.memory import HeavyMemoryLock
 from app.pipeline.ports import Ports
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.runner import failure_reason, run_job
@@ -98,6 +99,8 @@ class Services:
     locks: BrandLocks = field(default_factory=BrandLocks)
     #: AGENT_MODE=gemini 時的 Gemini client（每個 worker 共用一個，同時最多 GEMINI_CONCURRENCY 個呼叫）
     gemini: GeminiClient | None = None
+    #: 生圖與商品去背互斥（MEMORY_LOCK）；None 時不互斥
+    memory: HeavyMemoryLock | None = None
 
     async def pace(self, ms: float) -> None:
         if self.speed > 0:
@@ -133,8 +136,9 @@ def build_services() -> Services:
         ports = gemini_ports(ports, gemini, composer, settings, ledger)
     cutouts = CutoutEngine(settings.cutout_model, settings.models_dir, redis)
     store = EventStore(db, redis)
+    memory = HeavyMemoryLock.from_redis(redis, enabled=settings.memory_lock)
     return Services(
-        db, redis, store, composer, ports, settings.sim_speed, settings, cutouts, rag, vectors, locks, gemini
+        db, redis, store, composer, ports, settings.sim_speed, settings, cutouts, rag, vectors, locks, gemini, memory
     )
 
 
@@ -160,12 +164,18 @@ async def cutout(services: Services, product_id: str, photo_url: str) -> None:
     try:
         folder = product_folder(services.settings, product_id)
         photo = await asyncio.to_thread(photo_path(services.settings, photo_url).read_bytes)
-        segmenter = await services.cutouts.segmenter()
-        try:
-            async with asyncio.timeout(CUTOUT_INFERENCE_TIMEOUT):
-                png = await asyncio.get_running_loop().run_in_executor(INFERENCE_EXECUTOR, segmenter.cut, photo)
-        except TimeoutError as error:
-            raise CutoutError('去背逾時（超過 5 分鐘），請重試') from error
+
+        async def waiting() -> None:
+            logger.info('生圖中，商品去背等生圖結束後開始：product_id=%s', product_id)
+
+        # 載入模型與推論是記憶體的尖峰：與 ComfyUI 生圖互斥（16 GB 的筆電兩者同時執行會不夠）
+        async with services.memory.hold(waiting) if services.memory else contextlib.nullcontext():
+            segmenter = await services.cutouts.segmenter()
+            try:
+                async with asyncio.timeout(CUTOUT_INFERENCE_TIMEOUT):
+                    png = await asyncio.get_running_loop().run_in_executor(INFERENCE_EXECUTOR, segmenter.cut, photo)
+            except TimeoutError as error:
+                raise CutoutError('去背逾時（超過 5 分鐘），請重試') from error
         name = f'cutout-{hashlib.sha256(png).hexdigest()[:12]}.png'
         await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
         written = folder / name

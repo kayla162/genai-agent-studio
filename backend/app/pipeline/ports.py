@@ -132,6 +132,10 @@ class ImageEngine(Protocol):
         """一輪的生圖：每個模板 × variant 一張背景。product 給 ComfyUI 的商品底圖用（模擬版不使用）。"""
         ...
 
+    async def finish(self, job_id: str) -> None:
+        """任務結束（完成、失敗或取消）時收尾，例如請 ComfyUI 釋放記憶體；不丟出例外。"""
+        ...
+
 
 class BackgroundPalette(Model):
     """composer 從疊上文字與商品之前的背景量到的品牌色系（web/src/lib/review/background.ts，/render 的

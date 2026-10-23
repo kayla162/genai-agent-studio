@@ -2,6 +2,7 @@
 
 確認每個 variant 送出的 workflow（提示詞、seed、底圖與遮罩）、事件、存檔的尺寸與網址、執行錯誤的重試。"""
 
+import asyncio
 import io
 from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
@@ -23,9 +24,11 @@ from app.contract import (
 )
 from app.errors import AppError
 from app.pipeline.comfy import ComfyImageEngine
+from app.pipeline.memory import HeavyMemoryLock
 from app.settings import Settings
 from tests.fake_run import FakeRun
 from tests.fixtures import load_fixture
+from tests.test_memory_lock import FakeLock, Store
 
 TIMELINE = load_fixture('timelines/selune-retry.json')
 JOB_ID: str = TIMELINE['jobId']
@@ -63,6 +66,7 @@ class FakeComfy:
         self.ignored: Collection[tuple[str, str]] = ()
         self.uploads: list[tuple[str, bytes]] = []
         self.workflows: list[dict[str, Any]] = []
+        self.freed = 0
 
     async def system_stats(self) -> ComfyStats:
         return ComfyStats(version='0.3.75', gpu='NVIDIA GeForce RTX 3060 Laptop GPU', vram_total=6441926656)
@@ -95,7 +99,7 @@ class FakeComfy:
         return next(GEN[s.canvas.ratio] for s in SPECS if name.endswith(f'_{s.template_id}_plate.png'))
 
     async def free(self) -> None:
-        pass
+        self.freed += 1
 
 
 class FakeComposer:
@@ -125,8 +129,10 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(_env_file=None, image_mode='comfyui', agent_mode='sim', data_dir=tmp_path / 'data')
 
 
-def engine(settings: Settings, comfy: FakeComfy, composer: FakeComposer | None = None) -> ComfyImageEngine:
-    return ComfyImageEngine(comfy, composer or FakeComposer(), settings)  # type: ignore[arg-type]
+def engine(
+    settings: Settings, comfy: FakeComfy, composer: FakeComposer | None = None, lock: HeavyMemoryLock | None = None
+) -> ComfyImageEngine:
+    return ComfyImageEngine(comfy, composer or FakeComposer(), settings, lock=lock)  # type: ignore[arg-type]
 
 
 async def test_each_variant_is_one_prompt_with_its_seed_plate_and_mask(settings: Settings) -> None:
@@ -216,3 +222,41 @@ async def test_an_output_of_another_size_is_rejected(settings: Settings) -> None
     comfy = FakeComfy([(512, 512)])
     with pytest.raises(ComfyError, match='ComfyUI 輸出的圖是 512 × 512'):
         await engine(settings, comfy).render_round(JOB_ID, 2, SPECS[:1], 1, SELUNE, SERUM, FakeRun(JOB_ID))
+
+
+async def test_waits_for_a_running_cutout_and_holds_the_lock_while_rendering(settings: Settings) -> None:
+    store = Store()
+    lock = HeavyMemoryLock(lambda name, ttl: FakeLock(store, ttl, 'render'), ttl=0.3, poll=0.01)
+    cutout = FakeLock(store, 0.3, 'cutout')
+    assert await cutout.acquire(blocking=False)
+    run = FakeRun(JOB_ID)
+
+    async def finish_cutout() -> None:
+        await asyncio.sleep(0.1)
+        await cutout.release()
+
+    comfy = FakeComfy()
+    holders: list[object] = []
+    original = comfy.run
+
+    async def run_and_check(*args: Any) -> ComfyOutput:
+        holders.append(store.owner)
+        return await original(*args)
+
+    comfy.run = run_and_check  # type: ignore[method-assign,assignment]
+    await asyncio.gather(
+        engine(settings, comfy, lock=lock).render_round(JOB_ID, 2, SPECS[:1], 1, SELUNE, SERUM, run), finish_cutout()
+    )
+    assert '等待商品去背完成' in run.messages()
+    assert store.acquired == ['cutout', 'render']
+    assert all(h is not None and h is not cutout for h in holders)
+    assert store.owner is None
+
+
+async def test_finish_frees_comfyui_only_when_configured(settings: Settings) -> None:
+    comfy = FakeComfy()
+    await engine(settings, comfy).finish(JOB_ID)
+    assert comfy.freed == 0
+    freeing = settings.model_copy(update={'comfyui_free_after_job': True})
+    await engine(freeing, comfy).finish(JOB_ID)
+    assert comfy.freed == 1

@@ -118,6 +118,10 @@ class FakeAgent:
 class FakeImage:
     def __init__(self, on_render: Any = None) -> None:
         self.on_render = on_render
+        self.finished: list[str] = []
+
+    async def finish(self, job_id: str) -> None:
+        self.finished.append(job_id)
 
     async def render_round(
         self,
@@ -294,17 +298,22 @@ async def test_stops_when_the_job_is_cancelled(store: EventStore, db: Database) 
             await jobs.request_cancel(s, JOB)
         await run.pace(300)
 
-    await run_job(JOB, db, store, ports(FakeAgent(), FakeReviewer({}), FakeImage(cancel)), speed=1)
+    image = FakeImage(cancel)
+    await run_job(JOB, db, store, ports(FakeAgent(), FakeReviewer({}), image), speed=1)
     events = await messages(db)
     assert events[-1] == {**events[-1], 'type': 'job.status', 'stage': 'cancelled', 'round': 1}
     assert not any(m['type'] == 'render.completed' for m in events)
+    # 取消的任務也讓生圖引擎收尾（ComfyUI 釋放記憶體）
+    assert image.finished == [JOB]
 
 
 async def test_reports_a_failure_and_ends_the_job(store: EventStore, db: Database) -> None:
     async def boom(run: RunContext) -> None:
         raise RuntimeError('ComfyUI 沒有回應')
 
-    await run_job(JOB, db, store, ports(FakeAgent(), FakeReviewer({}), FakeImage(boom)), speed=0)
+    image = FakeImage(boom)
+    await run_job(JOB, db, store, ports(FakeAgent(), FakeReviewer({}), image), speed=0)
+    assert image.finished == [JOB]
     events = await messages(db)
     assert events[-2:] == [
         {**events[-2], 'type': 'job.failed', 'jobId': JOB, 'reason': 'RuntimeError: ComfyUI 沒有回應'},

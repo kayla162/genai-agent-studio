@@ -154,6 +154,9 @@ class SimImageEngine:
             for v in range(variants)
         }
 
+    async def finish(self, job_id: str) -> None:
+        return None
+
 
 class SimPosters:
     """不畫審查用海報：模擬模式的事件與 mock 完全相同（review.completed 的 image 為 null）。"""

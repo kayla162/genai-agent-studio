@@ -5,14 +5,19 @@
 2. 每個模板：composer 的 /plate 畫出商品底圖與遮罩，上傳到 ComfyUI。
 3. 每個 variant 一個 prompt，依序送出（只有一張 GPU）：參數就是 PromptSpec.injection（seed 加上 variant 編號），
    送出前送一則 comfy.queued；取樣節點的進度換成 render.progress（generate）。執行錯誤時重試一次。
+生圖期間持有 heavy-memory 鎖（商品去背在鎖釋放後才開始，Plan 7 規格 §4.7）；任務結束時依
+COMFYUI_FREE_AFTER_JOB 請 ComfyUI 釋放記憶體（finish）。
+
 4. 輸出圖以 cover 方式放大（Lanczos）並置中裁切成模板尺寸，存到 data/jobs/{jobId}/bg-{模板}-r{輪}-v{variant}.png。
    商品像素不在這張圖裡：composer 與瀏覽器把原始去背圖疊在同一個位置（includesProduct: false）。
 """
 
 import asyncio
+import contextlib
 import copy
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +38,12 @@ from app.contract import (
 )
 from app.errors import AppError
 from app.files import poster_file
+from app.pipeline.memory import HeavyMemoryLock
 from app.pipeline.ports import RunContext
 from app.pipeline.review import product_image
 from app.settings import REPO_ROOT, Settings
+
+logger = logging.getLogger(__name__)
 
 WORKFLOWS_DIR = REPO_ROOT / 'comfyui' / 'workflows'
 #: 參數對照表（web/src/lib/agent/comfy.ts 匯出、與這個檔案相同）
@@ -77,11 +85,17 @@ def _fit(data: bytes, width: int, height: int) -> tuple[int, int, bytes]:
 
 class ComfyImageEngine:
     def __init__(
-        self, comfy: ComfyClient, composer: ComposerClient, settings: Settings, workflows_dir: Path = WORKFLOWS_DIR
+        self,
+        comfy: ComfyClient,
+        composer: ComposerClient,
+        settings: Settings,
+        workflows_dir: Path = WORKFLOWS_DIR,
+        lock: HeavyMemoryLock | None = None,
     ) -> None:
         self.comfy = comfy
         self.composer = composer
         self.settings = settings
+        self.lock = lock
         table = json.loads((workflows_dir / TABLE_FILE).read_text(encoding='utf-8'))
         self.workflow: dict[str, Any] = json.loads((workflows_dir / table['workflow']).read_text(encoding='utf-8'))
         self.ignore = frozenset((p['nodeId'], p['input']) for p in table['params'] if p['label'] in IMAGE_LABELS)
@@ -106,12 +120,26 @@ class ComfyImageEngine:
         images = PosterImages(
             product=await asyncio.to_thread(product_image, self.settings, product, MISSING_PRODUCT_IMAGE)
         )
+
+        async def waiting() -> None:
+            await run.log('comfy', '等待商品去背完成')
+
         out: dict[tuple[TemplateId, int], RenderBackground] = {}
-        for spec in specs:
-            plate = await self._plate(spec, product, brand, images, run)
-            for v in range(variants):
-                out[(spec.template_id, v)] = await self._variant(job_id, round, spec, v, plate, run)
+        async with self.lock.hold(waiting, run) if self.lock else contextlib.nullcontext():
+            for spec in specs:
+                plate = await self._plate(spec, product, brand, images, run)
+                for v in range(variants):
+                    out[(spec.template_id, v)] = await self._variant(job_id, round, spec, v, plate, run)
         return out
+
+    async def finish(self, job_id: str) -> None:
+        """任務結束（完成、失敗或取消）：COMFYUI_FREE_AFTER_JOB 時請 ComfyUI 釋放模型與記憶體。失敗只記錄。"""
+        if not self.settings.comfyui_free_after_job:
+            return
+        try:
+            await self.comfy.free()
+        except ComfyError:
+            logger.warning('ComfyUI 無法釋放記憶體：job_id=%s', job_id, exc_info=True)
 
     async def _plate(
         self, spec: PromptSpec, product: Product, brand: Brand, images: PosterImages, run: RunContext

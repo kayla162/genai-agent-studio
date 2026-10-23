@@ -87,6 +87,11 @@
   - 進度只回報取樣節點（`KSampler` 等）的 `generate`；手寫的 workflow 沒有放大節點（放大在 worker 以 Lanczos 進行），所以不送 `upscale`。
   - `comfy.queued` 的 `promptId` 是 `{jobId}_r{round}_{templateId}_v{variant}`（ComfyUI 的 prompt_id 要送出後才知道），`injection` 的 seed 已加上 variant。
   - 輸出圖與底圖尺寸不同時任務失敗（放大與裁切的方式會不同，商品對不上原始去背圖）。
+- **Task 9**：
+  - `HeavyMemoryLock(make_lock, enabled, ttl, poll)` 接受建立鎖的函式（`from_redis` 用 redis-py 的 `redis.lock(..., thread_local=False)`），測試以記憶體裡有到期時間的假鎖取代，不需要 Redis；`LockLike` 只描述用到的 `acquire`、`reacquire`、`release`。
+  - 鎖在 `ComfyImageEngine.render_round` 檢查完節點與模型之後取得（缺少模型時不必等去背），等待時送出 log「等待商品去背完成」。
+  - 去背在讀完照片、載入模型之前取得鎖，等待時只寫 logger（商品卡維持「去背中」）。`Services.memory` 預設為 None（不互斥），`build_services` 依 `MEMORY_LOCK` 建立。
+  - `ImageEngine.finish(job_id)` 由 `run_job` 的 `finally` 呼叫（完成、失敗、取消都會）；認領失敗（任務已不在排隊）時不呼叫。
 
 ## Global Constraints
 

@@ -211,6 +211,8 @@ async def run_job(
         await store.append(job_id, LogEvent(type='log', source='api', level='error', message=reason))
         await store.append(job_id, JobFailedEvent(type='job.failed', job_id=job_id, reason=reason))
         await store.append(job_id, JobStatusEvent(type='job.status', stage='failed', round=run.round))
+    finally:
+        await ports.image.finish(job_id)
 
 
 async def _load(db: Database, job_id: str) -> JobContext:

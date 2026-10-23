@@ -6,6 +6,7 @@ import json
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ from app.db.session import Database
 from app.errors import Unavailable
 from app.events import EventStore
 from app.pipeline.gemini import GeminiAgent, GeminiReviewer
+from app.pipeline.memory import HeavyMemoryLock
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.sim import SimPosters, SimRetriever, SimReviewer, sim_ports
 from app.queues import Queues, TaskFailed, cutout_key, ingest_channel
@@ -290,6 +292,22 @@ async def test_cutout_runs_on_its_own_queue_and_writes_a_transparent_png(service
     alpha = np.asarray(Image.open(services.settings.data_dir / cut.url.removeprefix('/files/')))[:, :, 3]
     assert (alpha[0, 0], alpha[30, 20]) == (0, 255)
     assert [w.concurrency for w in build_workers(services, queues)] == [1, 2, 1]
+
+
+async def test_cutout_waits_while_an_image_is_being_generated(services: Services) -> None:
+    """MEMORY_LOCK：生圖持有 heavy-memory 鎖時，去背在鎖釋放後才開始（16 GB 的筆電兩者同時執行會不夠）。"""
+    product = await photo_product(services, write_upload(services, 'wait.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    memory = HeavyMemoryLock.from_redis(services.redis, poll=0.02)
+    waiting = replace(services, memory=memory)
+    async with memory.hold():
+        task = asyncio.create_task(cutout(waiting, product.id, product.photo.url))
+        await asyncio.sleep(0.3)
+        assert not task.done()
+        assert (await current(services, product.id)).cutout == PENDING
+    await task
+    cut = (await current(services, product.id)).cutout
+    assert cut is not None and cut.status == 'done'
 
 
 async def test_cutout_reports_missing_and_unreadable_photos(services: Services) -> None:
