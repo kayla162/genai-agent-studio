@@ -1,0 +1,7 @@
+# Gemini 單價（美元／每百萬 tokens），依 Google AI Studio 公告；from 為生效日（台北時間）
+# cachedInput 省略時與 input 相同（保守估計）
+# 輸出 tokens 包含思考（計費方式相同）。job_usage 寫入時依當時的單價計算，之後修改不影響舊紀錄。
+# docker compose 以唯讀方式掛載到 /app/pricing.yaml；修改後重新啟動 api 與 worker。
+gemini-3.8-flash:
+  - {from: 2026-01-01, input: 0.75, output: 3.75}
+  - {from: 2027-01-01, input: 1.50, output: 7.50}

@@ -79,7 +79,11 @@ async def services(db: Database, redis: Redis, composer_url: str, tmp_path: Path
     async with db.session() as s:
         await catalog.sync_brands(s, load_brands(BRANDS_DIR)[0], NOW)
     settings = Settings(
-        _env_file=None, data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=BRANDS_DIR
+        _env_file=None,
+        agent_mode='sim',
+        data_dir=tmp_path / 'data',
+        local_photos_dir=tmp_path / 'local',
+        brands_dir=BRANDS_DIR,
     )
     cutouts = CutoutEngine('sim', tmp_path / 'models', redis)
     rag = RagEngine('sim', tmp_path / 'models', redis)
@@ -525,7 +529,9 @@ async def test_run_task_returns_unfinished_when_the_wait_runs_out(queues: Queues
 async def test_build_services_picks_the_retriever_by_rag_mode(
     mode: RagMode, retriever: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('app.worker.settings', Settings(_env_file=None, brands_dir=BRANDS_DIR, rag_mode=mode))
+    monkeypatch.setattr(
+        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, rag_mode=mode)
+    )
     built = build_services()
     try:
         assert isinstance(built.ports.retriever, retriever)
@@ -547,7 +553,9 @@ async def test_build_services_picks_the_retriever_by_rag_mode(
 async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
     mode: ReviewMode, posters: type, reviewer: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('app.worker.settings', Settings(_env_file=None, brands_dir=BRANDS_DIR, review_mode=mode))
+    monkeypatch.setattr(
+        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, review_mode=mode)
+    )
     built = build_services()
     try:
         assert isinstance(built.ports.posters, posters)

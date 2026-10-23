@@ -588,7 +588,11 @@ async def test_list_and_import_local_photos(api: LiveApi) -> None:
 
 def test_files_stay_inside_their_folders(tmp_path: Path) -> None:
     settings = Settings(
-        _env_file=None, data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=tmp_path / 'brands'
+        _env_file=None,
+        agent_mode='sim',
+        data_dir=tmp_path / 'data',
+        local_photos_dir=tmp_path / 'local',
+        brands_dir=tmp_path / 'brands',
     )
     files = ['secret.png', 'data/uploads/a.png', 'local/b.jpg', 'brands/assets/logo.svg', 'brands/selune.yaml']
     for name in files:

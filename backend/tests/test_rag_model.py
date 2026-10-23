@@ -21,7 +21,7 @@ PASSAGES = [
 ]
 COFFEE = 2
 #: 不讀 .env（測試一律如此）；模型資料夾可用環境變數 MODELS_DIR 指定
-SETTINGS = Settings(_env_file=None)
+SETTINGS = Settings(_env_file=None, agent_mode='sim')
 
 pytestmark = [
     pytest.mark.model,

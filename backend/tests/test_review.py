@@ -81,7 +81,11 @@ async def composer(composer_url: str) -> AsyncIterator[RecordingComposer]:
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        _env_file=None, data_dir=tmp_path / 'data', local_photos_dir=tmp_path / 'local', brands_dir=tmp_path / 'brands'
+        _env_file=None,
+        agent_mode='sim',
+        data_dir=tmp_path / 'data',
+        local_photos_dir=tmp_path / 'local',
+        brands_dir=tmp_path / 'brands',
     )
 
 

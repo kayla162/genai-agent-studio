@@ -17,7 +17,7 @@ from app.cutout.segmenter import OnnxSegmenter
 from app.settings import Settings
 
 #: 不讀 .env（測試一律如此）；要測另一個模型時以環境變數指定，例如 CUTOUT_MODEL=birefnet-general-lite
-SETTINGS = Settings(_env_file=None)
+SETTINGS = Settings(_env_file=None, agent_mode='sim')
 MODEL = MODELS.get(SETTINGS.cutout_model, MODELS['birefnet-general'])
 PATH = SETTINGS.models_dir / MODEL.filename
 PHOTO = os.environ.get('CUTOUT_TEST_PHOTO')
