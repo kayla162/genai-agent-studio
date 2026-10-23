@@ -8,6 +8,7 @@
     --limit N             只跑前 N 個（品牌 × 模板）組合，控制費用
     --repeat N            spec 每個組合構建幾次（預設 2）
     --offline             不呼叫 Gemini，以假的回應跑完整個流程（檢查腳本本身）
+    --budget 美元          累計費用達到這個金額時停止送出新的呼叫（預設 3；並行中的呼叫仍會完成）
     --env-file 路徑        key 不在環境變數時，只讀這個檔案的 GEMINI_API_KEY（預設 repo 根目錄的 .env）
     --composer 網址        預設 http://127.0.0.1:3900
 
@@ -52,13 +53,14 @@ from app.contract import (
     Render,
     TemplateId,
 )
+from app.errors import BudgetExceeded
 from app.pipeline.gemini import GeminiReviewer, load_prompt
 from app.pipeline.gemini_types import SpecDraft, VlmVerdict
 from app.pipeline.ports import ComposedPoster, ReviewResult, SpecRequest
 from app.pipeline.review import ComposerPosters
 from app.settings import REPO_ROOT, Settings
 from app.templates import CHANNEL_TEMPLATES, get_template
-from app.usage import MemoryLedger, Pricing, UsageScope
+from app.usage import MemoryLedger, Pricing, UsageScope, usd
 
 BRANDS = ('selune', 'misty-isle', 'my-brand-01')
 VLM_CHECKS = ('vlm_exaggeration', 'vlm_occlusion', 'vlm_quality')
@@ -86,6 +88,19 @@ class TimingClient(LlmClient):
             return await self.inner.generate(call, run)
         finally:
             self.report.timings.append({'kind': call.kind, 'seconds': round(time.monotonic() - started, 2)})
+
+
+class CappedLedger(MemoryLedger):
+    """實驗用的用量：累計費用達到 budget 時拒絕新的呼叫（0 為不設上限）。"""
+
+    def __init__(self, pricing: Pricing, budget: float) -> None:
+        super().__init__(pricing)
+        self.budget = budget
+
+    async def check(self, scope: UsageScope, model: str) -> None:
+        await super().check(scope, model)
+        if self.budget > 0 and self.total >= self.budget:
+            raise BudgetExceeded(f'實驗費用已達上限（{usd(self.budget)}，已用 {usd(self.total)}）')
 
 
 class ExperimentRun:
@@ -192,7 +207,7 @@ class Experiment:
         self.args = args
         self.settings = settings
         self.report = report
-        self.ledger = MemoryLedger(Pricing.load(REPO_ROOT / 'pricing.yaml'))
+        self.ledger = CappedLedger(Pricing.load(REPO_ROOT / 'pricing.yaml'), args.budget)
         self.offline = OfflineClient() if args.offline else None
         self.gemini = None if args.offline else GeminiClient(settings, self.ledger)
         self.client: LlmClient = TimingClient(self.offline or self.gemini, report)  # type: ignore[arg-type]
@@ -491,12 +506,22 @@ async def main(args: argparse.Namespace) -> None:
                     await experiment.vlm(repeats=3, key='stability')
                 else:
                     await getattr(experiment, step)()
-            experiment.summary()
+        except BudgetExceeded as error:
+            # 已完成的步驟照樣寫進報告
+            print(f'停止：{error.message}')
+            report.results['stopped'] = error.message
         finally:
+            experiment.summary()
             await experiment.close()
     out = REPO_ROOT / 'data' / 'experiments' / f'plan6b-{datetime.now():%Y%m%d-%H%M%S}.json'
     out.parent.mkdir(parents=True, exist_ok=True)
-    meta = {'thinking': args.thinking, 'limit': args.limit, 'repeat': args.repeat, 'offline': args.offline}
+    meta = {
+        'thinking': args.thinking,
+        'limit': args.limit,
+        'repeat': args.repeat,
+        'budget': args.budget,
+        'offline': args.offline,
+    }
     out.write_text(
         json.dumps({'meta': meta, **report.results, 'timings': report.timings}, ensure_ascii=False, indent=1),
         encoding='utf-8',
@@ -510,6 +535,7 @@ if __name__ == '__main__':
     parser.add_argument('--thinking', choices=['low', 'high'])
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--repeat', type=int, default=2)
+    parser.add_argument('--budget', type=float, default=3.0)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--env-file', type=Path, default=REPO_ROOT / '.env')
     parser.add_argument('--composer', default='http://127.0.0.1:3900')
