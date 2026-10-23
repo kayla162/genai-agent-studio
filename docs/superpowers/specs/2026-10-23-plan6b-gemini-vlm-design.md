@@ -543,7 +543,7 @@ gemini-3.8-flash:
 
 ## 12. 實驗結果
 
-**尚未執行**：實作時（2026-10-23）還沒有 API key，§2 的實驗延後到設定 `GEMINI_API_KEY` 之後（實作計畫 Task 1）。在那之前：
+**§2 的實驗尚未完成**：實作完成後（2026-10-23）才設定 key，而且是免費方案的 key，當天只做了連線確認與少量的實測（見下方「2026-10-23 的實測」）。完整的實驗需要付費方案（約 110 次呼叫，超過免費方案每天 20 次的配額）。在那之前：
 
 - 標示「實驗決定」的數值使用本規格的預設：思考程度為需求拆解 LOW、Prompt 構建 HIGH、Query Rewriting LOW、VLM LOW（`app/adapters/gemini.py` 的 `THINKING`）；VLM 送原尺寸的海報（`VLM_MAX_SIDE = None`）；`ocrDiffs` 的字級門檻 14 像素、1 處為 warn；字級護欄為標題 ≥ 短邊 4%、其他文字 ≥ 1%（徽章英文不檢查，見下方）。
 - respx 重播的回應依 Gemini REST API 的格式手寫（`backend/tests/data/gemini/`），有 key 之後以 `uv run python -m scripts.record_gemini` 錄製取代。
@@ -554,3 +554,21 @@ gemini-3.8-flash:
 - **字級護欄的門檻**：徽章英文（`badge.sub`）在預設版型的字級低於畫布短邊的 1%（例如電商主圖 14.3 px、促銷 Banner 9.7 px），所以不列入字級護欄（也低於 OCR 的 14 像素門檻，不比對）。3 個品牌 × 4 種語氣的預設文案在 5 個模板的預設版型都沒有 `layout_invalid` 與 `text_too_small`（`web/src/lib/agent/guard.test.ts`）。
 - **轉錄比對的流程**：以 `--offline`（轉錄等於 Python 依文案組出的文字）在 3 個品牌 × 5 個模板執行：正確海報 15/15 為 0 處差異；把標題換掉一個字或放入缺字的 30 張全部有差異。確認 composer 繪製的文字段落（含價格的「NT$」、原價、寬版型的按鈕、向量字標）與比對的預期文字一致。
 - **字型涵蓋表**：兩個海報字型都涵蓋的字元共 20,738 個（5,049 個區段）。例：「后」有，「这」「们」沒有。
+
+### 2026-10-23 的實測（免費方案的 key）
+
+| 項目 | 結果 |
+|---|---|
+| 連線 | `models.get` 正常：`gemini-3.8-flash` 存在，輸入上限 1,048,576、輸出上限 65,536 tokens。`response_json_schema` 的結構化輸出正常 |
+| 免費方案的配額 | 每個專案、每個模型每天 20 次 `generateContent`（`GenerateRequestsPerDayPerProjectPerModel-FreeTier`）。一般任務約 18 次呼叫（拆解 1、Prompt 構建 5、VLM 10、改寫 2），所以免費方案每天最多跑一個任務；§2 的實驗也無法在免費方案完成 |
+| 延遲 | 當天 Gemini 回報「high demand」，503 頻繁。成功的呼叫連簡單問題（輸入 14 tokens）都要 286 秒；需求拆解 125–300 秒，與 `response_json_schema` 無關（完整 schema、簡化 schema、不用 schema 分別為 300、179、178 秒）。60 秒的逾時在這種時候全部逾時；正常負載下的延遲待付費方案再量 |
+| 思考程度 | `MINIMAL` 不支援（400）。需求拆解用 LOW 時思考為 0 tokens（輸入 582–629、輸出 61–94）；不設思考程度時思考 435 tokens |
+| 錄製 | `backend/tests/data/gemini/brief-ok.json` 換成真的回應；`spec-ok.json`、`vlm-ok.json` 仍為手寫（當天的配額已用完） |
+| `pytest -m live` | 需求拆解在第一輪就遇到 503 與逾時，之後配額用完（429），沒有跑完 |
+| 費用 | 約 15 次呼叫，都在免費額度內 |
+
+依實測修改的程式：
+- 每日配額用完（或 429 建議的等待超過 60 秒）時不重試，任務失敗與需求拆解的原因為中文，例如「Gemini 免費方案今天的請求數已用完（每天 20 次），約 22 小時後恢復；或在 Google AI Studio 為這個 key 的專案啟用付費方案」。原本會以 60 秒的間隔重試 3 次。
+- 實驗腳本的各組合改為並行（同時最多 `GEMINI_CONCURRENCY` 個呼叫），並另外記錄每次呼叫的秒數。
+
+待決定：延遲很高的時段 60 秒的逾時（`GEMINI_TIMEOUT_SECONDS`）不夠；是否提高預設值，等付費方案量到正常的延遲再決定。
