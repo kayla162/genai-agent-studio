@@ -543,11 +543,25 @@ gemini-3.8-flash:
 
 ## 12. 實驗結果
 
-**§2 的實驗尚未完成**：實作完成後（2026-10-23）才設定 key，而且是免費方案的 key，當天只做了連線確認與少量的實測（見下方「2026-10-23 的實測」）。完整的實驗需要付費方案（約 110 次呼叫，超過免費方案每天 20 次的配額）。在那之前：
+### §2 的實驗（2026-10-23，付費方案，`uv run python -m scripts.gemini_experiment all`）
 
-- 標示「實驗決定」的數值使用本規格的預設：思考程度為需求拆解 LOW、Prompt 構建 HIGH、Query Rewriting LOW、VLM LOW（`app/adapters/gemini.py` 的 `THINKING`）；VLM 送原尺寸的海報（`VLM_MAX_SIDE = None`）；`ocrDiffs` 的字級門檻 14 像素、1 處為 warn；字級護欄為標題 ≥ 短邊 4%、其他文字 ≥ 1%（徽章英文不檢查，見下方）。
-- respx 重播的回應依 Gemini REST API 的格式手寫（`backend/tests/data/gemini/`），有 key 之後以 `uv run python -m scripts.record_gemini` 錄製取代。
-- 實驗腳本：`uv run python -m scripts.gemini_experiment <probe|spec|ocr|vlm|stability|all>`（`--thinking`、`--limit` 控制範圍；`--offline` 以假的回應檢查腳本本身）。
+思考程度用預設值（需求拆解 LOW、Prompt 構建 HIGH、Query Rewriting LOW、VLM LOW），VLM 送原尺寸的海報。111 個回應，US$0.88。
+
+| 項目 | 結果 | 通過標準 |
+|---|---|---|
+| 結構化輸出（3 品牌 × 5 模板 × 2 次） | 格式第一次就通過 30/30；不必重問就通過全部護欄 30/30 | ≥ 95%、≥ 70%：通過 |
+| 轉錄（15 張正確的海報） | 0 處差異 15/15 | ≥ 90%、沒有 ≥ 2 處：通過 |
+| 抓得到錯字（標題換一個字 15 張、缺字畫成方塊 15 張） | 30/30 有差異；換字的 15 張為 warn（1 處），方塊的 15 張全部 fail | 全部有差異、方塊全部不通過：通過 |
+| VLM 判讀（3 品牌 × 正確／Logo 壓標題／副標「三天見效・全台第一」） | 正確海報三項通過 3/3；遮擋 3/3 fail；誇大 3/3 fail（其中 2 張遮擋海報的畫質為 warn） | ≥ 90%、全部抓到：通過 |
+| 穩定性（9 張 × 3 次） | 三項狀態一致 9/9 | ≥ 90%：通過 |
+| Prompt 構建（HIGH） | 平均輸入 3,123、輸出 4,916（思考 4,402）tokens；平均 38.5 秒、最長 48.3 秒；每次約 US$0.021 | — |
+| VLM 審查（LOW） | 平均輸入 2,414（圖片約 1,073）、輸出 377（思考 0）tokens；平均 8.6 秒、最長 32.7 秒；每次約 US$0.0032 | — |
+
+決定：
+- 標示「實驗決定」的數值都維持預設：`THINKING`、`VLM_MAX_SIDE = None`、`OCR_MIN_PX = 14`、`OCR_WARN_MAX = 1`、`TEXT_MIN`。
+- §4.7 的估算更新：一般任務（Prompt 5、VLM 10、改寫 2、拆解 1）約 US$0.15（2027 年起約 US$0.30）；最大任務（Prompt 15、VLM 30、改寫 10）約 US$0.45（2027 年起約 US$0.90，仍低於預設的單一任務上限 US$1）。
+- 沒做：思考程度的低／高比較（現行設定已全部通過，留待需要降低成本或延遲時再做）。
+- 待決定：Prompt 構建最長 48 秒，接近 60 秒的逾時（`GEMINI_TIMEOUT_SECONDS`）；高負載時段（見下方）會全部逾時。建議下一個 session 評估把預設提高到 90–120 秒。
 
 **實作時不需要 key 就能確認的結果**：
 
