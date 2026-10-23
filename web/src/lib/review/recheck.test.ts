@@ -14,7 +14,7 @@ describe('recheckCopy', () => {
   it('passes the original copy of a clean render', () => {
     const r = renderOf();
     const checks = recheckCopy(r, SELUNE, r.spec.copy);
-    expect(checks.map((c) => c.status)).toEqual(['pass', 'pass', 'pass', 'pass', 'pass', 'pass', 'pass']);
+    expect(checks.map((c) => c.status)).toEqual(['pass', 'pass', 'pass', 'pass', 'pass', 'pass', 'pass', 'pass']);
     expect(copyBlockers(checks)).toEqual([]);
   });
 
@@ -34,5 +34,15 @@ describe('recheckCopy', () => {
   it('keeps the color result of an off-brand render', () => {
     const r = renderOf(applyFlaws(cleanSpec(), ['offPalette'], SELUNE));
     expect(recheckCopy(r, SELUNE, r.spec.copy).find((c) => c.id === 'color_delta')!.status).toBe('fail');
+  });
+
+  it('keeps the background palette result from generation, since editing the copy does not change the background', () => {
+    const bg = {
+      id: 'bg_palette', name: '背景色系', kind: 'rule', rule: '品牌色系外 ≤ 15%', value: '色系外 42%（主要為 #3FD27A）',
+      status: 'fail', target: 'canvas', ragRef: 'selune#color',
+    } as const;
+    const r = { ...renderOf(), checks: [bg] };
+    expect(recheckCopy(r, SELUNE, { ...r.spec.copy, subhead: '水潤透亮' }).find((c) => c.id === 'bg_palette')).toEqual(bg);
+    expect(recheckCopy(renderOf(), SELUNE, r.spec.copy).find((c) => c.id === 'bg_palette')!.value).toBe('（模擬）');
   });
 });

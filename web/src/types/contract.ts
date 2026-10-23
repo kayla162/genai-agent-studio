@@ -10,7 +10,7 @@ export const LAYOUT_ELEMENT_IDS = ['logo', 'headline', 'subhead', 'features', 'p
 export type LayoutElementId = (typeof LAYOUT_ELEMENT_IDS)[number];
 
 export const CHECK_IDS = [
-  'banned_words', 'color_delta', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
+  'banned_words', 'color_delta', 'bg_palette', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
   'vlm_exaggeration', 'vlm_occlusion', 'vlm_quality',
 ] as const;
 export type CheckId = (typeof CHECK_IDS)[number];

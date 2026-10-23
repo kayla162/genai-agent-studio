@@ -53,6 +53,12 @@
 
 （實作時與本計畫原文不同的地方記錄在這裡，程式碼以 commit 為準。）
 
+- **Task 2**：
+  - `bgPaletteCheck` 的完整判定（通過、警告、不通過與說明文字）在 Task 2 就實作，Task 3 只加上量測；色塊用的 `measuredBackgroundOf` 也放在 `background.ts`，由 `rules.ts` 轉出。
+  - `recheckCopy`（文字編輯器改文案後的重新審查）沿用生成時的 `bg_palette`：背景與文案無關，否則會變回「（模擬）」。
+  - 畫面與註解的「規則 7 項」改為 8 項（節點圖、合規報告、結果牆、composer 與 Python 的 docstring）；README 留到 Task 12。
+  - 多一項檢查使審查階段內 `review.check` 的時間間隔變短（總長不變），sample snapshot 的 `seq` 也隨之後移；以 JSON 比對確認除此之外 fixtures 沒有改變，並以暫存腳本在記憶體中執行模擬模式的 `_pipeline`，三條 timelines 的事件完全相同（`test_parity` 需要資料庫，未在本機執行）。
+
 ## Global Constraints
 
 - **指令位置**：前端在 `web/`，後端在 `backend/`，`docker compose` 在 repo 根目錄；ComfyUI 相關檔案在 `comfyui/`。

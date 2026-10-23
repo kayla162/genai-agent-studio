@@ -47,7 +47,7 @@ describe('composer server', () => {
     const res = await post(base, '/review', JSON.stringify({ spec: cleanSpec(), brand: SELUNE, measuredPrimary: '#b76e79' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { checks: ReviewCheck[]; score: number; passed: boolean };
-    expect(body.checks).toHaveLength(10);
+    expect(body.checks).toHaveLength(11);
     expect(body).toMatchObject({ score: 100, passed: true });
   });
 

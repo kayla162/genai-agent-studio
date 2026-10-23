@@ -113,9 +113,10 @@ describe('composer handlers', () => {
     const review = handle('/review', { spec, brand: SELUNE, measuredPrimary: '#b76e79', vlm: verdict, vlmScale: 1 }) as {
       checks: ReviewCheck[]; score: number; passed: boolean;
     };
-    expect(review.checks.slice(7)).toEqual(geminiVlmChecks(verdict, spec, SELUNE));
+    expect(review.checks.slice(8)).toEqual(geminiVlmChecks(verdict, spec, SELUNE));
     expect(review.checks.find((c) => c.id === 'ocr_typo')).toMatchObject({ value: '0 處差異', status: 'pass' });
-    expect(review.checks.some((c) => c.value.includes('模擬'))).toBe(false);
+    // 沒有傳入背景量測時，只有背景色系是模擬
+    expect(review.checks.filter((c) => c.value.includes('模擬')).map((c) => c.id)).toEqual(['bg_palette']);
     expect(review).toMatchObject({ score: 100, passed: true });
 
     const boxed = handle('/review', {

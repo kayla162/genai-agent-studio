@@ -111,7 +111,7 @@ export function ResultWall({ brand, product }: { brand: Brand; product: Product 
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <ScoreBadge render={open} />
-                  <span className="text-sm text-muted-foreground">規則 7 項 + VLM 3 項</span>
+                  <span className="text-sm text-muted-foreground">規則 8 項 + VLM 3 項</span>
                 </div>
                 <CheckList checks={open.checks} />
               </div>

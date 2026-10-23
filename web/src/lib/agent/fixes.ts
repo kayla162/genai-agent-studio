@@ -1,5 +1,5 @@
 import type { Brand, CheckId, Fix, PromptSpec, ReviewCheck } from '@/types/contract';
-import { copyTexts, findBannedWords } from '@/lib/review/rules';
+import { copyTexts, findBannedWords, measuredBackgroundOf } from '@/lib/review/rules';
 
 /** 審查未通過 → Query Rewriting 要採取的修正策略（同標題只保留第一筆） */
 export function planFixes(checks: ReviewCheck[], brand: Brand, spec: PromptSpec): Fix[] {
@@ -20,6 +20,13 @@ export function planFixes(checks: ReviewCheck[], brand: Brand, spec: PromptSpec)
       case 'color_delta':
         add(c.id, '色彩修正', `鎖定品牌 CI 色票（primary ${brand.palette.primary}），negative_prompt 加入 oversaturated / neon / off-brand colors`);
         break;
+      case 'bg_palette': {
+        const p = brand.palette;
+        const stray = measuredBackgroundOf(c);
+        add(c.id, '背景色系修正', `背景改用品牌色系（primary ${p.primary}、secondary ${p.secondary}、accent ${p.accent}）`
+          + `${stray ? `，避開 ${stray}` : ''}，negative_prompt 加入 neon / fluorescent colors / off-brand color cast`);
+        break;
+      }
       case 'logo_clearance':
         add(c.id, '版面修正', 'Logo 回到網格起點，與標題保留 ≥ 0.5 × Logo 高的淨空區');
         break;

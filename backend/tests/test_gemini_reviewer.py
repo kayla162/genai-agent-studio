@@ -1,4 +1,4 @@
-"""GeminiReviewer：讀審查用海報、呼叫 VLM（FakeGemini）、以 composer 的 /review 比對轉錄並產生 10 項檢查。
+"""GeminiReviewer：讀審查用海報、呼叫 VLM（FakeGemini）、以 composer 的 /review 比對轉錄並產生 11 項檢查。
 
 使用測試啟動的 composer（需要字型）繪製審查用海報；不需要資料庫。
 """
@@ -120,7 +120,7 @@ async def test_a_correct_transcription_passes_with_gemini_wording(
 ) -> None:
     fake = FakeGemini(vlm=[verdict(drawn_text(CLEAN.spec))])
     result = await review(composer, settings, poster, fake)
-    assert len(result.checks) == 10
+    assert len(result.checks) == 11
     assert by_id(result.checks, 'ocr_typo').value == '0 處差異'
     vlm = [c for c in result.checks if c.kind == 'vlm']
     assert [c.value for c in vlm] == ['未發現誇大用語', '無重疊遮擋', '構圖與畫質良好']

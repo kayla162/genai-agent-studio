@@ -131,7 +131,7 @@ async def test_a_clean_spec_measures_the_brand_primary_and_passes_color_delta(
     clean = await posters.compose(JOB_ID, CLEAN, SERUM, SELUNE)
     assert clean.measured_primary == SELUNE.palette.primary.lower()
     result = await reviewer.review(SELUNE, CLEAN, 1, clean, FakeRun())
-    assert len(result.checks) == 10
+    assert len(result.checks) == 11
     assert next(c for c in result.checks if c.id == 'color_delta').status == 'pass'
     assert result.passed
     # 分數不加隨機抖動：seed 不同，結果相同

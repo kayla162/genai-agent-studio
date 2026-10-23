@@ -15,6 +15,7 @@ const OFFER_SUB: [RegExp, string][] = [
 /** 上一輪未通過的檢查 → 這一輪 negative prompt 要加強的詞 */
 export const NEGATIVE_BY_FIX: Partial<Record<CheckId, string>> = {
   color_delta: 'oversaturated, neon, off-brand colors',
+  bg_palette: 'neon colors, fluorescent colors, off-brand color cast',
   vlm_occlusion: 'cluttered composition, overlapping elements',
   vlm_quality: 'overexposed highlights',
 };

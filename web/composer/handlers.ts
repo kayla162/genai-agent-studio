@@ -84,7 +84,7 @@ function checkVerdict(vlm: unknown): asserts vlm is VlmVerdict {
 }
 
 /**
- * live 模式的審查：7 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
+ * live 模式的審查：8 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
  * vlm 有值（AGENT_MODE=gemini）時 VLM 三項用 Gemini 的判讀，並以轉錄比對海報上的文字（ocrDiffs）；
  * vlmScale 為送出給 VLM 的圖片與畫布的比例。vlm 為 null 或省略時與 6A 相同（依內容判斷）。
  */

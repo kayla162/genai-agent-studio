@@ -202,7 +202,7 @@ class ComposerClient:
         vlm: VlmVerdict | None = None,
         vlm_scale: float = 1.0,
     ) -> ReviewResult:
-        """live 模式的審查（/review）：7 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
+        """live 模式的審查（/review）：8 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
         vlm 有值（AGENT_MODE=gemini）時 VLM 三項用 Gemini 的判讀並比對轉錄（vlm_scale 為送出圖片與畫布的比例）；
         None 時 VLM 三項依內容判斷。"""
         body: dict[str, Any] = {'spec': spec.to_json(), 'brand': brand_json(brand), 'measuredPrimary': measured_primary}

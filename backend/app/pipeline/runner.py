@@ -332,7 +332,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
 
         # 6. 合規審查（規則 + VLM）：同一輪的候選並行，事件依候選順序送出
         await run.status('reviewing', round)
-        await run.log('vlm', f'{inp.vlm}：審查 {len(renders)} 張 × 10 項')
+        await run.log('vlm', f'{inp.vlm}：審查 {len(renders)} 張 × 11 項')
         dt = PHASE_MS['review'] / max(1, len(renders) * len(CHECK_IDS))
         reviewed: list[Reviewed] = []
         reviews = (

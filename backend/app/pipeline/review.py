@@ -2,7 +2,7 @@
 
 - ComposerPosters：worker 以 resolve_file 讀商品圖與 Logo，composer 在伺服器端繪製審查用海報（與瀏覽器相同的
   scene.ts 與 paint.ts）並從像素量出品牌主色，worker 把 PNG 存到 data/jobs/{jobId}/{renderId}.png。
-- ComposerReviewer：以量到的主色呼叫 composer 的 /review（7 項規則加 3 項依內容判斷的 VLM 檢查，分數不加抖動）。
+- ComposerReviewer：以量到的主色呼叫 composer 的 /review（8 項規則加 3 項依內容判斷的 VLM 檢查，分數不加抖動）。
 
 composer 沒有回應或回傳錯誤時任務失敗，原因為中文。
 """

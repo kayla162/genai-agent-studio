@@ -117,6 +117,12 @@ describe('prompt parts shared with the Gemini guard', () => {
     expect(negativePromptOf(['vlm_quality'])).toBe(spec.negativePrompt);
   });
 
+  it('negativePromptOf keeps an off-palette background away from neon colours', () => {
+    expect(negativePromptOf(['bg_palette', 'color_delta'])).toBe(
+      `${BASE_NEGATIVE}, neon colors, fluorescent colors, off-brand color cast, oversaturated, neon, off-brand colors`,
+    );
+  });
+
   it('buildDisclaimer is the note buildCopy writes', () => {
     const brief = parseBrief('週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒', SELUNE, serum);
     const copy = buildCopy(SELUNE, serum, brief);

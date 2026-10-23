@@ -17,6 +17,7 @@ LayoutElementId = Literal['logo', 'headline', 'subhead', 'features', 'product', 
 CheckId = Literal[
     'banned_words',
     'color_delta',
+    'bg_palette',
     'logo_clearance',
     'disclaimer',
     'product_ratio',
@@ -29,6 +30,7 @@ CheckId = Literal[
 CHECK_IDS: tuple[CheckId, ...] = (
     'banned_words',
     'color_delta',
+    'bg_palette',
     'logo_clearance',
     'disclaimer',
     'product_ratio',
