@@ -561,11 +561,11 @@ gemini-3.8-flash:
 |---|---|
 | 連線 | `models.get` 正常：`gemini-3.8-flash` 存在，輸入上限 1,048,576、輸出上限 65,536 tokens。`response_json_schema` 的結構化輸出正常 |
 | 免費方案的配額 | 每個專案、每個模型每天 20 次 `generateContent`（`GenerateRequestsPerDayPerProjectPerModel-FreeTier`）。一般任務約 18 次呼叫（拆解 1、Prompt 構建 5、VLM 10、改寫 2），所以免費方案每天最多跑一個任務；§2 的實驗也無法在免費方案完成 |
-| 延遲 | 當天 Gemini 回報「high demand」，503 頻繁。成功的呼叫連簡單問題（輸入 14 tokens）都要 286 秒；需求拆解 125–300 秒，與 `response_json_schema` 無關（完整 schema、簡化 schema、不用 schema 分別為 300、179、178 秒）。60 秒的逾時在這種時候全部逾時；正常負載下的延遲待付費方案再量 |
+| 延遲 | 當天下午 Gemini 回報「high demand」，503 頻繁。成功的呼叫連簡單問題（輸入 14 tokens）都要 286 秒；需求拆解 125–300 秒，與 `response_json_schema` 無關（完整 schema、簡化 schema、不用 schema 分別為 300、179、178 秒）。60 秒的逾時在這種時候全部逾時。傍晚改用付費方案時恢復正常：三種呼叫合計 60 秒 |
 | 思考程度 | `MINIMAL` 不支援（400）。需求拆解用 LOW 時思考為 0 tokens（輸入 582–629、輸出 61–94）；不設思考程度時思考 435 tokens |
-| 錄製 | `backend/tests/data/gemini/brief-ok.json` 換成真的回應；`spec-ok.json`、`vlm-ok.json` 仍為手寫（當天的配額已用完） |
-| `pytest -m live` | 需求拆解在第一輪就遇到 503 與逾時，之後配額用完（429），沒有跑完 |
-| 費用 | 約 15 次呼叫，都在免費額度內 |
+| 錄製（付費方案） | `backend/tests/data/gemini/` 的 `brief-ok.json`、`spec-ok.json`、`vlm-ok.json` 換成真的回應。需求拆解（LOW）：輸入 629、輸出 93、思考 0 tokens。Prompt 構建（HIGH）：輸入 2,923、輸出 5,230（思考 4,657）tokens，US$0.0218，第一次就通過護欄。VLM 審查（LOW）：輸入 2,244（其中圖片 1,073）、輸出 373、思考 0 tokens，US$0.0031；轉錄含商品包裝上的字與「NT$ 1,280」這類合併的價格，三項都通過 |
+| `pytest -m live`（付費方案） | 通過：需求拆解、Prompt 構建與 VLM 審查各一次，共 60 秒、US$0.0239 |
+| 費用 | 免費方案約 15 次呼叫（免費額度內）；付費方案 7 次，約 US$0.05 |
 
 依實測修改的程式：
 - 每日配額用完（或 429 建議的等待超過 60 秒）時不重試，任務失敗與需求拆解的原因為中文，例如「Gemini 免費方案今天的請求數已用完（每天 20 次），約 22 小時後恢復；或在 Google AI Studio 為這個 key 的專案啟用付費方案」。原本會以 60 秒的間隔重試 3 次。

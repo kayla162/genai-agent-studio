@@ -6,7 +6,8 @@
         "content": {
           "parts": [
             {
-              "text": "{\"lines\": [\"SÉLUNE\", \"一夜溫柔修護\", \"醒來透□發光\", \"7天感受透亮光采・專業修護配方*\"], \"exaggeration\": {\"status\": \"pass\", \"phrases\": [], \"reason\": \"\"}, \"occlusion\": {\"status\": \"warn\", \"elements\": [\"logo\", \"headline\"], \"reason\": \"Logo 與標題太靠近\"}, \"quality\": {\"status\": \"fail\", \"issues\": [\"商品邊緣模糊\"], \"reason\": \"商品主體失焦\"}}"
+              "text": "{\n  \"lines\": [\n    \"SÉLUNE\",\n    \"溫柔深層修護\",\n    \"肌膚透亮發光\",\n    \"5重玻尿酸深層注水，感受柔嫩修護力*\",\n    \"5重玻尿酸\",\n    \"神經醯胺修護\",\n    \"純淨無香精\",\n    \"週年慶限定\",\n    \"買一送一\",\n    \"SPECIAL OFFER\",\n    \"極光玻尿酸修護精華 30ml｜週年慶活動價\",\n    \"SÉLUNE\",\n    \"NT$ 1,280\",\n    \"極光玻尿酸\",\n    \"修護精華\",\n    \"原價 NT$1,680\",\n    \"30 ml\",\n    \"*使用者感受，效果因個人膚況而異｜活動期間 10/15-11/15｜數量有限，售完為止\"\n  ],\n  \"exaggeration\": {\n    \"status\": \"pass\",\n    \"phrases\": [],\n    \"reason\": \"文案宣稱符合規範，並標註星號及完整免責說明。\"\n  },\n  \"occlusion\": {\n    \"status\": \"pass\",\n    \"elements\": [],\n    \"reason\": \"各版面元素排版清晰整齊，無遮擋或重疊情形。\"\n  },\n  \"quality\": {\n    \"status\": \"pass\",\n    \"issues\": [],\n    \"reason\": \"構圖完整、光影柔和，文字辨識度佳，畫質良好。\"\n  }\n}",
+              "thoughtSignature": "EmkKZwFpFH0T57pH0sAZfOA+WKL62C+B1xkCum4h5z5svbno7TcJ7SeJBHsb3NjEN6AtnTvWPLXRJpMgDYBuKVFCWiG4FrUjcNsYQZ9BRWWrPI6C8BHjzSEV/ldsdhKS1YhMAkPsiY+QULg="
             }
           ],
           "role": "model"
@@ -16,22 +17,22 @@
       }
     ],
     "usageMetadata": {
-      "promptTokenCount": 3010,
-      "candidatesTokenCount": 602,
-      "totalTokenCount": 4560,
-      "thoughtsTokenCount": 948,
+      "promptTokenCount": 2244,
+      "candidatesTokenCount": 373,
+      "totalTokenCount": 2617,
       "promptTokensDetails": [
         {
           "modality": "TEXT",
-          "tokenCount": 430
+          "tokenCount": 1171
         },
         {
           "modality": "IMAGE",
-          "tokenCount": 2580
+          "tokenCount": 1073
         }
-      ]
+      ],
+      "serviceTier": "standard"
     },
     "modelVersion": "gemini-3.8-flash",
-    "responseId": "handwritten-vlm"
+    "responseId": "AGbbaoXPCMaZ0-kPx4Sj4A0"
   }
 }

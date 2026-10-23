@@ -6,8 +6,8 @@
         "content": {
           "parts": [
             {
-              "text": "{\"sellingPoints\":[],\"audience\":\"重視日常保養的敏弱肌客群\",\"tone\":\"gentle\",\"campaign\":\"週年慶\",\"offer\":\"買一送一\",\"period\":\"10/15–11/15\",\"style\":[\"soft\",\"gentle\",\"healing\",\"minimal\"]}",
-              "thoughtSignature": "EmkKZwFpFH0TtId/5EikEuLIZFFQK0HGveIpkn0YxnJtzt4WM3ZVnkDXDZy81S5MJTZJm/23zspYdT7au4P5G6M8BF6NtE8WXZTM69JXO8xto4gapMNRD793khtNYdnFO5lFDUw0LvefIJc="
+              "text": "{\n  \"sellingPoints\": [],\n  \"audience\": \"重視肌膚修護的保養族群\",\n  \"tone\": \"gentle\",\n  \"campaign\": \"週年慶\",\n  \"offer\": \"買一送一\",\n  \"period\": \"10/15–11/15\",\n  \"style\": [\"gentle\", \"soft\", \"healing\", \"minimal\"]\n}",
+              "thoughtSignature": "EmkKZwFpFH0TNLbWdYTLo7YQAwo2bqjooYxl9B23M4SzYeAknCqCnB1x+50TtdOPTlr2+D0hjtRipV2jNb8KPgppyINpndjEYeAVmzg0apKHLUsh8DjxzyvIF+ZQ9xUoE5X1OTF/ClNfdGs="
             }
           ],
           "role": "model"
@@ -18,8 +18,8 @@
     ],
     "usageMetadata": {
       "promptTokenCount": 629,
-      "candidatesTokenCount": 61,
-      "totalTokenCount": 690,
+      "candidatesTokenCount": 93,
+      "totalTokenCount": 722,
       "promptTokensDetails": [
         {
           "modality": "TEXT",
@@ -29,6 +29,6 @@
       "serviceTier": "standard"
     },
     "modelVersion": "gemini-3.8-flash",
-    "responseId": "5STbau-RF57mrfcPh9XriAE"
+    "responseId": "02XbaojgB7in2roPxdKkUQ"
   }
 }
