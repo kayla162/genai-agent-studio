@@ -3,7 +3,8 @@ import type { ReviewCheck } from '@/types/contract';
 import { SELUNE, MISTY_ISLE } from '@/lib/api/mock/data';
 import { makeSpec } from '@/test/fixtures';
 import {
-  bannedWordHits, findBannedWords, hasClaim, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks, scoreChecks,
+  bannedWordHits, findBannedWords, hasClaim, layoutRuleChecks, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks,
+  scoreChecks,
 } from './rules';
 
 const byId = (checks: ReviewCheck[], id: ReviewCheck['id']) => checks.find((c) => c.id === id)!;
@@ -39,6 +40,16 @@ describe('runRuleChecks', () => {
       'banned_words', 'color_delta', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
     ]);
     expect(checks.every((c) => c.status === 'pass' && c.kind === 'rule')).toBe(true);
+  });
+
+  it('shares the layout rules with layoutRuleChecks', () => {
+    const spec = makeSpec();
+    spec.layout = spec.layout.map((b) => (b.id === 'product' ? { ...b, bbox: [600, 700, 200, 200] } : b));
+    const checks = runRuleChecks({ brand: SELUNE, spec, measuredPrimary: '#B76E79' });
+    const layout = layoutRuleChecks(spec, SELUNE);
+    expect(layout.map((c) => c.id)).toEqual(['logo_clearance', 'product_ratio', 'whitespace']);
+    expect(layout).toEqual(checks.filter((c) => layout.some((l) => l.id === c.id)));
+    expect(byId(layout, 'product_ratio').status).toBe('fail');
   });
 
   it('fails banned words and points at the subhead', () => {
