@@ -5,6 +5,7 @@ import { computeLayout } from '@/lib/compose/layout';
 import { claimTexts, hasClaim } from '@/lib/review/rules';
 import { paletteWords } from './color-words';
 import { maskImageName, PRODUCT_SCENE, plateImageName } from './comfy';
+import { styleById } from './style';
 
 /** 固定的負面提示詞。ComfyUI 只重繪商品以外的背景，所以排除其他商品、包裝與文字（Plan 7 規格 §12：沒有這些詞時常生成第二個瓶罐與亂碼標籤） */
 export const BASE_NEGATIVE =
@@ -78,14 +79,16 @@ export function buildDisclaimer(
  * 正向提示詞：程式固定的開頭（比例、商品攝影、提供的商品照）＋ 場景 ＋ 品牌視覺風格 ＋ 色票 ＋ 需求的風格 ＋ 固定的結尾。
  * scene 為 null 時就是模擬版的提示詞句型（Gemini 的場景描述不合法時也用它）。
  */
-export function positivePromptOf(template: ChannelTemplate, brand: Brand, brief: ParsedBrief, scene: string | null): string {
+export function positivePromptOf(
+  template: ChannelTemplate, brand: Brand, brief: ParsedBrief, scene: string | null, visualStyleId: string,
+): string {
   const palette = brand.palette;
   return [
     // ComfyUI 只重繪商品以外的區域：描述場景與檯面，不要求「商品攝影」（否則會多畫出其他商品）
     `${template.ratio} commercial photography backdrop`,
     'empty styled set with a single display surface',
     ...(scene ? [scene] : []),
-    brand.visualStyle,
+    styleById(brand, visualStyleId).prompt,
     paletteWords(palette),
     ...brief.style,
     'clean negative space for typography',
@@ -114,6 +117,8 @@ export interface PromptBuildInput {
   ragRefs: string[];
   /** 上一輪未通過的檢查 id，用來加強 negative prompt */
   fixes: CheckId[];
+  /** 這個任務使用的背景風格（brand.visualStyles 其中一組的 id） */
+  visualStyleId: string;
 }
 
 /**
@@ -174,7 +179,7 @@ export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
   const { brand, product, brief, template } = input;
   const palette = { ...brand.palette };
   const layout = computeLayout(template);
-  const positivePrompt = positivePromptOf(template, brand, brief, null);
+  const positivePrompt = positivePromptOf(template, brand, brief, null, input.visualStyleId);
   const negativePrompt = negativePromptOf(input.fixes);
   const rewrite = input.fixes.some((id) => id === 'banned_words' || id === 'vlm_exaggeration');
   const canvas = { width: template.width, height: template.height, ratio: template.ratio };

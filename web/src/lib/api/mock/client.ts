@@ -311,6 +311,9 @@ export class MockApiClient implements ApiClient {
     }
     if (!Number.isInteger(input.maxRetries) || input.maxRetries < 0) throw new Error('最大重試次數需為 0 以上的整數');
     if (product.brandId !== brand.id) throw new Error('商品不屬於所選品牌');
+    if (input.visualStyleId !== null && !brand.visualStyles.some((s) => s.id === input.visualStyleId)) {
+      throw new Error(`品牌沒有這個背景風格：${input.visualStyleId}`);
+    }
     const templates = input.templateIds.map((id) => getTemplate(id));
 
     const now = this.now();

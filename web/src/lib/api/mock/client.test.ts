@@ -21,7 +21,7 @@ async function startJob(api: MockApiClient, over: Partial<JobInput> = {}) {
   const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
   const { jobId } = await api.createJob({
     brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
-    variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
+    variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2, visualStyleId: null,
     ...over,
   });
   const events: JobEvent[] = [];
@@ -306,7 +306,7 @@ describe('jobs', () => {
       const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
       const { jobId } = await api.createJob({
         brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
-        variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
+        variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2, visualStyleId: null,
       });
       api.subscribe(jobId, () => { throw new Error('boom'); });
       const events: JobEvent[] = [];
@@ -352,6 +352,7 @@ describe('jobs', () => {
     await expect(startJob(api, { variantsPerTemplate: 0 })).rejects.toThrow('每個模板的候選張數需為 1–8');
     await expect(startJob(api, { maxRetries: -1 })).rejects.toThrow('最大重試次數需為 0 以上的整數');
     await expect(startJob(api, { brandId: 'misty-isle' })).rejects.toThrow('商品不屬於所選品牌');
+    await expect(startJob(api, { visualStyleId: 'nope' })).rejects.toThrow('品牌沒有這個背景風格：nope');
   });
 });
 
@@ -385,7 +386,7 @@ describe('job queries, connection and favorites', () => {
     const parsedBrief = await api.parseBrief('selune', BRIEF, 'prod_selune_serum');
     const input: JobInput = {
       brandId: 'selune', productId: 'prod_selune_serum', brief: BRIEF, parsedBrief, templateIds: ['ig-post'],
-      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2,
+      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2, visualStyleId: null,
     };
     const { jobId } = await api.createJob(input);
     input.templateIds.push('story');

@@ -31,6 +31,8 @@ export interface LayoutBox { id: LayoutElementId; bbox: BBox; z: number }
 export type RagTag = 'color' | 'logo' | 'law' | 'layout' | 'font' | 'history' | 'general';
 export interface RagChunk { id: string; source: string; section: string; tag: RagTag; text: string }
 export interface CaseStudy { id: string; title: string; channel: string; ctr: number; notes: string }
+/** 背景風格：prompt 為英文，直接進 positive prompt；tones 為自動選擇時對應的語氣 */
+export interface VisualStyle { id: string; label: string; prompt: string; tones: Tone[] }
 export interface BrandRules { maxDeltaE: number; minWhitespace: number; productRatio: [min: number, max: number] }
 
 export interface Brand {
@@ -40,8 +42,8 @@ export interface Brand {
   ciVersion: string;
   palette: Palette;
   fonts: { headline: string; body: string };
-  /** 生圖時的品牌視覺風格描述（英文，直接進 positive prompt） */
-  visualStyle: string;
+  /** 背景風格（1–6 組）；任務選一組放進 positive prompt */
+  visualStyles: VisualStyle[];
   defaultTone: Tone;
   rules: BrandRules;
   /** 禁用詞（法規與品牌規範） */
@@ -108,6 +110,8 @@ export interface JobInput {
   engine: Engine;
   vlm: string;
   maxRetries: number;
+  /** 背景風格的 id；null 為依需求語氣自動選擇 */
+  visualStyleId: string | null;
 }
 
 /* ---------- Agent 輸出 ---------- */

@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { MOCK_OPTIONS } from '@/lib/api/mock/options';
+import { chooseVisualStyle } from '@/lib/agent/style';
 import { CHANNEL_TEMPLATES } from '@/lib/compose/templates';
 import { useAppStore } from '@/lib/store/app';
 import { useProductsStore } from '@/lib/store/products';
@@ -80,17 +81,22 @@ function ParsedFields({ parsed, disabled }: { parsed: ParsedBrief; disabled: boo
   );
 }
 
+/** 背景風格選單「自動」的值（風格 id 只用小寫英文、數字與連字號，不會與它相同） */
+const AUTO_STYLE = '__auto__';
+
 export function BriefPanel({ brand }: { brand: Brand }) {
   // 只訂閱表單需要的欄位；生成中的事件（view）不會讓表單重繪
   const s = useStudioStore(useShallow((st) => ({
     brief: st.brief, productId: st.productId, parsed: st.parsed, templateIds: st.templateIds, variants: st.variants,
-    llm: st.llm, engine: st.engine, vlm: st.vlm, maxRetries: st.maxRetries, parsing: st.parsing, starting: st.starting,
+    llm: st.llm, engine: st.engine, vlm: st.vlm, maxRetries: st.maxRetries, visualStyleId: st.visualStyleId, parsing: st.parsing, starting: st.starting,
     error: st.error, jobRunning: st.view?.outcome === 'running',
     setForm: st.setForm, toggleTemplate: st.toggleTemplate, parse: st.parse, start: st.start, cancel: st.cancel,
   })));
   const products = useProductsStore((p) => p.products);
   const options = useAppStore((a) => a.options) ?? MOCK_OPTIONS;
   const running = s.jobRunning || s.starting;
+  // 自動時實際會用的風格：已拆解需求時依需求的語氣，否則依品牌預設語氣
+  const autoStyle = chooseVisualStyle(brand, s.parsed?.tone ?? brand.defaultTone, null).style;
 
   const chooseProduct = (id: string) => {
     s.setForm({ productId: id });
@@ -149,6 +155,20 @@ export function BriefPanel({ brand }: { brand: Brand }) {
         </Step>
 
         <Step n={3} title="生成設定">
+          <div className="space-y-1.5">
+            <Label>背景風格</Label>
+            <Select
+              disabled={running}
+              value={s.visualStyleId ?? AUTO_STYLE}
+              onValueChange={(v) => s.setForm({ visualStyleId: v === AUTO_STYLE ? null : v })}
+            >
+              <SelectTrigger className="w-full" aria-label="背景風格"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={AUTO_STYLE}>自動（依語氣：{autoStyle.label}）</SelectItem>
+                {brand.visualStyles.map((v) => <SelectItem key={v.id} value={v.id}>{v.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>每個模板候選張數</Label>

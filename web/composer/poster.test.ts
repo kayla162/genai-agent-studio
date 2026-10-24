@@ -30,7 +30,7 @@ const KAYLA: Brand = {
   ciVersion: 'v1.0',
   palette: { primary: '#B8A5D6', secondary: '#F9F4E8', accent: '#C9A96E', ink: '#3A3335' },
   fonts: { headline: 'Noto Serif TC', body: 'Noto Sans TC' },
-  visualStyle: 'warm minimal product photography, natural linen texture, soft morning light',
+  visualStyles: [{ id: 'daily', label: '日常', prompt: 'soft lavender gradient, satin fabric, glossy acrylic podium', tones: ['gentle'] }],
   defaultTone: 'science',
   rules: { maxDeltaE: 5, minWhitespace: 0.3, productRatio: [0.3, 0.5] },
   bannedWords: ['根治', '治療', '保證有效'],

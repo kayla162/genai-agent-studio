@@ -119,6 +119,13 @@ class BrandLogo(Model):
     url: str
 
 
+class VisualStyle(Model):
+    id: str
+    label: str
+    prompt: str
+    tones: list[Tone] = []
+
+
 class Brand(Model):
     id: str
     name: str
@@ -126,7 +133,7 @@ class Brand(Model):
     ci_version: str
     palette: Palette
     fonts: Fonts
-    visual_style: str
+    visual_styles: list[VisualStyle]
     default_tone: Tone
     rules: BrandRules
     banned_words: list[str]
@@ -224,6 +231,8 @@ class JobInput(Model):
     engine: Engine
     vlm: str
     max_retries: int
+    #: 背景風格的 id；None 為依需求語氣自動選擇（舊任務沒有這個欄位）
+    visual_style_id: str | None = None
 
 
 class DemoOptions(Model):

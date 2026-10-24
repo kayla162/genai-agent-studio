@@ -86,7 +86,7 @@ async def test_live_brief_spec_and_review(
     ]
     request = SpecRequest(
         'job_live', 1, brand, product, brief, get_template('ig-post'), 'comfyui', 123456789,
-        [h.chunk_id for h in hits], [], text=TEXT, hits=hits,
+        [h.chunk_id for h in hits], [], brand.visual_styles[0], text=TEXT, hits=hits,
     )  # fmt: skip
     spec = await agent.build_spec(request, run)
     assert len(spec.layout) == 8

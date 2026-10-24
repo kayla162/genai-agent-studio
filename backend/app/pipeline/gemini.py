@@ -286,7 +286,7 @@ class GeminiAgent(Agent):
                 'category': brand.category,
                 'palette': brand.palette.to_json(),
                 'fonts': brand.fonts.to_json(),
-                'visualStyle': brand.visual_style,
+                'visualStyle': request.visual_style.prompt,
                 'tone': tone,
                 'toneExample': brand.copy_presets[tone].to_json(),
                 'bannedWords': brand.banned_words,

@@ -36,6 +36,8 @@ export interface GuardRequest {
   ragRefs: string[];
   /** 之前各輪未通過的檢查（加強負向提示詞） */
   fixes: CheckId[];
+  /** 這個任務使用的背景風格（brand.visualStyles 其中一組的 id） */
+  visualStyleId: string;
 }
 
 /** 文案中的價格或優惠：折扣、買幾送幾、金額、百分比 */
@@ -278,7 +280,7 @@ export function finalizeSpec(draft: SpecDraft, req: GuardRequest): { spec: Promp
   const scene = englishOrNull(draft.scene, 'scene', '生圖場景（scene）', issues);
   const extra = englishOrNull(draft.negativeExtra, 'negativeExtra', '負向提示詞（negativeExtra）', issues) ?? '';
 
-  const positivePrompt = positivePromptOf(template, req.brand, req.brief, scene);
+  const positivePrompt = positivePromptOf(template, req.brand, req.brief, scene, req.visualStyleId);
   const negativePrompt = negativePromptOf(req.fixes, extra);
   const spec: PromptSpec = {
     jobId: req.jobId,

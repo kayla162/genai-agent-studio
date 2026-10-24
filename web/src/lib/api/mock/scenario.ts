@@ -4,6 +4,7 @@ import type {
 } from '@/types/contract';
 import { buildPromptSpec, seedOf } from '@/lib/agent/prompt';
 import { planFixes } from '@/lib/agent/fixes';
+import { chooseVisualStyle } from '@/lib/agent/style';
 import { deepFreeze } from '@/lib/core/freeze';
 import { hashString, mulberry32 } from '@/lib/core/num';
 import { truncate } from '@/lib/core/text';
@@ -85,6 +86,8 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
   emit(PHASE_MS.parse, { type: 'brief.parsed', parsedBrief: structuredClone(input.parsedBrief) });
   const pb = input.parsedBrief;
   log(PHASE_MS.parse, 'agent', `✓ 語氣=${pb.tone}・檔期=${pb.campaign ?? '無'}・優惠=${pb.offer ?? '無'}`, 'ok');
+  const chosen = chooseVisualStyle(brand, pb.tone, input.visualStyleId);
+  log(PHASE_MS.parse, 'agent', chosen.note);
 
   // 2. RAG：Chroma 召回 → BGE Rerank
   emit(PHASE_MS.retrieveStart, { type: 'job.status', stage: 'retrieving', round: 0 });
@@ -112,7 +115,7 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
     const specs = pending.map((template) => {
       const spec = buildPromptSpec({
         jobId, round, brand, product, brief: input.parsedBrief, template, engine: input.engine,
-        seed: 100_000_000 + Math.floor(rng() * 900_000_000), ragRefs, fixes: fixesForNext,
+        seed: 100_000_000 + Math.floor(rng() * 900_000_000), ragRefs, fixes: fixesForNext, visualStyleId: chosen.style.id,
       });
       return flawed ? applyFlaws(spec, FLAWS, brand) : spec;
     });

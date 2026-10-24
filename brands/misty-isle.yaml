@@ -5,7 +5,9 @@ category: 冷萃咖啡
 ciVersion: v1.4
 palette: {primary: '#2F4A44', secondary: '#EEF0EC', accent: '#C8A27A', ink: '#1F2624'}
 fonts: {headline: Noto Serif TC, body: Noto Sans TC}
-visualStyle: minimal Japanese cafe aesthetic, morning mist, matte ceramic surface, soft window light, clean geometric shadows
+visualStyles:
+  - {id: cafe, label: 晨霧咖啡館, prompt: 'minimal Japanese cafe aesthetic, morning mist, matte ceramic surface, soft window light, clean geometric shadows', tones: [minimal, gentle]}
+  - {id: seasonal, label: 季節限定, prompt: 'autumn maple leaves, warm wooden counter, soft afternoon sun, cozy cafe set', tones: [playful]}
 defaultTone: minimal
 rules:
   maxDeltaE: 5

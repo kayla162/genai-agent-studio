@@ -18,7 +18,7 @@ const ctx = (over: Partial<ScenarioContext> = {}, input: Partial<JobInput> = {})
   input: {
     brandId: 'selune', productId: serum.id, brief: BRIEF, parsedBrief: parseBrief(BRIEF, SELUNE, serum),
     templateIds: ['ig-post'], variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui',
-    vlm: 'Gemini 3.7 Vision', maxRetries: 2, ...input,
+    vlm: 'Gemini 3.7 Vision', maxRetries: 2, visualStyleId: null, ...input,
   },
   ...over,
 });
@@ -40,6 +40,16 @@ describe('buildTimeline (default demo)', () => {
     expect(reviews.every((e) => e.image === null)).toBe(true);
     expect(ofType(tl, 'rewrite.started')).toHaveLength(1);
     expect(ofType(tl, 'job.completed')).toHaveLength(1);
+  });
+
+  it('logs the chosen background style and uses it in every positive prompt', () => {
+    const auto = buildTimeline(ctx());
+    expect(auto.some((e) => e.event.type === 'log' && e.event.message === '背景風格：月光柔霧（自動：語氣 gentle）')).toBe(true);
+    const chosen = buildTimeline(ctx({}, { visualStyleId: 'festive' })).map((e) => e.event);
+    expect(chosen.some((e) => e.type === 'log' && e.message === '背景風格：節慶（指定）')).toBe(true);
+    const prompts = chosen.flatMap((e) => (e.type === 'prompt.generated' ? [e.spec.positivePrompt] : []));
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const p of prompts) expect(p).toContain('champagne gold ribbons, pearl confetti');
   });
 
   it('emits stages in pipeline order', () => {

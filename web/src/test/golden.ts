@@ -60,7 +60,7 @@ function scenarioInput(s: Scenario): JobInput {
   return {
     brandId: brand.id, productId: product.id, brief: s.brief, parsedBrief: parseBrief(s.brief, brand, product),
     templateIds: s.templateIds, variantsPerTemplate: s.variants, llm: 'Gemini 3.7 Flash', engine: 'comfyui',
-    vlm: 'Gemini 3.7 Vision', maxRetries: s.maxRetries,
+    vlm: 'Gemini 3.7 Vision', maxRetries: s.maxRetries, visualStyleId: null,
   };
 }
 
@@ -141,6 +141,7 @@ function agentFixtures(): {
   const request: GuardRequest = {
     jobId: 'job_agent', round: 1, brand: { ...brand, bannedWords: [...brand.bannedWords, '奇蹟'] }, product,
     brief: parseBrief(text, brand, product), text, templateId: 'ig-post', engine: 'comfyui', seed: 42, ragRefs: [], fixes: [],
+    visualStyleId: 'moonlight',
   };
   const specDraft = draftOf(spec);
   const copyFlaws: SpecDraft = {

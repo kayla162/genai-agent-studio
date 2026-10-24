@@ -12,10 +12,10 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from app.contract import (
     Brand,
@@ -32,6 +32,7 @@ from app.contract import (
     RagTag,
     SamplePhoto,
     Tone,
+    VisualStyle,
 )
 from app.core.jsnum import js_number
 
@@ -40,6 +41,15 @@ TONES: tuple[Tone, ...] = ('gentle', 'science', 'playful', 'minimal')
 LOGO_TYPES = frozenset({'.png', '.jpg', '.jpeg', '.webp', '.svg'})
 #: 自動產生的切塊 id 前綴（上傳的手冊、歷史回寫、歷史案例），guidelines 的 key 不可使用
 GENERATED_PREFIXES = ('doc-', 'hist-', 'case-')
+#: 每個品牌最多幾組背景風格
+MAX_VISUAL_STYLES = 6
+
+
+class VisualStyleConfig(Model):
+    id: str = Field(pattern=r'^[a-z0-9]+(-[a-z0-9]+)*$')
+    label: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    tones: list[Tone] = []
 
 
 class GuidelineConfig(Model):
@@ -66,7 +76,7 @@ class BrandConfig(Model):
     ci_version: str
     palette: Palette
     fonts: Fonts
-    visual_style: str
+    visual_styles: list[VisualStyleConfig] = Field(min_length=1, max_length=MAX_VISUAL_STYLES)
     default_tone: Tone
     rules: BrandRules
     banned_words: list[str]
@@ -79,6 +89,25 @@ class BrandConfig(Model):
     logo: str | None = None
     style_images: list[str] = []
     samples: list[SampleConfig] = []
+
+    @model_validator(mode='before')
+    @classmethod
+    def _no_single_style(cls, data: Any) -> Any:
+        if isinstance(data, dict) and 'visualStyle' in data:
+            raise ValueError(
+                'visualStyle 已改為 visualStyles（多組背景風格，每組有 id、label、prompt、tones），'
+                '請參考 _template.yaml'
+            )
+        return data
+
+    @field_validator('visual_styles')
+    @classmethod
+    def _unique_styles(cls, styles: list[VisualStyleConfig]) -> list[VisualStyleConfig]:
+        ids = [s.id for s in styles]
+        duplicated = sorted({i for i in ids if ids.count(i) > 1})
+        if duplicated:
+            raise ValueError(f'背景風格的 id 重複：{"、".join(duplicated)}')
+        return styles
 
     @field_validator('copy_presets')
     @classmethod
@@ -163,7 +192,7 @@ def _load_file(directory: Path, path: Path) -> LoadedBrand:
         ci_version=cfg.ci_version,
         palette=cfg.palette,
         fonts=cfg.fonts,
-        visual_style=cfg.visual_style,
+        visual_styles=[VisualStyle(id=v.id, label=v.label, prompt=v.prompt, tones=v.tones) for v in cfg.visual_styles],
         default_tone=cfg.default_tone,
         rules=cfg.rules,
         banned_words=cfg.banned_words,

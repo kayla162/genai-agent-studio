@@ -38,7 +38,18 @@ export function BrandOverview({ brand }: { brand: Brand }) {
             <dt className="text-muted-foreground">商品主體佔比</dt>
             <dd>{pct(brand.rules.productRatio[0])} – {pct(brand.rules.productRatio[1])}</dd>
           </dl>
-          <p className="rounded-lg bg-muted px-3 py-2 font-mono text-xs leading-relaxed text-muted-foreground">{brand.visualStyle}</p>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">背景風格</p>
+            {brand.visualStyles.map((v) => (
+              <div key={v.id} className="space-y-1">
+                <p className="text-sm">
+                  <span className="font-medium">{v.label}</span>
+                  {v.tones.length > 0 && <span className="ml-2 text-xs text-muted-foreground">語氣 {v.tones.join('、')}</span>}
+                </p>
+                <p className="rounded-lg bg-muted px-3 py-2 font-mono text-xs leading-relaxed text-muted-foreground">{v.prompt}</p>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
       <Card>

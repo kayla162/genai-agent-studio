@@ -50,6 +50,7 @@ export function sampleJobs(count: number, now: Date, seed = 7): SampleJob[] {
         engine: i % 5 === 4 ? 'ideogram' : 'comfyui',
         vlm: 'Gemini 3.7 Vision',
         maxRetries: 2,
+        visualStyleId: null,
       },
       demo: { speed: 1, firstRoundFail: forceAllFail || i % 3 !== 1, forceAllFail },
       createdAt: new Date(now.getTime() - (count - i) * 11 * HOUR - Math.floor(rng() * 3 * HOUR)),

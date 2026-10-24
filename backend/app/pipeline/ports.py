@@ -24,6 +24,7 @@ from app.contract import (
     RenderBackground,
     ReviewCheck,
     TemplateId,
+    VisualStyle,
 )
 
 T = TypeVar('T')
@@ -55,6 +56,8 @@ class SpecRequest:
     rag_refs: list[str]
     #: 之前各輪未通過的檢查（依出現順序，不重複）
     fixes: list[CheckId]
+    #: 這個任務使用的背景風格（brand.visual_styles 其中一組）
+    visual_style: VisualStyle
     #: 使用者的一句話需求
     text: str = ''
     #: rag_refs 對應的切塊全文（Rerank 後前 5 筆，加上重新檢索的切塊）；Gemini 的提示詞只放這些

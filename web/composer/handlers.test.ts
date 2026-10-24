@@ -19,7 +19,7 @@ const serum = SAMPLE_PRODUCTS[0] as Product;
 const brief = parseBrief('週年慶主打買一送一，溫柔療癒', SELUNE, serum);
 const promptBody = (flawed: boolean) => ({
   jobId: 'job_c', round: 1, brand: SELUNE, product: serum, brief, templateId: 'ig-post' as const, engine: 'comfyui' as const,
-  seed: 123456789, ragRefs: ['selune#color'], fixes: [], flawed,
+  seed: 123456789, ragRefs: ['selune#color'], fixes: [], visualStyleId: 'moonlight', flawed,
 });
 
 describe('composer handlers', () => {

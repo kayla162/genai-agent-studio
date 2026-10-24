@@ -72,6 +72,7 @@ async def request(composer: ComposerClient, brand: Brand = SELUNE, **overrides: 
         'seed': 42,
         'rag_refs': ['selune#color', 'selune#law'],
         'fixes': [],
+        'visual_style': brand.visual_styles[0],
         'text': TEXT,
         'hits': [hit('selune#color'), hit('selune#law')],
         'previous': None,
@@ -170,6 +171,18 @@ async def test_a_compliant_draft_is_used_as_it_is(composer: ComposerClient) -> N
     assert payload['brief'] == {'text': TEXT, 'parsed': req.brief.to_json()}
     assert guard_warnings(run) == []
     assert any(GOOD.rationale in m for m in run.messages('info'))
+
+
+async def test_the_chosen_visual_style_goes_to_gemini_and_the_positive_prompt(composer: ComposerClient) -> None:
+    festive = next(v for v in SELUNE.visual_styles if v.id == 'festive')
+    gemini = FakeGemini(spec=[GOOD])
+    spec = await GeminiAgent(gemini, composer, SETTINGS).build_spec(
+        await request(composer, visual_style=festive), FakeRun('job_agent')
+    )
+    (call,) = gemini.calls
+    assert json.loads(user_text(call))['brand']['visualStyle'] == festive.prompt
+    assert festive.prompt in spec.positive_prompt
+    assert SELUNE.visual_styles[0].prompt not in spec.positive_prompt
 
 
 async def test_asks_again_with_the_guard_issues(composer: ComposerClient) -> None:

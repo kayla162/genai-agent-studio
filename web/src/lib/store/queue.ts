@@ -103,7 +103,7 @@ export const useQueueStore = create<QueueState>()((set, get) => {
         const parsedBrief = await api.parseBrief(next.brandId, next.brief, next.productId);
         const { jobId } = await api.createJob({
           brandId: next.brandId, productId: next.productId, brief: next.brief, parsedBrief, templateIds: next.templateIds,
-          variantsPerTemplate: next.variants, llm: options.llm[0], engine: options.engines[0], vlm: options.vlm[0], maxRetries: 2,
+          variantsPerTemplate: next.variants, llm: options.llm[0], engine: options.engines[0], vlm: options.vlm[0], maxRetries: 2, visualStyleId: null,
         });
         update(next.id, { jobId, view: emptyJobView(jobId) });
         let finished = false;
