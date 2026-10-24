@@ -63,9 +63,13 @@ def to_mask(output: NDArray[np.float32], size: tuple[int, int]) -> Image.Image:
 
 
 def compose(photo: Image.Image, mask: Image.Image) -> bytes:
-    """照片的顏色加上遮罩當透明度 → PNG。"""
+    """照片的顏色加上遮罩當透明度 → PNG。裁掉商品四周完全透明的部分（排版以圖片尺寸把商品放進商品框，
+    留著照片原本的空白時商品會比框小很多）；沒有偵測到商品時保留整張。"""
     cut = photo.convert('RGBA')
     cut.putalpha(mask)
+    box = mask.getbbox()
+    if box is not None:
+        cut = cut.crop(box)
     buf = io.BytesIO()
     cut.save(buf, 'PNG')
     return buf.getvalue()
