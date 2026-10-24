@@ -34,7 +34,7 @@
    .\python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build --listen 127.0.0.1 --port 8188
    ```
 
-   6 GB VRAM 時 VRAM 模式自動為 NORMAL_VRAM，不需要 `--lowvram`。本機執行後端時以 `http://127.0.0.1:8188` 連線；Docker 內的 api 與 worker 以 `http://host.docker.internal:8188` 連線（沒有在這台實測：容器連不到時，改用 `--listen 0.0.0.0` 並以 Windows 防火牆限制來源）。
+   6 GB VRAM 時 VRAM 模式自動為 NORMAL_VRAM，不需要 `--lowvram`。本機執行後端時以 `http://127.0.0.1:8188` 連線；Docker 內的 api 與 worker 以 `http://host.docker.internal:8188` 連線（Docker Desktop 實測：`--listen 127.0.0.1` 時容器就連得到，不需要 `--listen 0.0.0.0`，ComfyUI 也不會對區網開放）。
 4. 開啟系統的連線狀態（右上角）：ComfyUI 一項顯示 GPU、VRAM 與版本時就完成了；缺少 workflow 需要的節點或模型時會列出缺少的項目。
 
 ## 記憶體（16 GB 的筆電）
