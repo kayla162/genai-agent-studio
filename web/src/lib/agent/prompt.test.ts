@@ -125,10 +125,10 @@ describe('prompt parts shared with the Gemini guard', () => {
     const i = input({ brief: parseBrief('簡約高級感的週年慶海報', SELUNE, serum) });
     const spec = buildPromptSpec(i);
     expect(positivePromptOf(i.template, SELUNE, i.brief, null, i.visualStyleId)).toBe(spec.positivePrompt);
-    const withScene = positivePromptOf(i.template, SELUNE, i.brief, 'serum bottle on a marble tray', i.visualStyleId);
+    const withScene = positivePromptOf(i.template, SELUNE, i.brief, 'pearl-white marble tray', i.visualStyleId);
     expect(withScene).toBe(spec.positivePrompt.replace(
       'empty styled set with a single display surface, ',
-      'empty styled set with a single display surface, serum bottle on a marble tray, ',
+      'empty styled set with a single display surface, pearl-white marble tray, ',
     ));
   });
 

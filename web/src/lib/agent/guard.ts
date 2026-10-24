@@ -266,6 +266,20 @@ function englishOrNull(text: string, field: string, label: string, issues: Issue
 }
 
 /**
+ * 生圖場景不可提到商品或容器：ComfyUI 只重繪商品以外的區域，場景寫了瓶子就會在背景多畫出瓶子
+ * （原始去背圖疊在上面，多出來的瓶子與假標籤留在背景，還可能擋到文字）
+ */
+const PRODUCT_WORDS = /\b(bottles?|jars?|tubes?|pumps?|droppers?|packag(?:e|es|ing)|products?|containers?|serums?|lotions?|cosmetics?|perfumes?)\b/i;
+
+function sceneOrNull(text: string, issues: Issues): string | null {
+  const scene = englishOrNull(text, 'scene', '生圖場景（scene）', issues);
+  const word = scene?.match(PRODUCT_WORDS)?.[0];
+  if (scene === null || word === undefined) return scene;
+  issues.add('prompt_invalid', 'scene', `生圖場景（scene）只描述背景、檯面、道具與光線，不要描述商品或容器（「${word}」）；真的商品照由程式疊上`, true);
+  return null;
+}
+
+/**
  * Prompt 構建的程式護欄：回傳一定可以直接使用的 PromptSpec，以及發現的問題。
  * 有 retry 問題的欄位已經改用預設值（文案用 buildCopy、版面用 computeLayout、場景用模擬版的句型）；
  * Agent 第一次遇到 retry 問題時帶著 message 重問 Gemini，第二次直接使用這裡的結果。
@@ -277,7 +291,7 @@ export function finalizeSpec(draft: SpecDraft, req: GuardRequest): { spec: Promp
 
   const copy = guardCopy(draft, req, issues);
   const layout = guardLayout(draft, req, copy, issues);
-  const scene = englishOrNull(draft.scene, 'scene', '生圖場景（scene）', issues);
+  const scene = sceneOrNull(draft.scene, issues);
   const extra = englishOrNull(draft.negativeExtra, 'negativeExtra', '負向提示詞（negativeExtra）', issues) ?? '';
 
   const positivePrompt = positivePromptOf(template, req.brand, req.brief, scene, req.visualStyleId);

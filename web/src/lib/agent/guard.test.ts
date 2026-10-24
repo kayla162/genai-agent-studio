@@ -11,7 +11,7 @@ import { buildCopy, buildInjection, buildPromptSpec, negativePromptOf, positiveP
 const SERUM = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
 const COLDBREW = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_misty_coldbrew')!;
 const TEXT = '週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒';
-const SCENE = 'serum bottle on a pearl tray with soft aurora light';
+const SCENE = 'pearl-white marble tray with soft aurora light';
 
 /** brands/my-brand-01.yaml（Kayla 精緻少女）中與護欄有關的欄位 */
 const KAYLA: Brand = {
@@ -227,6 +227,19 @@ describe('finalizeSpec: prompts', () => {
     expect(codes(issues)).toEqual(['prompt_invalid@scene', 'prompt_invalid@negativeExtra']);
     expect(spec.positivePrompt).toBe(buildPromptSpec({ ...req, template: getTemplate('ig-post') }).positivePrompt);
     expect(spec.negativePrompt).toBe(negativePromptOf([]));
+  });
+
+  it('rejects a scene that names the product or a container, so ComfyUI does not paint extra bottles', () => {
+    const req = request();
+    for (const scene of ['Skincare lotion bottle standing on a glossy acrylic podium', 'jars and tubes on a marble tray', 'product on a pedestal']) {
+      const { spec, issues } = finalizeSpec({ ...goodDraft(req), scene }, req);
+      expect(codes(issues)).toEqual(['prompt_invalid@scene']);
+      expect(issues[0].message).toContain('不要描述商品或容器');
+      expect(spec.positivePrompt).toBe(buildPromptSpec({ ...req, template: getTemplate('ig-post') }).positivePrompt);
+    }
+    // 顏色或質感用詞不算（cream silk、creamy light）
+    const { issues } = finalizeSpec({ ...goodDraft(req), scene: 'cream silk drapes, creamy morning light, acrylic podium' }, req);
+    expect(issues).toEqual([]);
   });
 
   it('adds the earlier failures and the extra negative terms once each', () => {

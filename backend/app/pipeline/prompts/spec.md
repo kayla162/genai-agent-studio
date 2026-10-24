@@ -41,7 +41,7 @@ user 訊息是一份 JSON：
 
 ## 生圖提示詞
 
-- `scene`：英文，≤ 300 字元。描述商品所在的場景、背景、道具與光線，例如 "serum bottle on a pearl-white marble tray, soft morning light, aurora ribbons"。不要描述文字、Logo 或排版；比例、商品攝影、品牌風格與色票由程式加上。
+- `scene`：英文，≤ 300 字元。只描述空著的展示檯面、背景、道具與光線，例如 "pearl-white marble tray, soft morning light, aurora ribbons"。**不要提到商品或任何容器**（bottle、jar、tube、pump、packaging、product 等）：真的商品照由程式疊在檯面上，寫了瓶子就會在背景多畫出瓶子。也不要描述文字、Logo 或排版；比例、品牌風格與色票由程式加上。
 - `negativeExtra`：英文，≤ 200 字元，想避免的元素，以逗號分隔；沒有時為空字串。
 
 ## rationale
