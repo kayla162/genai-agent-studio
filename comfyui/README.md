@@ -28,7 +28,7 @@
    | `sdxl_lightning_8step_lora.safetensors` | `models/loras/` | CreativeML Open RAIL++-M：允許商用，附使用限制 |
 
    只使用授權明確允許商用的模型與自訂節點；非商用（例如 CC BY-NC）或授權不明確的一律不用。
-3. 啟動 ComfyUI（在 portable 資料夾）：
+3. 啟動 ComfyUI：雙擊 `comfyui/start.cmd`（或在 PowerShell 執行 `.\comfyui\start.ps1`；portable 版不在 `%USERPROFILE%\ComfyUI\ComfyUI_windows_portable` 時加上 `-PortableDir <資料夾>`，GPU 記憶體不足時加上 `-LowVram`）。已經在執行時不重複啟動；關掉視窗就會停止。腳本執行的指令與手動啟動相同（在 portable 資料夾）：
 
    ```powershell
    .\python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build --listen 127.0.0.1 --port 8188
