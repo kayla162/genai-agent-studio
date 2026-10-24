@@ -309,12 +309,12 @@
   判定門檻（15%／30%）不變；程式產生的背景仍全部通過。
 - **已知限制**：Kayla 的「deep blue」那張只有球體與商品後方的圓盤是深藍，背景大部分仍是品牌的灰紫色（色系外 3%，通過）；misty-isle 的「deep blue」為警告（17%）。刻意偏色的提示詞模型不一定照做，所以 §2「刻意偏離的全部不通過」只達到 7/9，另 1 張警告。
 - **時間**：每張平均 14.3 秒、最長 14.5 秒（cfg 2）；第一張含載入模型 15–18 秒（live 測試 18.1 秒）。遠低於 60 秒。
-- **記憶體**：GPU 尖峰 5.42 GB（6 GB 沒有 OOM）；系統尖峰 13.1 GB，開始時已有 12.8 GB（瀏覽器、IDE 等），ComfyUI 本身約 6 GB。Docker 沒有在這台執行，生圖與去背同時執行的尖峰沒有量測，`MEMORY_LOCK` 維持預設開啟；`/free` 與重新載入的秒數沒有量測，`COMFYUI_FREE_AFTER_JOB` 維持 `false`。
+- **記憶體**：GPU 尖峰 5.42 GB（6 GB 沒有 OOM）；系統尖峰 13.1 GB，開始時已有 12.8 GB（瀏覽器、IDE 等），ComfyUI 本身約 6 GB。Docker 沒有在這台執行，生圖與去背同時執行的尖峰沒有量測，`MEMORY_LOCK` 維持預設開啟；`/free` 與重新載入的秒數沒有量測，`COMFYUI_FREE_AFTER_JOB` 維持 `false`。（之後的 Docker 驗收量到 worker 去背尖峰 8.9 GiB，WSL 需要 12 GB，互斥正確，見下方「§9 的驗收」）
 - **生成方式**：只做方式 A（商品周圍重繪）：通過所有標準，方式 B（ControlNet）不需要，也不必多下載模型。
-- **放大**：Lanczos（人工看不出模糊）；沒有 Gemini key，未以 VLM 的 `vlm_quality` 判讀。
+- **放大**：Lanczos（人工看不出模糊）；實驗時沒有 Gemini key，未以 VLM 的 `vlm_quality` 判讀（之後的 Docker 驗收以 Gemini 判讀，3 個品牌的任務都完成）。
 - **錄製**：`scripts/record_comfy.py` 以真的 ComfyUI 錄下 `system_stats`、`object_info`、`history`、`ws-success`（8 步的進度、`progress_state` 等訊息），取代手寫的回應；錯誤的情況（執行錯誤、OOM、只有進度、拒絕 workflow）維持手寫。
 - **`pytest -m live`**：通過（5 個模板各一張，ecom-main 18.1 秒含載入，其餘 6.4–8.9 秒，cfg 1 時）。
-- **沒做**：Docker 內以 `host.docker.internal` 連線（這台沒有 Docker）；VLM 判讀（沒有 key）。
+- **實驗時沒做、之後在「§9 的驗收」完成**：Docker 內以 `host.docker.internal` 連線（ComfyUI 以 `--listen 127.0.0.1` 即可）；VLM 判讀（Gemini）。
 
 **實作時不需要 ComfyUI 就能確認的結果**：
 
