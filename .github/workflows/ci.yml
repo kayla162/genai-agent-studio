@@ -47,10 +47,11 @@ jobs:
     name: backend（ruff、mypy、pytest）
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 與 docker-compose.yml 相同的映像檔與對外埠（測試的預設連線位址）
+    # 與 docker-compose.yml 相同版本的映像檔與對外埠（測試的預設連線位址）；
+    # 從 Docker Hub 取得：GitHub 的 runner 以匿名方式拉 public.ecr.aws 會碰到流量上限（toomanyrequests）
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:18-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: genai
           POSTGRES_PASSWORD: genai
@@ -59,7 +60,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U genai -d genai" --health-interval 3s --health-timeout 3s --health-retries 30
       redis:
-        image: public.ecr.aws/docker/library/redis:8-alpine
+        image: redis:8-alpine
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping" --health-interval 3s --health-timeout 3s --health-retries 30
