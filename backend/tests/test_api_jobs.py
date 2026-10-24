@@ -52,6 +52,7 @@ async def test_create_job_rejects_invalid_input(api: LiveApi) -> None:
         ({'variantsPerTemplate': 9}, '每個模板的候選張數需為 1–8'),
         ({'maxRetries': -1}, '最大重試次數需為 0 以上的整數'),
         ({'productId': 'prod_misty_coldbrew'}, '商品不屬於所選品牌'),
+        ({'visualStyleId': 'nope'}, '品牌沒有這個背景風格：nope'),
         ({'llm': 'GPT-9'}, '目前不支援這個 LLM：GPT-9'),
         ({'engine': 'ideogram'}, '目前不支援這個生圖引擎：ideogram'),
     ]

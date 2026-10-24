@@ -19,7 +19,7 @@ function events(demo: Partial<DemoOptions> = {}, input: Partial<JobInput> = {}):
     demo: { speed: 1, firstRoundFail: true, forceAllFail: false, ...demo },
     input: {
       brandId: 'selune', productId: serum.id, brief: BRIEF, parsedBrief: parseBrief(BRIEF, SELUNE, serum), templateIds,
-      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2, ...input,
+      variantsPerTemplate: 4, llm: 'Gemini 3.7 Flash', engine: 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: 2, visualStyleId: null, ...input,
     },
   }).map((x) => x.event);
 }

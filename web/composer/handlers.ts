@@ -68,6 +68,9 @@ function checkRequest(request: unknown): asserts request is GuardRequest {
   ensure((TEMPLATE_IDS as readonly unknown[]).includes(request.templateId), `request.templateId 不是可用的模板：${String(request.templateId)}`);
   ensure(typeof request.text === 'string', 'request.text 必須是字串');
   ensure(isStrings(request.ragRefs) && isStrings(request.fixes), 'request.ragRefs 與 request.fixes 必須是字串陣列');
+  const styles = (request.brand as { visualStyles?: { id: string }[] }).visualStyles;
+  ensure(Array.isArray(styles) && styles.some((s) => s.id === request.visualStyleId),
+    `request.visualStyleId 不是品牌的背景風格：${String(request.visualStyleId)}`);
 }
 
 function checkVerdict(vlm: unknown): asserts vlm is VlmVerdict {
@@ -166,7 +169,7 @@ const HANDLERS: Record<string, Handler> = {
 
   '/sim/prompt': (b: {
     jobId: string; round: number; brand: Brand; product: Product; brief: ParsedBrief; templateId: TemplateId;
-    engine: Engine; seed: number; ragRefs: string[]; fixes: CheckId[]; flawed: boolean;
+    engine: Engine; seed: number; ragRefs: string[]; fixes: CheckId[]; visualStyleId: string; flawed: boolean;
   }) => {
     const spec = buildPromptSpec({ ...b, template: getTemplate(b.templateId) });
     return b.flawed ? applyFlaws(spec, FLAWS, b.brand) : spec;

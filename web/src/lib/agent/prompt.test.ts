@@ -15,6 +15,7 @@ const input = (over: Partial<PromptBuildInput> = {}): PromptBuildInput => ({
   jobId: 'job_t', round: 1, brand: SELUNE, product: serum,
   brief: parseBrief('週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒', SELUNE, serum),
   template: getTemplate('ig-post'), engine: 'comfyui', seed: 123456789, ragRefs: ['selune#color'], fixes: [],
+  visualStyleId: (over.brand ?? SELUNE).visualStyles[0].id,
   ...over,
 });
 const param = (spec: ReturnType<typeof buildPromptSpec>, label: string) =>
@@ -123,8 +124,8 @@ describe('prompt parts shared with the Gemini guard', () => {
   it('positivePromptOf without a scene is the simulated positive prompt', () => {
     const i = input({ brief: parseBrief('簡約高級感的週年慶海報', SELUNE, serum) });
     const spec = buildPromptSpec(i);
-    expect(positivePromptOf(i.template, SELUNE, i.brief, null)).toBe(spec.positivePrompt);
-    const withScene = positivePromptOf(i.template, SELUNE, i.brief, 'serum bottle on a marble tray');
+    expect(positivePromptOf(i.template, SELUNE, i.brief, null, i.visualStyleId)).toBe(spec.positivePrompt);
+    const withScene = positivePromptOf(i.template, SELUNE, i.brief, 'serum bottle on a marble tray', i.visualStyleId);
     expect(withScene).toBe(spec.positivePrompt.replace(
       'empty styled set with a single display surface, ',
       'empty styled set with a single display surface, serum bottle on a marble tray, ',

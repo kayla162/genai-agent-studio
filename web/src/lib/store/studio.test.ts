@@ -129,10 +129,10 @@ describe('studio store', () => {
     const input = {
       brandId: 'selune', productId: 'prod_selune_serum', brief: '再做一次', parsedBrief: store().parsed!,
       templateIds: ['story' as const], variantsPerTemplate: 2, llm: 'Gemini 3.7 Flash', engine: 'ideogram' as const,
-      vlm: 'Gemini 3.7 Vision', maxRetries: 1,
+      vlm: 'Gemini 3.7 Vision', maxRetries: 1, visualStyleId: 'festive',
     };
     store().prefill(input);
-    expect(store()).toMatchObject({ brief: '再做一次', templateIds: ['story'], variants: 2, engine: 'ideogram', maxRetries: 1, view: null });
+    expect(store()).toMatchObject({ brief: '再做一次', templateIds: ['story'], variants: 2, engine: 'ideogram', maxRetries: 1, visualStyleId: 'festive', view: null });
   });
 });
 

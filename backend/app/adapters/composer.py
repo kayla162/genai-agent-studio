@@ -135,6 +135,7 @@ def spec_request_json(r: SpecRequest) -> dict[str, Any]:
         'seed': r.seed,
         'ragRefs': r.rag_refs,
         'fixes': r.fixes,
+        'visualStyleId': r.visual_style.id,
     }
 
 
@@ -204,6 +205,7 @@ class ComposerClient:
             'seed': r.seed,
             'ragRefs': r.rag_refs,
             'fixes': r.fixes,
+            'visualStyleId': r.visual_style.id,
             'flawed': flawed,
         }
         return PromptSpec.model_validate(await self._post('/sim/prompt', body))

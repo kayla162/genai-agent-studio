@@ -137,3 +137,53 @@ def test_the_source_hash_follows_the_converted_content(tmp_path: Path) -> None:
     assert load_brands(tmp_path)[0][0].source_hash == before
     write(tmp_path / 'my-brand.yaml', template.replace('caseStudies: []', CASES))
     assert load_brands(tmp_path)[0][0].source_hash != before
+
+
+STYLES_START = 'visualStyles:\n'
+TEMPLATE_STYLES = (
+    "  - {id: daily, label: 日常, prompt: 'natural linen texture, soft morning light, warm minimal set', "
+    'tones: [gentle, minimal]}\n'
+    "  - {id: festive, label: 節慶, prompt: 'champagne gold confetti, satin ribbons, warm bokeh, celebratory set', "
+    'tones: [playful]}\n'
+)
+
+
+def test_visual_styles_are_loaded_in_order_with_optional_tones(tmp_path: Path) -> None:
+    template = (BRANDS_DIR / '_template.yaml').read_text(encoding='utf-8')
+    assert STYLES_START + TEMPLATE_STYLES in template
+    plain = '  - {id: plain, label: 素面, prompt: plain wall}\n'
+    write(tmp_path / 'my-brand.yaml', template.replace(TEMPLATE_STYLES, TEMPLATE_STYLES + plain))
+    loaded, errors = load_brands(tmp_path)
+    assert errors == []
+    styles = loaded[0].brand.visual_styles
+    assert [(s.id, s.label, s.tones) for s in styles] == [
+        ('daily', '日常', ['gentle', 'minimal']),
+        ('festive', '節慶', ['playful']),
+        ('plain', '素面', []),
+    ]
+    assert styles[1].prompt == 'champagne gold confetti, satin ribbons, warm bokeh, celebratory set'
+
+
+def test_visual_styles_are_validated(tmp_path: Path) -> None:
+    template = (BRANDS_DIR / '_template.yaml').read_text(encoding='utf-8')
+
+    def variant(name: str, styles: str) -> None:
+        text = template.replace('id: my-brand', f'id: {name}').replace(STYLES_START + TEMPLATE_STYLES, styles)
+        write(tmp_path / f'{name}.yaml', text)
+
+    variant('old-field', 'visualStyle: warm minimal set\n')
+    variant('duplicated', STYLES_START + TEMPLATE_STYLES + '  - {id: daily, label: 再一組, prompt: soft light}\n')
+    variant('none', 'visualStyles: []\n')
+    seven = ''.join(f'  - {{id: s{i}, label: 風格{i}, prompt: soft light}}\n' for i in range(7))
+    variant('seven', STYLES_START + seven)
+    variant('bad-id', STYLES_START + '  - {id: Daily Set, label: 日常, prompt: soft light}\n')
+    variant('bad-tone', STYLES_START + '  - {id: daily, label: 日常, prompt: soft light, tones: [calm]}\n')
+    loaded, errors = load_brands(tmp_path)
+    assert loaded == []
+    messages = {e.file: e.message for e in errors}
+    assert 'visualStyle 已改為 visualStyles' in messages['old-field.yaml']
+    assert messages['duplicated.yaml'] == 'visualStyles：Value error, 背景風格的 id 重複：daily'
+    assert messages['none.yaml'].startswith('visualStyles：')
+    assert messages['seven.yaml'].startswith('visualStyles：')
+    assert messages['bad-id.yaml'].startswith('visualStyles.0.id：')
+    assert messages['bad-tone.yaml'].startswith('visualStyles.0.tones.0：')

@@ -19,7 +19,7 @@ const KAYLA: Brand = {
   id: 'my-brand-01',
   name: 'Kayla 精緻少女',
   palette: { primary: '#B8A5D6', secondary: '#F9F4E8', accent: '#C9A96E', ink: '#3A3335' },
-  visualStyle: 'warm minimal product photography, natural linen texture, soft morning light',
+  visualStyles: [{ id: 'daily', label: '日常', prompt: 'soft lavender gradient, satin fabric, glossy acrylic podium', tones: ['gentle'] }],
   defaultTone: 'science',
   claimWords: ['修護', '改善'],
   copyPresets: {
@@ -37,7 +37,7 @@ function request(over: Partial<GuardRequest> = {}): GuardRequest {
   const text = over.text ?? TEXT;
   return {
     jobId: 'job_g', round: 1, brand, product, brief: parseBrief(text, brand, product), text, templateId: 'ig-post',
-    engine: 'comfyui', seed: 42, ragRefs: ['selune#color', 'selune#law'], fixes: [], ...over,
+    engine: 'comfyui', seed: 42, ragRefs: ['selune#color', 'selune#law'], fixes: [], visualStyleId: brand.visualStyles[0].id, ...over,
   };
 }
 
@@ -69,7 +69,7 @@ describe('finalizeSpec: a compliant draft', () => {
       ['logo', 2], ['headline', 2], ['subhead', 2], ['features', 2], ['product', 1], ['badge', 3], ['price', 2], ['disclaimer', 2],
     ]);
     expect(spec.palette).toEqual(SELUNE.palette);
-    expect(spec.positivePrompt).toBe(positivePromptOf(getTemplate('ig-post'), SELUNE, req.brief, SCENE));
+    expect(spec.positivePrompt).toBe(positivePromptOf(getTemplate('ig-post'), SELUNE, req.brief, SCENE, 'moonlight'));
     expect(spec.negativePrompt).toBe(negativePromptOf([]));
     expect(spec.injection).toEqual(buildInjection(spec, 'comfyui', SERUM.id, 42));
     expect(spec.ragRefs).toEqual(['selune#color', 'selune#law']);

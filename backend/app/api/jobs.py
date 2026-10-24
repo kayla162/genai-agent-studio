@@ -103,6 +103,8 @@ async def _validate(services: ApiServices, job_input: JobInput) -> None:
         raise Invalid('最大重試次數需為 0 以上的整數')
     if product.brand_id != brand.id:
         raise Invalid('商品不屬於所選品牌')
+    if job_input.visual_style_id is not None and all(s.id != job_input.visual_style_id for s in brand.visual_styles):
+        raise Invalid(f'品牌沒有這個背景風格：{job_input.visual_style_id}')
     options = api_options(services.settings)
     if job_input.llm not in options.llm:
         raise Invalid(f'目前不支援這個 LLM：{job_input.llm}')

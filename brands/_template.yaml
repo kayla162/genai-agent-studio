@@ -15,8 +15,13 @@ palette: {primary: '#8A5A44', secondary: '#F5EFE8', accent: '#C8A27A', ink: '#2B
 # 目前只支援 Noto Serif TC 與 Noto Sans TC
 fonts: {headline: Noto Serif TC, body: Noto Sans TC}
 
-# 生圖時的品牌視覺風格（英文，直接放進 positive prompt）
-visualStyle: warm minimal product photography, natural linen texture, soft morning light
+# 背景風格（1–6 組）：建立任務時選一組，或依需求的語氣自動選（第一組 tones 含該語氣的風格，都沒有時用第一組）
+# - id：小寫英文、數字與連字號，不可重複；label：網頁上顯示的名稱
+# - prompt：英文，直接放進生圖的 positive prompt；只描述背景與場景，不要寫 product photography（會多畫出其他商品）
+# - tones：對應的語氣（gentle、science、playful、minimal），可省略
+visualStyles:
+  - {id: daily, label: 日常, prompt: 'natural linen texture, soft morning light, warm minimal set', tones: [gentle, minimal]}
+  - {id: festive, label: 節慶, prompt: 'champagne gold confetti, satin ribbons, warm bokeh, celebratory set', tones: [playful]}
 
 # 預設語氣：gentle（溫柔療癒）、science（專業科研）、playful（活潑年輕）、minimal（簡約）
 defaultTone: gentle

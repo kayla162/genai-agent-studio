@@ -44,7 +44,7 @@ const SERUM = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_selune_serum')!;
 export function cleanSpec(brand: Brand = SELUNE, product: Product = SERUM, templateId: TemplateId = 'ig-post'): PromptSpec {
   return buildPromptSpec({
     jobId: 'job_t', round: 1, brand, product, brief: parseBrief('週年慶 2026/10/15–11/15 主打買一送一，溫柔療癒', brand, product),
-    template: getTemplate(templateId), engine: 'comfyui', seed: 42, ragRefs: [], fixes: [],
+    template: getTemplate(templateId), engine: 'comfyui', seed: 42, ragRefs: [], fixes: [], visualStyleId: brand.visualStyles[0].id,
   });
 }
 
@@ -91,7 +91,7 @@ export function makeJobSnapshot(f: JobFixture = {}): JobSnapshot {
   const input: JobInput = {
     brandId: brand.id, productId: product.id, brief, parsedBrief: parseBrief(brief, brand, product),
     templateIds: f.templateIds ?? ['ig-post'], variantsPerTemplate: f.variants ?? 4, llm: 'Gemini 3.7 Flash',
-    engine: f.engine ?? 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: f.maxRetries ?? 2,
+    engine: f.engine ?? 'comfyui', vlm: 'Gemini 3.7 Vision', maxRetries: f.maxRetries ?? 2, visualStyleId: null,
   };
   const timeline = buildTimeline({
     jobId, input, brand, product, templates: input.templateIds.map((id) => getTemplate(id)),

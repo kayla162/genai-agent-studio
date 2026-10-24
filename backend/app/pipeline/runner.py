@@ -54,6 +54,7 @@ from app.pipeline.ports import ComposedPoster, JobCancelled, Ports, PreviousRoun
 from app.repo import catalog, jobs
 from app.templates import get_template
 from app.usage import usd
+from app.visual_style import choose_visual_style
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,8 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
     await run.emit(BriefParsedEvent(type='brief.parsed', parsed_brief=inp.parsed_brief))
     pb = inp.parsed_brief
     await run.log('agent', f'✓ 語氣={pb.tone}・檔期={pb.campaign or "無"}・優惠={pb.offer or "無"}', 'ok')
+    chosen = choose_visual_style(brand, pb.tone, inp.visual_style_id)
+    await run.log('agent', chosen.note)
 
     # 2. RAG：召回 → Rerank
     await run.phase(PHASE_MS['retrieve_start'] - PHASE_MS['parse'])
@@ -282,6 +285,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
                 100_000_000 + math.floor(rng() * 900_000_000),
                 list(rag_refs),
                 fixes_next,
+                chosen.style,
                 text=inp.brief,
                 hits=list(prompt_hits),
                 previous=previous.get(template.id),

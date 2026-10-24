@@ -25,6 +25,8 @@ export interface StudioForm {
   engine: Engine;
   vlm: string;
   maxRetries: number;
+  /** 背景風格；null 為依語氣自動 */
+  visualStyleId: string | null;
 }
 
 interface StudioState extends StudioForm {
@@ -65,7 +67,7 @@ function defaultForm(): Omit<StudioForm, 'brief'> {
   const options = useAppStore.getState().options ?? MOCK_OPTIONS;
   return {
     productId: null, parsed: null, templateIds: ['ecom-main', 'ig-post'], variants: API_MODE === 'live' ? 2 : 4,
-    llm: options.llm[0], engine: options.engines[0], vlm: options.vlm[0], maxRetries: 2,
+    llm: options.llm[0], engine: options.engines[0], vlm: options.vlm[0], maxRetries: 2, visualStyleId: null,
   };
 }
 
@@ -73,6 +75,8 @@ function formOf(input: JobInput): StudioForm {
   return {
     brief: input.brief, productId: input.productId, parsed: structuredClone(input.parsedBrief), templateIds: [...input.templateIds],
     variants: input.variantsPerTemplate, llm: input.llm, engine: input.engine, vlm: input.vlm, maxRetries: input.maxRetries,
+    // 舊的歷史紀錄沒有這個欄位
+    visualStyleId: input.visualStyleId ?? null,
   };
 }
 
@@ -218,6 +222,7 @@ export const useStudioStore = create<StudioState>()((set, get) => {
         const input: JobInput = {
           brandId: s.brandId, productId: s.productId, brief: s.brief, parsedBrief: parsed, templateIds: [...s.templateIds],
           variantsPerTemplate: s.variants, llm: s.llm, engine: s.engine, vlm: s.vlm, maxRetries: s.maxRetries,
+          visualStyleId: s.visualStyleId,
         };
         const { jobId } = await api.createJob(input);
         stop();

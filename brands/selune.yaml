@@ -5,7 +5,10 @@ category: 美妝保養
 ciVersion: v2.3
 palette: {primary: '#B76E79', secondary: '#F6EFE9', accent: '#C9A96E', ink: '#3A3335'}
 fonts: {headline: Noto Serif TC, body: Noto Sans TC}
-visualStyle: serene luxury skincare, crescent moon halo, aurora light ribbons, pearl-gold bokeh, soft diffused studio light
+visualStyles:
+  - {id: moonlight, label: 月光柔霧, prompt: 'serene luxury skincare, crescent moon halo, aurora light ribbons, pearl-gold bokeh, soft diffused studio light', tones: [gentle, minimal]}
+  - {id: festive, label: 節慶, prompt: 'champagne gold ribbons, pearl confetti, warm bokeh, celebratory satin set', tones: [playful]}
+  - {id: lab, label: 科研, prompt: 'clean frosted glass shelves, water ripples, cool soft diffused light, pristine white set', tones: [science]}
 defaultTone: gentle
 rules:
   maxDeltaE: 5
