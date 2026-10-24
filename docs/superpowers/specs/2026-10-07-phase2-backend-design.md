@@ -379,6 +379,7 @@ Plan 7：以 16 GB 為準（不假設升級）；生圖與商品去背以 Redis 
 - mock 版靜態輸出部署到 Cloudflare Pages（Git 整合或 wrangler）。
 - Cloudflare Zero Trust（免費方案最多 50 人）建立 Access 應用程式，保護 production 與 preview 的 `pages.dev` 網址；政策只允許名單內的 email，以寄到信箱的一次性驗證碼登入。名單可隨時增減，並可查看存取紀錄。
 - 部署與名單設定由使用者以自己的 Cloudflare 帳號操作；Plan 8 提供逐步說明。
+- Plan 8（`2026-10-24-plan8-portfolio-demo-design.md`）：以 Pages 的 Git 整合部署（根目錄 `web`、`npm ci && npm run build`、輸出 `out`），Access 同時保護 production 與 `*.<專案>.pages.dev` 的 preview；靜態輸出帶 `_headers`（noindex、禁止嵌入、關閉不需要的權限）與 `robots.txt`；部署前以 `npm run demo:check` 檢查。逐步說明在 `docs/demo/cloudflare.md`。
 
 ## 11. 測試
 

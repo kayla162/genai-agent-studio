@@ -21,9 +21,26 @@
 | Plan 6A | 伺服器端排版與規則審查：審查用海報、從像素量測品牌主色 | 完成（Agent、生圖與 VLM 審查仍為模擬版） |
 | Plan 6B | Gemini Agent、VLM 審查、用量與成本 | 完成（生圖仍為模擬版） |
 | Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（RTX 3060 Laptop 實測每張約 14 秒；Docker 內的連線與 VLM 判讀待在有 Docker 與 Gemini key 的環境驗收） |
-| Plan 8 | 作品集 Demo（Cloudflare Pages＋Access） | |
+| Plan 8 | 作品集 Demo（Cloudflare Pages＋Access） | 完成（部署與觀看名單由使用者以自己的 Cloudflare 帳號設定，見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)） |
 
 ## 架構
+
+```mermaid
+flowchart LR
+  browser([瀏覽器]) --> web[web<br/>nginx：Next.js 靜態輸出]
+  web -- /api /ws /files --> api[api<br/>FastAPI]
+  api --> pg[(PostgreSQL)]
+  api <--> redis[(Redis<br/>SAQ 佇列與事件)]
+  redis <--> worker[worker<br/>SAQ]
+  worker --> pg
+  worker --> composer[composer<br/>Node：版型、繪製、規則審查、護欄]
+  worker --> chroma[(Chroma<br/>向量庫)]
+  worker --> models[[models/<br/>BiRefNet、BGE-M3、Reranker]]
+  worker --> gemini{{Gemini API<br/>Agent 與 VLM}}
+  worker --> comfy{{ComfyUI<br/>Windows・GPU・SDXL}}
+  api --> gemini
+  demo([作品集 Demo]) -. mock 模式的靜態輸出 .-> pages[Cloudflare Pages<br/>＋ Access 名單]
+```
 
 ```
 瀏覽器 ── 127.0.0.1:3000 ── web（nginx：前端靜態檔；/api、/ws、/files、/docs 轉給 api）
@@ -95,6 +112,22 @@ npm run dev
 ```
 
 瀏覽器內模擬整條流程，不需要後端；作品集 Demo 也是這個模式。
+
+## 作品集 Demo
+
+mock 模式的靜態輸出部署到 Cloudflare Pages，以 Zero Trust 的 Access 只讓名單內的 email 觀看（寄到信箱的一次性驗證碼，免費方案最多 50 人）。部署與名單設定見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)，展示影片的腳本見 [docs/demo/video-script.md](docs/demo/video-script.md)。
+
+部署前在 `web/` 檢查：
+
+```bash
+npm run build
+```
+
+```bash
+npm run demo:check
+```
+
+靜態輸出帶有 `_headers`（不讓搜尋引擎收錄、禁止被其他網站嵌入、關閉相機與位置等權限）與 `robots.txt`（全部 Disallow）。
 
 ## 開發 live 模式
 
