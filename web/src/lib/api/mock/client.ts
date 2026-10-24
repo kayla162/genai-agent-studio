@@ -295,6 +295,17 @@ export class MockApiClient implements ApiClient {
     return chunks;
   }
 
+  deleteBrandDocument(brandId: string, source: string): Promise<void> {
+    getBrandById(brandId);
+    return this.serial(async () => {
+      const all = (await this.store.get<Record<string, RagChunk[]>>(KEYS.docChunks)) ?? {};
+      const chunks = all[brandId] ?? [];
+      const kept = chunks.filter((c) => c.source !== source);
+      if (kept.length === chunks.length) throw new Error(`找不到這份上傳的手冊：${source}`);
+      await this.store.set(KEYS.docChunks, { ...all, [brandId]: kept });
+    });
+  }
+
   async parseBrief(brandId: string, text: string, productId: string | null) {
     const brand = getBrandById(brandId);
     const product = productId ? await this.findProduct(productId) : null;

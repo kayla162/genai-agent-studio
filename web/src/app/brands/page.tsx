@@ -5,6 +5,7 @@ import { BrandOverview } from '@/components/brands/brand-overview';
 import { CaseStudies } from '@/components/brands/case-studies';
 import { ChunkList } from '@/components/brands/chunk-list';
 import { DocIngest } from '@/components/brands/doc-ingest';
+import { UploadedDocs } from '@/components/brands/uploaded-docs';
 import { useCurrentBrand } from '@/lib/store/app';
 
 export default function BrandsPage() {
@@ -16,8 +17,11 @@ export default function BrandsPage() {
         <BrandOverview brand={brand} />
         <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
           <ChunkList chunks={brand.guidelineChunks} />
-          {/* key：切換品牌時清掉上一個品牌的上傳進度 */}
-          <DocIngest key={brand.id} brand={brand} />
+          <div className="space-y-5">
+            <UploadedDocs brand={brand} />
+            {/* key：切換品牌時清掉上一個品牌的上傳進度 */}
+            <DocIngest key={brand.id} brand={brand} />
+          </div>
         </div>
         <CaseStudies brand={brand} />
       </div>

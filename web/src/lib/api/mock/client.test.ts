@@ -5,7 +5,7 @@ import { chunkKind } from '@/lib/rag/kind';
 import type { ApiClient, ProductDraft } from '../client';
 import { getApiClient } from '../index';
 import { MAX_STORED_JOBS, MockApiClient, makeJobId } from './client';
-import { MISTY_ISLE } from './data';
+import { MISTY_ISLE, SELUNE } from './data';
 import { MemoryStore } from './store';
 
 const BRIEF = '週年慶主打買一送一，溫柔療癒';
@@ -133,6 +133,19 @@ describe('brand documents', () => {
     await second;
     const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
     expect(selune.guidelineChunks.filter((c) => c.source === 'ci_update.md').map((c) => c.text)).toEqual(['只剩一段。']);
+  });
+
+  it('deletes an uploaded document but not the brand config chunks', async () => {
+    const api = new MockApiClient();
+    api.demo.set({ speed: 4 });
+    const upload = api.ingestBrandDocument('selune', file(), () => {});
+    await vi.advanceTimersByTimeAsync(400);
+    await upload;
+    await api.deleteBrandDocument('selune', 'ci_update.md');
+    const selune = (await api.listBrands()).find((b) => b.id === 'selune')!;
+    expect(selune.guidelineChunks).toEqual(SELUNE.guidelineChunks);
+    await expect(api.deleteBrandDocument('selune', 'ci_update.md')).rejects.toThrow('找不到這份上傳的手冊：ci_update.md');
+    await expect(api.deleteBrandDocument('selune', SELUNE.guidelineChunks[0].source)).rejects.toThrow('找不到這份上傳的手冊');
   });
 
   it('reads .markdown and .txt files whatever the case of the extension', async () => {

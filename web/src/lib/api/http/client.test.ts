@@ -173,6 +173,16 @@ describe('HttpApiClient REST', () => {
   });
 });
 
+describe('HttpApiClient.deleteBrandDocument', () => {
+  it('sends DELETE with the file name as the source query', async () => {
+    const { api, call } = setup(() => new Response(null, { status: 204 }));
+    expect(await api.deleteBrandDocument('my-brand-01', 'Kayla 品牌手冊 v2.md')).toBeUndefined();
+    expect([call(0).method, call(0).url]).toEqual([
+      'DELETE', 'http://api.test/api/brands/my-brand-01/documents?source=Kayla%20%E5%93%81%E7%89%8C%E6%89%8B%E5%86%8A%20v2.md',
+    ]);
+  });
+});
+
 describe('HttpApiClient.ingestBrandDocument', () => {
   const chunk = { id: 'selune#doc-1', source: 'a.md', section: '色彩', tag: 'color' as const, text: '主色' };
   const progress: IngestEvent[] = [

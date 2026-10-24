@@ -192,6 +192,10 @@ export class HttpApiClient implements ApiClient {
     return id ? this.request('PUT', `/api/products/${q(id)}`, { ...body, id }) : this.request('POST', '/api/products', body);
   }
 
+  deleteBrandDocument(brandId: string, source: string): Promise<void> {
+    return this.request('DELETE', `/api/brands/${q(brandId)}/documents?source=${q(source)}`);
+  }
+
   deleteProduct(id: string): Promise<void> {
     return this.request('DELETE', `/api/products/${q(id)}`);
   }
