@@ -227,7 +227,7 @@ caseStudies: []
 
 # Logo 圖檔（相對於 brands/，例如 assets/my-brand-logo.png）；支援 PNG、JPEG、WebP、SVG，沒有時填 null。
 # 海報上等比例縮放放進 Logo 框（靠左），所以建議用去背的橫式 Logo
-logo: null
+logo: assets/Kayla.png
 
 # IP-Adapter 參考圖（相對於 brands/），生圖時參考的品牌風格
 styleImages: []
