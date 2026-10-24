@@ -23,7 +23,9 @@ visualStyles:
   - {id: daily, label: 日常, prompt: 'soft lavender gradient, satin fabric, glossy acrylic podium, gentle diffused light', tones: [gentle, minimal]}
   - {id: festive, label: 節慶, prompt: 'champagne gold confetti, satin ribbons, warm bokeh, celebratory pastel set', tones: [playful]}
   - {id: lab, label: 科研, prompt: 'frosted glass shelves, water ripples, cool soft light, clean white set', tones: [science]}
-
+  - {id: botanical, label: 植萃, prompt: 'dappled morning light, raw linen backdrop, fresh eucalyptus branch, subtle window shadows', tones: []}
+  - {id: luxury, label: 奢華, prompt: 'travertine stone pedestal, warm golden hour glow, soft velvet shadow, architectural composition', tones: []}
+  - {id: night-repair, label: 夜間修護, prompt: 'midnight blue gradient backdrop, subtle dew drops, deep ambient glow, calm midnight shadows', tones: []}
 # 預設語氣：gentle（溫柔療癒）、science（專業科研）、playful（活潑年輕）、minimal（簡約）
 defaultTone: science
 
@@ -210,20 +212,31 @@ replacements: {
 }
 
 # 出現這些詞視為效果宣稱，頁尾會加上 disclaimerPhrase；不需要時兩者都留空（claimWords: []、disclaimerPhrase: ''）
-claimWords: [修護, 改善]
-disclaimerPhrase: 效果因個人膚況而異
+claimWords: [修護, 改善, 緊緻, 撫紋, 美白, 淡斑, 抗老, 逆齡, 舒緩, 提亮, 縮小毛孔, 控油]
+disclaimerPhrase: 效果因個人體質與膚況而異，實際使用感受可能有所不同。
 
 # 四種語氣的文案範例（標題兩行、副標），四種都要填
 copyPresets:
-  gentle: {headline: [溫柔呵護, 每一天], subhead: 天然成分・溫和配方}
-  science: {headline: [科學配方, 看得見的改變], subhead: 專利成分・臨床測試}
-  playful: {headline: [今天也要, 閃閃發光！], subhead: 限時優惠，手刀搶購}
-  minimal: {headline: [簡單, 就是美], subhead: 純粹成分・無多餘添加}
+  gentle: 
+    headline: ["給肌膚一場", "溫柔的晨曦對話"]
+    subhead: "植萃溫和滋養，還原肌膚最純粹的柔嫩"
+  
+  science: 
+    headline: ["以精準科研", "實證肌膚奇蹟"]
+    subhead: "高效專利配方，專注修護每一道歲月痕跡"
+  
+  playful: 
+    headline: ["點亮好心情！", "今天也要極致閃耀"]
+    subhead: "解鎖限定高光時刻，給肌膚驚喜連連的精緻感"
+  
+  minimal: 
+    headline: ["褪去繁複", "回歸肌膚原生美"]
+    subhead: "剔除多餘添加，極簡留給肌膚最好的呼吸感"
 
 # CI 規範切塊（RAG 檢索用）。key 在品牌內不可重複；tag 為 color、logo、law、layout、font、history 或 general。
 # 沒有 key 為 law-alt 的切塊時，會依 replacements 自動產生「合規替代用語對照」（只在 Query Rewriting 時檢索）。
 guidelines:
-  - {key: color, source: brand_guideline.pdf, section: 色彩, tag: color, text: '品牌主色 #B8A5D6，主色色差需控制在 ΔE2000 ≤ 5。'}
+  - {key: color, source: Kayla 品牌規範, section: 色彩, tag: color, text: '品牌主色 #B8A5D6，主色色差需控制在 ΔE2000 ≤ 5。'}
   - {key: logo, source: Kayla 品牌規範, section: Logo, tag: logo, text: Logo 置於左上角，四周保留至少 0.5 倍 Logo 高度的淨空區，不得與標題或商品重疊。}
   - {key: law, source: compliance.md, section: 廣告法規, tag: law, text: 不得宣稱醫療效能。禁用詞例：根治、治療、保證有效。}
   - {key: layout, source: Kayla 品牌規範, section: 版型, tag: layout, text: 商品主體佔畫面 20–50%，整體留白至少 30%。}
