@@ -1,7 +1,10 @@
 """BgeRetriever：FakeEncoder 與 Chroma 的 genai_test database（示範品牌的切塊，再加上幾份上傳的切塊）。"""
 
+import asyncio
+import threading
 from collections.abc import Awaitable
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from redis.asyncio import Redis
@@ -10,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.brands import load_brands
 from app.contract import Brand, JobEvent, JobInput, LogLevel, LogSource, ParsedBrief, Product, RagChunk, RagHit
 from app.db.session import Database
+from app.pipeline.ports import JobCancelled
+from app.rag.engine import RagEngine
 from app.rag.retriever import PREPARING, RECALL_K, REQUERY_K, BgeRetriever, build_query
 from app.rag.store import VectorStore
 from app.rag.sync import BrandLocks, index_text
@@ -173,3 +178,38 @@ async def test_logs_that_the_models_are_being_prepared_until_they_are_loaded(
     assert engine.loaded
     await retriever.retrieve(brand, product, JOB_INPUT, second)
     assert second.logs == []
+
+
+class CancellingRun(RecordingRun):
+    """等待超過 0.2 秒就視為使用者已取消（RunContext.wait 的行為：中斷 awaitable 再丟出 JobCancelled）。"""
+
+    async def wait[T](self, awaitable: Awaitable[T], note: str | None = None) -> T:
+        task = asyncio.ensure_future(awaitable)
+        done, _ = await asyncio.wait({task}, timeout=0.2)
+        if done:
+            return task.result()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise JobCancelled
+
+
+async def test_cancelling_while_the_models_are_prepared_stops_the_job_but_not_the_preparation(
+    selune: tuple[Brand, Product], db: Database, redis: Redis, chroma: VectorStore
+) -> None:
+    brand, product = selune
+    release = threading.Event()
+    encoder = FakeEncoder()
+
+    def load(_: Path) -> FakeEncoder:
+        release.wait(5)
+        return encoder
+
+    engine = RagEngine('bge', Path('models'), redis, models=[], load=load)
+    retriever = BgeRetriever(db, chroma, engine, BrandLocks())
+    try:
+        with pytest.raises(JobCancelled):
+            await asyncio.wait_for(retriever.retrieve(brand, product, JOB_INPUT, CancellingRun()), 2)
+    finally:
+        release.set()
+    # 準備沒有因為取消而中斷：下一個任務不必重新下載或載入
+    assert await asyncio.wait_for(engine.encoder(), 2) is encoder

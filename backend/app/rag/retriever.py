@@ -4,6 +4,8 @@
 模型或 Chroma 無法使用時丟出 RagError（中文訊息），任務以這個原因失敗。
 """
 
+import asyncio
+
 from app.contract import Brand, JobInput, Product, RagHit
 from app.db.session import Database
 from app.pipeline.ports import RunContext
@@ -59,6 +61,8 @@ class BgeRetriever:
         """同步品牌 → 向量召回 8 筆（不含 alt），依向量分數由高到低。"""
         if not self.engine.loaded:
             await run.log('rag', PREPARING)
+            # 可取消的等待；shield 讓準備在任務取消後繼續（其他任務與下一個任務不必重新下載或載入）
+            await run.wait(asyncio.shield(self.engine.encoder()))
         await sync_brand(self.db, self.store, self.engine, self.locks, brand.id)
         query = build_query(brand, product, job_input)
         return query, await self._recall(brand.id, query, RECALL_K, RECALL_WHERE)
