@@ -126,6 +126,17 @@ async def replace_document_chunks(
     await session.commit()
 
 
+async def delete_document_chunks(session: AsyncSession, brand_id: str, source: str) -> int:
+    """刪除一份上傳的手冊（品牌設定檔的規範與歷史回寫不受影響），回傳刪除的切塊數。"""
+    result = await session.execute(
+        delete(BrandChunkRow).where(
+            BrandChunkRow.brand_id == brand_id, BrandChunkRow.origin == 'upload', BrandChunkRow.source == source
+        )
+    )
+    await session.commit()
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+
 async def upsert_chunk(session: AsyncSession, brand_id: str, chunk: RagChunk, origin: str, now: datetime) -> None:
     """以 id 新增或取代一個切塊（歷史回寫：重跑不會產生重複的切塊）。已經有時保留第一次寫入的時間，列出的順序不變。"""
     values = {

@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +183,33 @@ async def test_ingest_streams_progress_as_ndjson(api: LiveApi) -> None:
     brands = {b['id']: b for b in (await api.http.get('/api/brands')).json()}
     sources = [c['source'] for c in brands['misty-isle']['guidelineChunks']]
     assert (sources.count('ci_update.md'), sources.count('ci-sample.pdf')) == (3, 2)
+
+
+async def test_delete_an_uploaded_document(api: LiveApi) -> None:
+    now = datetime(2026, 10, 25, tzinfo=UTC)
+    async with api.services.db.session() as s:
+        for name in ('手冊 v1.md', 'b.md'):
+            text = f'# 色彩\n{name} 主色維持 #2F4A44。\n\n# Logo\n深色背景使用反白 Logo。'
+            chunks = chunk_document('misty-isle', name, text)
+            await catalog.replace_document_chunks(s, 'misty-isle', name, chunks, now)
+
+    async def sources() -> list[str]:
+        brands = {b['id']: b for b in (await api.http.get('/api/brands')).json()}
+        return [c['source'] for c in brands['misty-isle']['guidelineChunks']]
+
+    assert (await sources()).count('手冊 v1.md') == 2
+    res = await api.http.delete('/api/brands/misty-isle/documents', params={'source': '手冊 v1.md'})
+    assert res.status_code == 204
+    after = await sources()
+    assert '手冊 v1.md' not in after and after.count('b.md') == 2
+    missing = await api.http.delete('/api/brands/misty-isle/documents', params={'source': '手冊 v1.md'})
+    assert (missing.status_code, missing.json()['error']['message']) == (404, '找不到這份上傳的手冊：手冊 v1.md')
+    # 品牌設定檔的規範（不是上傳的手冊）不能從這裡刪除
+    config = await api.http.delete('/api/brands/misty-isle/documents', params={'source': 'misty_isle_ci_v1.4.pdf'})
+    assert config.status_code == 404
+    assert 'misty_isle_ci_v1.4.pdf' in await sources()
+    no_brand = await api.http.delete('/api/brands/nope/documents', params={'source': 'b.md'})
+    assert (no_brand.status_code, no_brand.json()['error']['message']) == (404, '找不到品牌：nope')
 
 
 async def upload_error(api: LiveApi, brand_id: str, files: dict[str, Any]) -> tuple[int, dict[str, Any]]:

@@ -336,6 +336,16 @@ async def ingest_document(brand_id: str, file: UploadFile, services: Services) -
     return StreamingResponse(lines, media_type='application/x-ndjson', headers={'X-Accel-Buffering': 'no'})
 
 
+@router.delete('/api/brands/{brand_id}/documents', status_code=204)
+async def delete_document(brand_id: str, source: Annotated[str, Query(min_length=1)], services: Services) -> None:
+    """刪除一份上傳的手冊（source 為上傳時的檔名）。向量庫在下一次檢索或 worker 啟動時同步刪除。"""
+    async with services.db.session() as s:
+        if await catalog.get_brand(s, brand_id) is None:
+            raise NotFound(f'找不到品牌：{brand_id}')
+        if not await catalog.delete_document_chunks(s, brand_id, source):
+            raise NotFound(f'找不到這份上傳的手冊：{source}')
+
+
 @router.get('/api/templates')
 async def list_templates() -> list[ChannelTemplate]:
     return CHANNEL_TEMPLATES

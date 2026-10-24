@@ -37,6 +37,8 @@ export interface ApiClient {
    * live 由後端抽出文字（PDF 讀文字層）；mock 只能讀 .md、.txt
    */
   ingestBrandDocument(brandId: string, file: File, onEvent: (e: IngestEvent) => void): Promise<RagChunk[]>;
+  /** 刪除一份上傳的手冊（source 為上傳時的檔名）；品牌設定檔的規範不能由此刪除。找不到時丟出錯誤 */
+  deleteBrandDocument(brandId: string, source: string): Promise<void>;
   listTemplates(): Promise<ChannelTemplate[]>;
   listProducts(brandId: string): Promise<Product[]>;
   saveProduct(draft: ProductDraft): Promise<Product>;
