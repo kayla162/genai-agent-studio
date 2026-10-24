@@ -102,6 +102,11 @@
   - `extra_hosts: host.docker.internal:host-gateway` 放在 `x-backend`（api 與 worker 都有）；Docker Desktop 已內建，加上也不影響。
   - `.env.example` 的 `COMFYUI_URL` 是註解：docker compose 也讀 `.env` 做變數替換，設成 `127.0.0.1` 會讓容器連不到 Windows 上的 ComfyUI（測試確認沒有未註解的 `COMFYUI_URL=`）。
   - `record_comfy.py` 用真的 `ComfyImageEngine` 跑一次，以 httpx 的 response hook 與包住 WebSocket 的物件錄下回應；`test_comfy_live.py` 以 `/layout` 換出 5 個模板的 spec，每個模板生成一張。兩者在這台機器都還沒對真的 ComfyUI 執行過。
+- **Task 1**：
+  - 依使用者的指示（「有問題時都依推薦的選項選」）直接選定：ComfyUI v0.42.1 portable、SDXL base 1.0＋SDXL-Lightning 8 步的 LoRA（兩者都是 Open RAIL++-M，允許商用）、只做方式 A。下載中斷時以 curl 的續傳完成，並核對 SHA-256。
+  - `setup.ps1` 要存成有 BOM 的 UTF-8：Windows PowerShell 5.1 把沒有 BOM 的檔案當成 ANSI 讀，中文訊息會讓腳本無法解析。
+  - 實驗發現生成端的問題並修正（色名、正面提示詞、負面提示詞、cfg 2、遮罩擴張 0），量測端的參數以存下的背景離線校準；細節與數字在規格 §12。
+  - `comfy_experiment.py` 的 `sample_product` 與 `hits_of` 複製自 `gemini_experiment.py`：從另一個腳本匯入時 mypy 會把同一個檔案當成兩個模組。
 - **Task 12**：`comfyui/README.md` 先建立（安裝、記憶體、驗證與錄製），ComfyUI 版本、啟動參數、加速模型與記憶體的實測數字標示「待實測」，Task 1 補上；`models.md`、`custom_nodes.md`、`setup.ps1` 仍在 Task 1 建立。README 的進度表把 Plan 7 寫成「程式完成；ComfyUI 的安裝、模型授權確認與實測待執行」。
 
 ## Global Constraints

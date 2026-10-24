@@ -38,7 +38,7 @@ export const PRODUCT_SCENE: ComfyWorkflowTable = {
     { label: 'mask_image', nodeId: '6', input: 'image', type: 'image' },
     { label: 'seed', nodeId: '9', input: 'seed', type: 'int' },
     { label: 'steps', nodeId: '9', input: 'steps', type: 'int', default: 8 },
-    { label: 'cfg', nodeId: '9', input: 'cfg', type: 'float', default: 1 },
+    { label: 'cfg', nodeId: '9', input: 'cfg', type: 'float', default: 2 },
     { label: 'sampler', nodeId: '9', input: 'sampler_name', type: 'string', default: 'euler' },
     { label: 'scheduler', nodeId: '9', input: 'scheduler', type: 'string', default: 'sgm_uniform' },
     { label: 'denoise', nodeId: '9', input: 'denoise', type: 'float', default: 1 },

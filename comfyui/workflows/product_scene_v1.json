@@ -18,7 +18,7 @@
   "9": {
     "class_type": "KSampler",
     "inputs": {
-      "model": ["2", 0], "seed": 0, "steps": 8, "cfg": 1, "sampler_name": "euler", "scheduler": "sgm_uniform", "denoise": 1,
+      "model": ["2", 0], "seed": 0, "steps": 8, "cfg": 2, "sampler_name": "euler", "scheduler": "sgm_uniform", "denoise": 1,
       "positive": ["8", 0], "negative": ["8", 1], "latent_image": ["8", 2]
     }
   },

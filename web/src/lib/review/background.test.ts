@@ -54,6 +54,25 @@ describe('measureBackgroundPalette', () => {
     expect(measure(solid('#C2606F')).offShare).toBe(0);
   });
 
+  // Plan 7 規格 §12 的實測：ComfyUI 生成的背景
+  it('uses a muted brand colour as a hue reference too (misty-isle: dark teal, C* 11.8)', () => {
+    const misty: Palette = { primary: '#2F4A44', secondary: '#EEF0EC', accent: '#C8A27A', ink: '#1F2624' };
+    const of = (hex: string) => measureBackgroundPalette(solid(hex), PRODUCT, CANVAS, misty).offShare;
+    expect(of('#10483A')).toBe(0); // 品牌的深青綠
+    expect(of('#899577')).toBe(0); // 很淡的灰綠：彩度低，算中性色
+    expect(of('#39FF14')).toBe(1);
+  });
+
+  it('flags a clearly green background on a rose and gold brand', () => {
+    expect(measure(solid('#5C6D46')).offShare).toBe(1);
+  });
+
+  it('flags a saturated blue on a lavender brand although the hues are close', () => {
+    const kayla: Palette = { primary: '#B8A5D6', secondary: '#F9F4E8', accent: '#C9A96E', ink: '#3A3335' };
+    expect(measureBackgroundPalette(solid('#1456AC'), PRODUCT, CANVAS, kayla).offShare).toBe(1);
+    expect(measureBackgroundPalette(solid('#B8A5D6'), PRODUCT, CANVAS, kayla).offShare).toBe(0);
+  });
+
   it('leaves the product box (with a margin) out of the measurement', () => {
     const [px, py, pw, ph] = PRODUCT;
     const neonProduct = pixels(W, H, (x, y) => (x >= px && x < px + pw && y >= py && y < py + ph ? '#39FF14' : PALETTE.primary));

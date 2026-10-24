@@ -3,9 +3,12 @@ import type {
 } from '@/types/contract';
 import { computeLayout } from '@/lib/compose/layout';
 import { claimTexts, hasClaim } from '@/lib/review/rules';
+import { paletteWords } from './color-words';
 import { maskImageName, PRODUCT_SCENE, plateImageName } from './comfy';
 
-export const BASE_NEGATIVE = 'lowres, blurry, watermark, deformed product, extra objects, garbled text';
+/** 固定的負面提示詞。ComfyUI 只重繪商品以外的背景，所以排除其他商品、包裝與文字（Plan 7 規格 §12：沒有這些詞時常生成第二個瓶罐與亂碼標籤） */
+export const BASE_NEGATIVE =
+  'lowres, blurry, watermark, deformed product, extra objects, garbled text, text, letters, logo, other products, bottles, jars, packaging';
 
 const OFFER_SUB: [RegExp, string][] = [
   [/買一送一/, 'BUY 1 GET 1'],
@@ -78,11 +81,12 @@ export function buildDisclaimer(
 export function positivePromptOf(template: ChannelTemplate, brand: Brand, brief: ParsedBrief, scene: string | null): string {
   const palette = brand.palette;
   return [
-    `${template.ratio} commercial product photography`,
-    'the provided product photo on a styled surface',
+    // ComfyUI 只重繪商品以外的區域：描述場景與檯面，不要求「商品攝影」（否則會多畫出其他商品）
+    `${template.ratio} commercial photography backdrop`,
+    'empty styled set with a single display surface',
     ...(scene ? [scene] : []),
     brand.visualStyle,
-    `${palette.primary} and ${palette.secondary} color palette with ${palette.accent} accents`,
+    paletteWords(palette),
     ...brief.style,
     'clean negative space for typography',
     'high-end editorial lighting',

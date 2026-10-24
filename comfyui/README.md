@@ -2,7 +2,7 @@
 
 `IMAGE_MODE=comfyui`（預設）時，worker 把每個模板的商品底圖與遮罩上傳到 ComfyUI，由 ComfyUI 重繪商品以外的背景與光影；商品像素一律使用原始去背圖，由 composer 疊在同一個位置。設計見 [Plan 7 設計規格](../docs/superpowers/specs/2026-10-23-plan7-comfyui-design.md)。
 
-> **狀態**：模型授權已確認（`models.md`）；ComfyUI 的實測（規格 §2）結果記錄在規格 §12，下面標示「待實測」的項目在實測後補上。
+> **狀態**：模型授權已確認（`models.md`）；2026-10-24 在 RTX 3060 Laptop（6 GB）實測，結果見規格 §12。
 
 ## 檔案
 
@@ -28,13 +28,19 @@
    | `sdxl_lightning_8step_lora.safetensors` | `models/loras/` | CreativeML Open RAIL++-M：允許商用，附使用限制 |
 
    只使用授權明確允許商用的模型與自訂節點；非商用（例如 CC BY-NC）或授權不明確的一律不用。
-3. 啟動 ComfyUI。啟動參數（`--listen`、VRAM 模式）：待實測。Docker 內的 api 與 worker 以 `http://host.docker.internal:8188` 連線；本機執行後端時為 `http://127.0.0.1:8188`。
+3. 啟動 ComfyUI（在 portable 資料夾）：
+
+   ```powershell
+   .\python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build --listen 127.0.0.1 --port 8188
+   ```
+
+   6 GB VRAM 時 VRAM 模式自動為 NORMAL_VRAM，不需要 `--lowvram`。本機執行後端時以 `http://127.0.0.1:8188` 連線；Docker 內的 api 與 worker 以 `http://host.docker.internal:8188` 連線（沒有在這台實測：容器連不到時，改用 `--listen 0.0.0.0` 並以 Windows 防火牆限制來源）。
 4. 開啟系統的連線狀態（右上角）：ComfyUI 一項顯示 GPU、VRAM 與版本時就完成了；缺少 workflow 需要的節點或模型時會列出缺少的項目。
 
 ## 記憶體（16 GB 的筆電）
 
-- ComfyUI（SDXL）約用 6–8 GB 系統記憶體（規格的估計，待實測），與商品去背的尖峰相加會超過 16 GB。所以生圖與去背以 Redis 鎖互斥（`MEMORY_LOCK=true`，預設）。
-- `COMFYUI_FREE_AFTER_JOB=true` 時，每個任務結束後請 ComfyUI 卸載模型、釋放記憶體（下一個任務要重新載入）。預設：待實測。
+- 實測：GPU 尖峰 5.42 GB；ComfyUI 本身約用 6 GB 系統記憶體。與商品去背的尖峰（約 7.6 GiB）相加會超過 16 GB，所以生圖與去背以 Redis 鎖互斥（`MEMORY_LOCK=true`，預設）。
+- `COMFYUI_FREE_AFTER_JOB=true` 時，每個任務結束後請 ComfyUI 卸載模型、釋放記憶體（下一個任務要重新載入模型；重新載入的秒數沒有實測）。預設 `false`。
 - 6 GB VRAM：ComfyUI 會自動把部分模型卸載到系統記憶體；仍然 GPU 記憶體不足時，任務失敗的原因會建議以 `--lowvram` 啟動。
 
 ## 驗證與錄製（在 `backend/`）

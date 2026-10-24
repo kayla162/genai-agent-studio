@@ -18,8 +18,11 @@ export const GENERATION_SIZES: Record<string, { width: number; height: number }>
   '16:9': { width: 1344, height: 768 },
 };
 
-/** 遮罩上商品（保留區域）向外擴張的像素，以生成解析度計算（實驗決定） */
-export const PLATE_MASK_GROW = 8;
+/**
+ * 遮罩上商品（保留區域）向外擴張的像素，以生成解析度計算。Plan 7 規格 §12：8 像素時，擴張的那一圈保留底圖的中性灰，
+ * 疊上原始去背圖後在深色背景上像一圈光暈；0 時模型重繪到商品邊緣，再由原始去背圖蓋住。
+ */
+export const PLATE_MASK_GROW = 0;
 
 export function generationSize(ratio: string): { width: number; height: number } {
   const size = GENERATION_SIZES[ratio];

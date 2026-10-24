@@ -50,10 +50,11 @@ describe('renderPlate', () => {
     expect(plate.at(...centre(out.productRect))).not.toEqual(PLATE_GREY);
   });
 
-  it('grows the kept area around the product by PLATE_MASK_GROW pixels', async () => {
+  it('grows the kept area around the product by the given pixels (PLATE_MASK_GROW by default)', async () => {
     const input = { spec: SPEC, product: SERUM, brand: SELUNE, images: NO_IMAGES };
     const tight = await decoded((await renderPlate(input, 0)).mask);
-    const grown = await decoded((await renderPlate(input)).mask);
+    const grown = await decoded((await renderPlate(input, 8)).mask);
+    expect((await decoded((await renderPlate(input)).mask)).black).toBe(tight.black);
     expect(grown.black).toBeGreaterThan(tight.black);
   });
 

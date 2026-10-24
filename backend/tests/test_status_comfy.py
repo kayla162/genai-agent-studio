@@ -35,7 +35,7 @@ async def test_shows_the_gpu_and_the_version() -> None:
         with respx.mock(assert_all_called=False) as router:
             mock_http(router)
             result = await status(comfy_settings(), ComfyClient(comfy_settings(), http))
-    assert (result.status, result.detail) == ('ok', 'NVIDIA GeForce RTX 3060 Laptop GPU・VRAM 6.0 GB・ComfyUI 0.3.75')
+    assert (result.status, result.detail) == ('ok', 'NVIDIA GeForce RTX 3060 Laptop GPU・VRAM 6.0 GB・ComfyUI 0.42.1')
 
 
 async def test_an_unreachable_comfyui_says_to_start_it() -> None:

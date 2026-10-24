@@ -2,7 +2,7 @@
 
 用法（在 backend/，需要啟動中的 ComfyUI 與 composer：在 web/ 執行 npm run composer）：
 
-    uv run python -m scripts.comfy_experiment <probe|run|palette|all> [--limit N] [--comfyui URL] [--composer URL]
+    uv run python -m scripts.comfy_experiment <probe|run|palette|all> [--limit N] [--cfg C] [--comfyui URL]
 
 - probe：ComfyUI 的版本、GPU 與 workflow 需要的節點與模型。
 - run：3 個品牌 × 5 個模板各生成一張（--limit 限制張數）：每張的秒數（第一張含載入模型，另外列出）、
@@ -167,7 +167,7 @@ class Experiment:
         self.comfy = ComfyClient(self.settings)
         self.engine = ComfyImageEngine(self.comfy, self.composer, self.settings)
         self.brands: dict[str, LoadedBrand] = {b.brand.id: b for b in load_brands(REPO_ROOT / 'brands')[0]}
-        self.report: dict[str, Any] = {'startedAt': datetime.now().isoformat()}
+        self.report: dict[str, Any] = {'startedAt': datetime.now().isoformat(), 'cfg': args.cfg}
 
     async def spec(self, brand: Brand, product: Product, template_id: TemplateId, job_id: str) -> PromptSpec:
         brief = await self.composer.sim_brief(brand, product, TEXT)
@@ -176,7 +176,14 @@ class Experiment:
             job_id, 1, brand, product, brief, get_template(template_id), 'comfyui', 20261024,
             [h.chunk_id for h in hits], [], text=TEXT, hits=hits,
         )  # fmt: skip
-        return await self.composer.sim_prompt(request, flawed=False)
+        spec = await self.composer.sim_prompt(request, flawed=False)
+        if self.args.cfg is None:
+            return spec
+        # 比較 cfg：覆寫注入的參數（cfg 1 時負面提示詞幾乎沒有作用）
+        params = [
+            p.model_copy(update={'value': self.args.cfg}) if p.label == 'cfg' else p for p in spec.injection.params
+        ]
+        return spec.model_copy(update={'injection': spec.injection.model_copy(update={'params': params})})
 
     async def generate(self, job_id: str, spec: PromptSpec, brand: Brand, product: Product) -> dict[str, Any]:
         """生成一張背景，畫出審查用海報，回傳秒數與背景色系。"""
@@ -295,6 +302,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('command', choices=['probe', 'run', 'palette', 'all'])
     parser.add_argument('--limit', type=int, default=0)
+    parser.add_argument('--cfg', type=float, default=None, help='覆寫 workflow 的 cfg（比較用）')
     parser.add_argument('--comfyui', default='http://127.0.0.1:8188')
     parser.add_argument('--composer', default='http://127.0.0.1:3900')
     asyncio.run(main(parser.parse_args()))

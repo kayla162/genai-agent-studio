@@ -48,7 +48,10 @@ async def run(client: ComfyClient, fake: FakeRun | None = None) -> tuple[bytes, 
 
 async def test_runs_a_prompt_reports_its_progress_and_downloads_the_image(http: httpx.AsyncClient) -> None:
     image = png((32, 32), (10, 20, 30))
-    ws = FakeWebSocket(messages('ws-success.json'))
+    recorded = messages('ws-success.json')
+    # 同一個 ComfyUI 上別人的 prompt：它的進度不算
+    other = {'type': 'progress', 'data': {'value': 1, 'max': 1, 'prompt_id': 'other-prompt', 'node': '9'}}
+    ws = FakeWebSocket([*recorded[:3], other, *recorded[3:]])
     with respx.mock(assert_all_called=False) as router:
         routes = mock_http(router, image=image)
         async with ws.serving():
@@ -56,13 +59,13 @@ async def test_runs_a_prompt_reports_its_progress_and_downloads_the_image(http: 
             data, seconds, progress = await run(client)
     assert data == image
     assert seconds >= 0
-    # 其他 prompt 的進度不算
-    assert progress == [('9', 1, 3), ('9', 2, 3), ('9', 3, 3)]
+    # 錄製的是 8 步的 SDXL-Lightning（progress_state 等其他訊息不算進度）
+    assert progress == [('9', step, 8) for step in range(1, 9)]
     sent = json.loads(routes['prompt'].calls.last.request.content)
     assert sent['prompt'] == WORKFLOW
     assert ws.paths == [f'/ws?clientId={sent["client_id"]}']
     assert dict(routes['view'].calls.last.request.url.params) == {
-        'filename': 'genai_bg_00001_.png',
+        'filename': 'genai_bg_00006_.png',
         'subfolder': '',
         'type': 'output',
     }
@@ -72,7 +75,7 @@ async def test_system_stats_reports_the_gpu_or_a_chinese_reason(http: httpx.Asyn
     with respx.mock(assert_all_called=False) as router:
         mock_http(router)
         stats = await ComfyClient(settings(), http).system_stats()
-    assert stats == ComfyStats(version='0.3.75', gpu='NVIDIA GeForce RTX 3060 Laptop GPU', vram_total=6441926656)
+    assert stats == ComfyStats(version='0.42.1', gpu='NVIDIA GeForce RTX 3060 Laptop GPU', vram_total=6441926656)
     with respx.mock(assert_all_called=False) as router:
         router.get(f'{BASE}/system_stats').mock(side_effect=httpx.ConnectError('refused'))
         with pytest.raises(ComfyError, match=r'^ComfyUI 沒有回應（http://comfy\.test），請先啟動 ComfyUI$'):

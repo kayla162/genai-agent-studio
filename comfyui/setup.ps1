@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   下載 workflow 需要的模型到 ComfyUI 的 models 資料夾，並核對 SHA-256（模型與授權見 models.md）。
 

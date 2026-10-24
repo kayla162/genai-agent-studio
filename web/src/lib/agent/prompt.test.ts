@@ -126,8 +126,8 @@ describe('prompt parts shared with the Gemini guard', () => {
     expect(positivePromptOf(i.template, SELUNE, i.brief, null)).toBe(spec.positivePrompt);
     const withScene = positivePromptOf(i.template, SELUNE, i.brief, 'serum bottle on a marble tray');
     expect(withScene).toBe(spec.positivePrompt.replace(
-      'the provided product photo on a styled surface, ',
-      'the provided product photo on a styled surface, serum bottle on a marble tray, ',
+      'empty styled set with a single display surface, ',
+      'empty styled set with a single display surface, serum bottle on a marble tray, ',
     ));
   });
 

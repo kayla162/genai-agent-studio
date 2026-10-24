@@ -3,20 +3,26 @@ import { hexToRgb, labToHex, rgbToLab } from './color';
 import type { RGBA } from './measure';
 
 /** 背景色系量測的參數（Plan 7 規格 §4.8；標示「實驗決定」的在 Plan 7 Task 1 依實測調整） */
-export const BACKGROUND_MEASURE = {
-  /** 彩度 C* 低於這個值為中性色，一律在色系內（實驗決定） */
-  neutralChroma: 12,
+export const BACKGROUND_MEASURE: {
+  neutralChroma: number; brandMinChroma: number; hueTolerance: number; chromaMargin: number;
+  productMargin: number; sampleSide: number; bin: number;
+} = {
+  /** 彩度 C* 低於這個值為中性色，一律在色系內（Plan 7 規格 §12：很淡的灰綠、灰米色的色相不穩定，視為中性） */
+  neutralChroma: 18,
+  /** 品牌色的彩度至少這麼高才當作色相參考（很暗、很淡的品牌色，例如 misty-isle 的深青綠 C* 11.8，仍有色相） */
+  brandMinChroma: 5,
   /** 與品牌色的色相差 ≤ 這個角度（度）才算同一色系（實驗決定） */
   hueTolerance: 30,
-  /** 彩度最多比同色系的品牌色高出這麼多，再高就是過度飽和（螢光色）（實驗決定） */
-  chromaMargin: 25,
+  /** 彩度最多比同色系的品牌色高出這麼多，再高就是過度飽和（螢光色）。規格 §12 以實驗存下的 24 張背景校準：
+   *  15 時一般背景全部 ≤ 4%、刻意偏色的 9 張有 7 張不通過；12 時一般背景開始出現警告 */
+  chromaMargin: 15,
   /** 商品方框向外擴張的比例（× 畫布短邊） */
   productMargin: 0.02,
   /** 取樣格的邊數上限：大圖以等距取樣，最多約 sampleSide × sampleSide 個像素 */
   sampleSide: 256,
   /** 找色系外主要顏色時，Lab 量化的格寬 */
   bin: 8,
-} as const;
+};
 
 /** 背景色系外的面積比例 ≤ 這個值為通過（實驗決定，Plan 7 規格 §4.8） */
 export const BG_PASS_MAX = 0.15;
@@ -48,14 +54,16 @@ const hueGap = (x: number, y: number) => {
  * 量背景的品牌色系（Plan 7 規格 §4.8）：
  * 1. 範圍：商品方框（向外擴張 productMargin × 畫布短邊）以外的像素；pixels 可以比畫布小，方框依比例換算。
  * 2. 取樣：每 step 個像素取一個（step 讓取樣數不超過 sampleSide²）。
- * 3. 每個像素轉成 Lab 與 LCh：C* < neutralChroma 為中性色；與任一彩色品牌色（C* ≥ neutralChroma）的色相差
+ * 3. 每個像素轉成 Lab 與 LCh：C* < neutralChroma 為中性色；與任一品牌色（C* ≥ brandMinChroma）的色相差
  *    ≤ hueTolerance 且彩度 ≤ 該品牌色彩度 + chromaMargin 為色系內；其他（含過度飽和）為色系外。
  * 4. offShare：色系外 ÷ 取樣數；offHex：色系外像素依 Lab 量化（bin）後最多的一格的平均色（大寫 #RRGGBB）。
  */
 export function measureBackgroundPalette(
   pixels: BackgroundPixels, product: BBox, canvas: { width: number; height: number }, palette: Palette,
+  params: typeof BACKGROUND_MEASURE = BACKGROUND_MEASURE,
 ): BackgroundPalette {
-  const M = BACKGROUND_MEASURE;
+  // params：校準門檻時以不同的參數重新量（Plan 7 規格 §12），平常用預設值
+  const M = params;
   const { data, width, height } = pixels;
   const sx = width / canvas.width;
   const sy = height / canvas.height;
@@ -66,7 +74,7 @@ export function measureBackgroundPalette(
   const y0 = (py - margin) * sy, y1 = (py + ph + margin) * sy;
   const brand = [palette.primary, palette.secondary, palette.accent, palette.ink]
     .map((hex) => hueOf(rgbToLab(hexToRgb(hex))))
-    .filter((p) => p.c >= M.neutralChroma);
+    .filter((p) => p.c >= M.brandMinChroma);
   const step = Math.max(1, Math.ceil(Math.max(width, height) / M.sampleSide));
 
   const bins = new Map<string, { n: number; L: number; a: number; b: number }>();

@@ -11,8 +11,8 @@ const PRODUCT = '極光玻尿酸修護精華 30ml';
 const TEXT =
   '極光玻尿酸修護精華 30ml・IG 貼文海報，審查 99 分。標題：一夜溫柔修護／醒來透亮發光。'
   + '副標：7天感受透亮光采・專業修護配方*。賣點：5重玻尿酸、神經醯胺、無香精。'
-  + '正向提示詞：4:5 commercial product photography, the provided product photo on a styled surface, '
-  + 'serene luxury skincare, crescent moo…';
+  + '正向提示詞：4:5 commercial photography backdrop, empty styled set with a single display surface, '
+  + 'serene luxury skincare, crescent mo…';
 
 /** 選定 selune-retry 任務的 IG 貼文最佳候選（第 2 輪 v0，審查 99 分）；與後端 tests/fixtures.py 的 selected_history 相同 */
 function selectedHistory(): HistoryEntry {
