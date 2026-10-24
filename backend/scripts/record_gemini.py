@@ -80,7 +80,9 @@ async def main(env_file: Path, composer_url: str) -> None:
         print(f'wrote tests/data/gemini/{name}')
 
     with tempfile.TemporaryDirectory() as tmp:
-        settings = Settings(_env_file=None, agent_mode='gemini', gemini_api_key=key, data_dir=Path(tmp) / 'data')
+        settings = Settings(
+            _env_file=None, image_mode='sim', agent_mode='gemini', gemini_api_key=key, data_dir=Path(tmp) / 'data'
+        )
         ledger = MemoryLedger(Pricing.load(REPO_ROOT / 'pricing.yaml'))
         http = httpx.AsyncClient(event_hooks={'response': [keep]})
         client = GeminiClient(settings, ledger, http=http)

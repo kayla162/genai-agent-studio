@@ -1,4 +1,4 @@
-"""docker-compose.yml 與 docker-compose.e2e.yml 的 Gemini 設定（只解析 YAML，不需要 Docker）。"""
+"""docker-compose.yml 與 docker-compose.e2e.yml 的 Gemini 與 ComfyUI 設定（只解析 YAML，不需要 Docker）。"""
 
 from pathlib import Path
 from typing import Any
@@ -39,11 +39,27 @@ def test_api_and_worker_share_the_agent_mode_and_read_the_pricing_file() -> None
     assert Path(REPO_ROOT / 'pricing.yaml').is_file()
 
 
+def test_api_and_worker_share_the_image_mode_and_reach_comfyui_on_the_host() -> None:
+    services = load('docker-compose.yml')['services']
+    for name in ('api', 'worker'):
+        service = services[name]
+        environment = service['environment']
+        assert environment['IMAGE_MODE'] == '${IMAGE_MODE:-comfyui}'
+        assert environment['COMFYUI_URL'] == '${COMFYUI_URL:-http://host.docker.internal:8188}'
+        assert environment['COMFYUI_WORKFLOWS_DIR'] == '/app/comfyui/workflows'
+        assert './comfyui/workflows:/app/comfyui/workflows:ro' in service['volumes']
+        # Linux 的 Docker 沒有內建 host.docker.internal
+        assert 'host.docker.internal:host-gateway' in service['extra_hosts']
+    assert (REPO_ROOT / 'comfyui' / 'workflows' / 'product_scene_v1.json').is_file()
+
+
 def test_the_e2e_stack_is_simulated_and_never_gets_the_developer_key() -> None:
     services = load('docker-compose.e2e.yml')['services']
     for name in ('api', 'worker'):
         environment = services[name]['environment']
         assert (environment['AGENT_MODE'], environment['GEMINI_API_KEY']) == ('sim', '')
+        # 程序化背景：live E2E 不需要 GPU 與 ComfyUI
+        assert environment['IMAGE_MODE'] == 'sim'
         assert './pricing.yaml:/app/pricing.yaml:ro' in services[name]['volumes']
 
 
@@ -60,5 +76,14 @@ def test_env_example_lists_the_gemini_settings() -> None:
         'GEMINI_JOB_BUDGET_USD',
         'GEMINI_MONTHLY_BUDGET_USD',
         'PRICING_FILE',
+        'IMAGE_MODE',
+        'COMFYUI_URL',
+        'COMFYUI_TIMEOUT_SECONDS',
+        'COMFYUI_FREE_AFTER_JOB',
+        'MEMORY_LOCK',
+        'COMFYUI_WORKFLOWS_DIR',
     ):
         assert f'{name}=' in example, name
+    assert '之後的計畫會加入' not in example
+    # docker compose 也讀 .env 的變數：設定 COMFYUI_URL=127.0.0.1 會讓容器連不到 Windows 上的 ComfyUI
+    assert not any(line.startswith('COMFYUI_URL=') for line in example.splitlines())

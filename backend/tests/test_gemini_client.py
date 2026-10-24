@@ -102,7 +102,7 @@ async def make() -> AsyncIterator[MakeHarness]:
     created: list[GeminiClient] = []
 
     def build(key: str = KEY, usage: MemoryUsage | None = None, **overrides: Any) -> Harness:
-        settings = Settings(_env_file=None, agent_mode='gemini', gemini_api_key=key, **overrides)
+        settings = Settings(_env_file=None, image_mode='sim', agent_mode='gemini', gemini_api_key=key, **overrides)
         sleeps: list[float] = []
 
         async def sleep(seconds: float) -> None:

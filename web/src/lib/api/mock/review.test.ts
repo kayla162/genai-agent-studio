@@ -9,9 +9,9 @@ const coldbrew = SAMPLE_PRODUCTS.find((p) => p.id === 'prod_misty_coldbrew')!;
 const status = (r: ReturnType<typeof reviewRender>, id: string) => r.checks.find((c) => c.id === id)?.status;
 
 describe('reviewRender', () => {
-  it('passes a clean spec with 10 checks and a high score', () => {
+  it('passes a clean spec with 11 checks and a high score', () => {
     const r = reviewRender(cleanSpec(), SELUNE, 0, 1);
-    expect(r.checks).toHaveLength(10);
+    expect(r.checks).toHaveLength(11);
     expect(r.checks.filter((c) => c.kind === 'vlm')).toHaveLength(3);
     expect(r.passed).toBe(true);
     expect(r.score).toBeGreaterThanOrEqual(97);

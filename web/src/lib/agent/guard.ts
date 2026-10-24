@@ -291,7 +291,10 @@ export function finalizeSpec(draft: SpecDraft, req: GuardRequest): { spec: Promp
     layout,
     positivePrompt,
     negativePrompt,
-    injection: buildInjection({ positivePrompt, negativePrompt, canvas, layout }, req.engine, req.product.id, req.seed),
+    injection: buildInjection(
+      { jobId: req.jobId, round: req.round, templateId: req.templateId, positivePrompt, negativePrompt, canvas },
+      req.engine, req.product.id, req.seed,
+    ),
     ragRefs: [...req.ragRefs],
   };
   return { spec, issues: issues.list };

@@ -24,14 +24,23 @@ function renderCount(events: JobMessage[]): number {
   return events.reduce((n, e) => n + (e.type === 'render.completed' ? e.renders.length : 0), 0);
 }
 
+/** 要計生圖費用的候選：IMAGE_MODE=comfyui 在本機 GPU 生成的背景（url）不計費，程序化背景依估算單價 */
+function pricedRenders(events: JobMessage[]): number {
+  return events.reduce(
+    (n, e) => n + (e.type === 'render.completed' ? e.renders.filter((r) => r.background.kind !== 'url').length : 0), 0,
+  );
+}
+
 /** 依事件估算一個任務的成本（美元） */
 export function jobCost({ summary, events }: JobSnapshot): number {
-  const image = summary.input.engine === 'ideogram' ? UNIT_COST_USD.ideogramImage : UNIT_COST_USD.comfyImage;
+  const ideogram = summary.input.engine === 'ideogram';
+  const image = ideogram ? UNIT_COST_USD.ideogramImage : UNIT_COST_USD.comfyImage;
+  const renders = ideogram ? renderCount(events) : pricedRenders(events);
   const llmCalls = count(events, 'brief.parsed') + count(events, 'prompt.generated') + count(events, 'rewrite.started');
   return (
     UNIT_COST_USD.llmCall * llmCalls
     + UNIT_COST_USD.rerank * count(events, 'rag.reranked')
-    + image * renderCount(events)
+    + image * renders
     + UNIT_COST_USD.vlmReview * count(events, 'review.completed')
   );
 }

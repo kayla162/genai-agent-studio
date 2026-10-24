@@ -150,7 +150,7 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
 
     // 6. 合規審查（規則 + VLM）
     emit(t, { type: 'job.status', stage: 'reviewing', round });
-    log(t, 'vlm', `${input.vlm}：審查 ${renders.length} 張 × 10 項`);
+    log(t, 'vlm', `${input.vlm}：審查 ${renders.length} 張 × 11 項`);
     const results = renders.map((render) => ({
       render, result: reviewRender(render.spec, brand, render.variant, hashString(render.id) ^ ctx.seed),
     }));

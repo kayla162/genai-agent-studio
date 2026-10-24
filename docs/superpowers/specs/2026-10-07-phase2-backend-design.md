@@ -95,6 +95,8 @@ worker 只依賴介面；每個介面都有真實版與模擬版，以環境變�
 | `Retriever` | Chroma＋BGE | 依 mock 的固定召回順序與分數，從品牌切塊產生結果（Python 實作） |
 | `ImageEngine` | ComfyUI | 程序化背景（`Render.background.kind = 'procedural'`） |
 
+Plan 7：`ImageEngine` 以 `IMAGE_MODE=comfyui|sim` 切換；真實版的商品底圖由 composer 產生，所以需要 `REVIEW_MODE=composer`（`2026-10-23-plan7-comfyui-design.md` §4.1）。
+
 Plan 6B：`LlmAgent` 與 `VisionReviewer` 以 `AGENT_MODE=gemini|sim` 一起切換；`VisionReviewer` 的真實版要讀伺服器端繪製的審查用海報，所以需要 `REVIEW_MODE=composer`（`2026-10-23-plan6b-gemini-vlm-design.md` §4.1）。
 
 ### 3.3 目錄
@@ -130,6 +132,8 @@ GenAI Agent/
 | RAG 模型（BGE-M3＋Reranker，worker） | 載入後約增加 1.7 GB（Docker 實測 1.75 GB）；與去背的尖峰相加約 10 GB，Docker 上限建議約 12 GB |
 
 合計偏緊。BGE 模型使用 ONNX int8，用到才載入；建議筆電升級到 32 GB。實際數字在 Plan 7 實測並記錄。
+
+Plan 7：以 16 GB 為準（不假設升級）；生圖與商品去背以 Redis 鎖互斥（`MEMORY_LOCK`），生圖結束後是否請 ComfyUI 釋放記憶體由實驗決定（`COMFYUI_FREE_AFTER_JOB`）。實測數字記錄在 `2026-10-23-plan7-comfyui-design.md` §12。
 
 ## 4. 任務流程與事件
 
@@ -245,6 +249,11 @@ GenAI Agent/
 
   候選有 SDXL 加 Lightning 類加速模型、輕量 ControlNet、IP-Adapter、IC-Light（SD1.5）、4x 放大模型。每個模型的授權記錄在 `comfyui/models.md`，商用前逐一確認。
 - **雲端**：`COMFYUI_URL`（加上選填的驗證標頭）指向安裝了相同自訂節點與模型的雲端 ComfyUI，不必修改程式。
+- Plan 7 的修改（`2026-10-23-plan7-comfyui-design.md` §3、§4.3）：
+  - 商品不經過 IC-Light：ComfyUI 只生成背景與光影，商品像素一律使用原始去背圖，由 composer 疊在同一個位置（`includesProduct: false`）；不使用 IP-Adapter。
+  - workflow 由 composer 的 `/plate` 產生的商品底圖與遮罩驅動；生成約 100 萬像素，worker 放大並裁切成模板尺寸。
+  - 只在本機執行：只保留 `COMFYUI_URL`，不做雲端的驗證標頭與計價。
+  - 進度只有 `generate`（取樣節點）；`cutout`、`relight` 不再出現。
 
 ### 5.6 composer（伺服器端排版與規則審查）
 
@@ -253,6 +262,7 @@ GenAI Agent/
 | `POST /layout` | 模板的預設版型 BBox |
 | `POST /render` | 把文字疊到背景上，輸出審查用海報 PNG，並回傳偵測到的主色 |
 | `POST /review` | 7 項規則檢查（`runRuleChecks`）加上 3 項 VLM 結果，回傳 10 項檢查與分數（`scoreChecks`，live 模式不加隨機抖動） |
+| `POST /plate` | Plan 7：ComfyUI 生成背景用的商品底圖與遮罩（與 `paint` 的商品矩形一致） |
 | `POST /sim/*` | 模擬模式使用：沿用 mock 的 Prompt、失誤、審查與修正邏輯 |
 
 - 直接 import `web/src/lib` 的 compose（scene、paint、art、layout）與 review（rules、color）。瀏覽器專用的 `render.ts` 由 composer 的 Node 版本（@napi-rs/canvas）取代。
@@ -271,7 +281,7 @@ GenAI Agent/
 ### 5.8 用量與成本
 
 - 於 Plan 6 實作（Plan 5 沒有付費呼叫）。
-- 每次 Gemini 呼叫記錄 input／output tokens（寫入 `job_usage`，並以 `log` 事件顯示）；ComfyUI 記錄 GPU 秒數。
+- 每次 Gemini 呼叫記錄 input／output tokens（寫入 `job_usage`，並以 `log` 事件顯示）；ComfyUI 記錄 GPU 秒數。Plan 7：本機 GPU 不計費，ComfyUI 不寫入 `job_usage`，每張的執行秒數只記在 `log`（`2026-10-23-plan7-comfyui-design.md` §4.11）。
 - 儀表板的每張成本改為實際用量乘以設定中的單價：Gemini 依模型計價；本機 GPU 計 0，雲端 GPU 依秒數計價。
 - Plan 6B（`2026-10-23-plan6b-gemini-vlm-design.md` §4.7）：單價表為 repo 根目錄的 `pricing.yaml`（有生效日期），費用在寫入時計算；單一任務（預設 US$1）與每月（台北時間，預設 US$20）的費用上限在每次呼叫前檢查。
 
@@ -408,7 +418,7 @@ GenAI Agent/
 
 ## 14. 待決事項（不阻擋開始）
 
-- 筆電是否升級到 32 GB 記憶體（影響 SDXL 能同時載入的元件與速度）
+- ~~筆電是否升級到 32 GB 記憶體~~：已決定維持 16 GB，生圖與去背互斥（`2026-10-23-plan7-comfyui-design.md` §3、§4.7）
 - ~~實際使用的 Gemini 模型 ID 與單價~~：已決定為 `gemini-3.8-flash`，單價見 `pricing.yaml`（`2026-10-23-plan6b-gemini-vlm-design.md` §3、§4.7）
-- SDXL 等模型的商用授權：Plan 7 逐一確認
+- SDXL 等模型的商用授權：Plan 7 逐一確認，記錄在 `comfyui/models.md`；只使用明確允許商用的模型（`2026-10-23-plan7-comfyui-design.md` §3）
 - 自己品牌的設定檔內容與 Logo 圖檔：Plan 4 提供範本後由使用者填寫

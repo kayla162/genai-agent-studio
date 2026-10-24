@@ -1,0 +1,17 @@
+{
+  "workflow": "product_scene_v1.json",
+  "params": [
+    {"label": "checkpoint", "nodeId": "1", "input": "ckpt_name", "type": "string", "default": "sd_xl_base_1.0.safetensors"},
+    {"label": "lora", "nodeId": "2", "input": "lora_name", "type": "string", "default": "sdxl_lightning_8step_lora.safetensors"},
+    {"label": "positive_prompt", "nodeId": "3", "input": "text", "type": "string"},
+    {"label": "negative_prompt", "nodeId": "4", "input": "text", "type": "string"},
+    {"label": "plate_image", "nodeId": "5", "input": "image", "type": "image"},
+    {"label": "mask_image", "nodeId": "6", "input": "image", "type": "image"},
+    {"label": "seed", "nodeId": "9", "input": "seed", "type": "int"},
+    {"label": "steps", "nodeId": "9", "input": "steps", "type": "int", "default": 8},
+    {"label": "cfg", "nodeId": "9", "input": "cfg", "type": "float", "default": 2},
+    {"label": "sampler", "nodeId": "9", "input": "sampler_name", "type": "string", "default": "euler"},
+    {"label": "scheduler", "nodeId": "9", "input": "scheduler", "type": "string", "default": "sgm_uniform"},
+    {"label": "denoise", "nodeId": "9", "input": "denoise", "type": "float", "default": 1}
+  ]
+}

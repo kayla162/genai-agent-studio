@@ -80,7 +80,7 @@ function useProduct(brandId: string, productId: string | null): Product | null {
   return product;
 }
 
-/** 合規報告：選一張候選，看 BBox 疊圖與 10 項檢查 */
+/** 合規報告：選一張候選，看 BBox 疊圖與 11 項檢查 */
 export function ReviewPanel({ view, input }: { view: JobView; input: JobInput | null }) {
   const reviewed = view.renderIds.map((id) => view.renders[id]).filter((r) => r.score !== null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -178,7 +178,7 @@ export function ReviewPanel({ view, input }: { view: JobView; input: JobInput | 
               <ScoreBadge render={render} />
               {best && <Badge>最佳候選</Badge>}
             </CardTitle>
-            <CardDescription>規則 7 項（禁用詞、ΔE2000、Logo 淨空區…）+ VLM 3 項；附上引用的 RAG 規範。</CardDescription>
+            <CardDescription>規則 8 項（禁用詞、ΔE2000、背景色系、Logo 淨空區…）+ VLM 3 項；附上引用的 RAG 規範。</CardDescription>
           </CardHeader>
           <CardContent>
             <CheckList checks={render.checks} />

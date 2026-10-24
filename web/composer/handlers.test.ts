@@ -81,6 +81,26 @@ describe('composer handlers', () => {
     expect(review).toMatchObject({ score: 86, passed: false });
   });
 
+  it('judges bg_palette from the background measurement, with or without the Gemini verdict', () => {
+    const spec = cleanSpec();
+    const background = { offShare: 0.42, offHex: '#3FD27A', sampled: 61234 };
+    const bgOf = (body: object) =>
+      (handle('/review', { spec, brand: SELUNE, measuredPrimary: '#b76e79', ...body }) as { checks: ReviewCheck[] })
+        .checks.find((c) => c.id === 'bg_palette');
+    expect(bgOf({ background })).toMatchObject({ status: 'fail', value: '色系外 42%（主要為 #3FD27A）' });
+    const verdict = passingVerdict(expectedSegments(composePoster({ ...spec, brand: SELUNE })).map((s) => s.text));
+    expect(bgOf({ background, vlm: verdict })).toMatchObject({ status: 'fail' });
+    expect(bgOf({ background: null })).toMatchObject({ status: 'pass', value: '（模擬）' });
+  });
+
+  it('rejects a background measurement that is not { offShare, offHex, sampled }', () => {
+    const spec = cleanSpec();
+    for (const background of [42, { offShare: 1.5, offHex: null, sampled: 1 }, { offShare: 0.1, offHex: 'green', sampled: 1 }, { offShare: 0.1, offHex: null }]) {
+      expect(() => handle('/review', { spec, brand: SELUNE, measuredPrimary: '#b76e79', background }))
+        .toThrow('background 必須是 { offShare: 0–1, offHex: #RRGGBB 或 null, sampled: 整數 }');
+    }
+  });
+
   it('rejects a measured primary that is not a hex colour or null', () => {
     for (const measuredPrimary of [undefined, 'pink', '#b76e7', 42]) {
       expect(() => handle('/review', { spec: cleanSpec(), brand: SELUNE, measuredPrimary })).toThrow(/measuredPrimary 必須是 #RRGGBB 或 null/);
@@ -113,9 +133,10 @@ describe('composer handlers', () => {
     const review = handle('/review', { spec, brand: SELUNE, measuredPrimary: '#b76e79', vlm: verdict, vlmScale: 1 }) as {
       checks: ReviewCheck[]; score: number; passed: boolean;
     };
-    expect(review.checks.slice(7)).toEqual(geminiVlmChecks(verdict, spec, SELUNE));
+    expect(review.checks.slice(8)).toEqual(geminiVlmChecks(verdict, spec, SELUNE));
     expect(review.checks.find((c) => c.id === 'ocr_typo')).toMatchObject({ value: '0 處差異', status: 'pass' });
-    expect(review.checks.some((c) => c.value.includes('模擬'))).toBe(false);
+    // 沒有傳入背景量測時，只有背景色系是模擬
+    expect(review.checks.filter((c) => c.value.includes('模擬')).map((c) => c.id)).toEqual(['bg_palette']);
     expect(review).toMatchObject({ score: 100, passed: true });
 
     const boxed = handle('/review', {

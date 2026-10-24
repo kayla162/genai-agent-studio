@@ -17,6 +17,17 @@ describe('jobCost', () => {
     const ideogram = makeJobSnapshot({ engine: 'ideogram' });
     expect(jobCost(ideogram) - jobCost(retried)).toBeCloseTo(8 * (UNIT_COST_USD.ideogramImage - UNIT_COST_USD.comfyImage), 10);
   });
+
+  it('counts the backgrounds ComfyUI generated on the local GPU as free', () => {
+    const local = {
+      ...retried,
+      events: retried.events.map((e) => (e.type === 'render.completed'
+        ? { ...e, renders: e.renders.map((r) => ({ ...r, background: { kind: 'url' as const, url: `/files/jobs/${r.id}.png`, includesProduct: false } })) }
+        : e)),
+    };
+    expect(jobCost(retried) - jobCost(local)).toBeCloseTo(8 * UNIT_COST_USD.comfyImage, 10);
+    expect(jobStat(local)!.renders).toBe(8);
+  });
 });
 
 describe('jobStat', () => {
@@ -73,9 +84,10 @@ describe('dashboardStats', () => {
 
   it('counts failures and warnings per check in the standard order', () => {
     expect(stats.checkFailures.map((c) => c.checkId)).toEqual([
-      'banned_words', 'color_delta', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
+      'banned_words', 'color_delta', 'bg_palette', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
       'vlm_exaggeration', 'vlm_occlusion', 'vlm_quality',
     ]);
+    expect(stats.checkFailures.find((c) => c.checkId === 'bg_palette')).toMatchObject({ name: '背景色系', fail: 0, warn: 0 });
     // 有瑕疵的輪次：retried 第 1 輪 4 張 + failed 3 輪 12 張
     expect(stats.checkFailures[0]).toEqual({ checkId: 'banned_words', name: '禁用詞檢查', kind: 'rule', fail: 16, warn: 0 });
     expect(stats.checkFailures.find((c) => c.checkId === 'disclaimer')).toMatchObject({ fail: 0, warn: 16 });

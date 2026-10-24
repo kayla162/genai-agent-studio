@@ -1,0 +1,8 @@
+[
+  {"type": "execution_start", "data": {"prompt_id": "p-0001", "timestamp": 1761271200000}},
+  {"type": "execution_error", "data": {
+    "prompt_id": "p-0001", "node_id": "10", "node_type": "VAEDecode", "executed": ["1", "3", "4", "9"],
+    "exception_message": "Allocation on device \nThis error means you ran out of memory on your GPU.",
+    "exception_type": "torch.OutOfMemoryError", "traceback": [], "current_inputs": {}, "current_outputs": {}
+  }}
+]

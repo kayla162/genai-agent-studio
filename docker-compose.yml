@@ -1,4 +1,4 @@
-# 虛實整合 GenAI Agent：本機執行（所有連接埠只綁定 127.0.0.1）。ComfyUI 在 Windows 另外啟動。
+# 虛實整合 GenAI Agent：本機執行（所有連接埠只綁定 127.0.0.1）。ComfyUI 在 Windows 另外啟動（見 comfyui/README.md）。
 # 映像檔取自 AWS 的 Docker 官方映像鏡像（public.ecr.aws/docker/library），不需要登入 Docker Hub。
 #
 #   docker compose up -d --build     整套服務：瀏覽器開 http://127.0.0.1:3000
@@ -28,11 +28,21 @@ x-backend: &backend
     AGENT_MODE: ${AGENT_MODE:-gemini}
     # Gemini 單價表（repo 根目錄的 pricing.yaml，唯讀掛載）
     PRICING_FILE: /app/pricing.yaml
+    # 生圖：comfyui（預設，ComfyUI 在 Windows 啟動，需要 REVIEW_MODE=composer）或 sim（程序化背景，不需要 GPU）。
+    # api（系統狀態）與 worker 一定讀到同一個值；其他 COMFYUI_* 與 MEMORY_LOCK 由 .env 傳入
+    IMAGE_MODE: ${IMAGE_MODE:-comfyui}
+    # 容器內以 host.docker.internal 連到 Windows 上的 ComfyUI
+    COMFYUI_URL: ${COMFYUI_URL:-http://host.docker.internal:8188}
+    # ComfyUI 的 workflow 與參數對照表（repo 的 comfyui/workflows，唯讀掛載）
+    COMFYUI_WORKFLOWS_DIR: /app/comfyui/workflows
+  # Docker Desktop 內建 host.docker.internal；Linux 的 Docker 要加上這一行
+  extra_hosts: ['host.docker.internal:host-gateway']
   volumes:
     - ./brands:/app/brands:ro
     - ./assets/products:/app/assets/products:ro
     - ./data:/app/data
     - ./pricing.yaml:/app/pricing.yaml:ro
+    - ./comfyui/workflows:/app/comfyui/workflows:ro
   restart: unless-stopped
 
 services:
@@ -117,6 +127,7 @@ services:
       - ./assets/products:/app/assets/products:ro
       - ./data:/app/data
       - ./pricing.yaml:/app/pricing.yaml:ro
+      - ./comfyui/workflows:/app/comfyui/workflows:ro
       # 去背模型（BiRefNet，約 1 GB）與 RAG 模型（BGE-M3＋Reranker，約 1.2 GB）：第一次啟動時下載
       - models:/app/models
     depends_on:

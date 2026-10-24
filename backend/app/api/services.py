@@ -10,6 +10,7 @@ from fastapi import Depends
 from redis.asyncio import Redis
 from starlette.requests import HTTPConnection
 
+from app.adapters.comfyui import ComfyClient
 from app.adapters.composer import ComposerClient
 from app.adapters.gemini import GeminiClient
 from app.brands import BrandLoadError, load_brands
@@ -40,6 +41,8 @@ class ApiServices:
     gemini: GeminiClient | None = None
     #: Gemini 的用量、上限與單價表（AGENT_MODE=gemini）
     ledger: UsageLedger | None = None
+    #: IMAGE_MODE=comfyui 時的 ComfyUI client（系統狀態檢查連線、節點與模型）
+    comfy: ComfyClient | None = None
 
     async def sync_brands(self) -> None:
         """品牌設定檔 → 資料庫（api 啟動時執行）。"""
@@ -72,8 +75,9 @@ async def start_services(settings: Settings) -> ApiServices:
         agent = SimAgent(
             composer, first_round_fail=settings.sim_first_round_fail, force_all_fail=settings.sim_force_all_fail
         )
+    comfy = ComfyClient(settings) if settings.image_mode == 'comfyui' else None
     services = ApiServices(
-        settings, db, redis, EventStore(db, redis), queues, composer, agent, gemini=gemini, ledger=ledger
+        settings, db, redis, EventStore(db, redis), queues, composer, agent, gemini=gemini, ledger=ledger, comfy=comfy
     )
     await services.sync_brands()
     return services
@@ -84,6 +88,8 @@ async def stop_services(services: ApiServices) -> None:
     await services.composer.aclose()
     if services.gemini is not None:
         await services.gemini.aclose()
+    if services.comfy is not None:
+        await services.comfy.aclose()
     await services.redis.aclose()
     await services.db.dispose()
 

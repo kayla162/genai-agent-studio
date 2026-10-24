@@ -23,7 +23,7 @@ from app.contract import (
     TemplateId,
 )
 from app.pipeline.gemini_types import GuardIssue, SpecDraft, VlmVerdict
-from app.pipeline.ports import ReviewResult, SpecRequest
+from app.pipeline.ports import BackgroundPalette, ReviewResult, SpecRequest
 
 
 class ComposerError(Exception):
@@ -66,6 +66,39 @@ class RenderedPoster:
     measured_primary: str | None
     #: 主色色塊佔量測範圍的比例（0–1）
     primary_share: float
+    #: 背景的品牌色系（X-Background-Palette）；沒有這個標頭時為 None
+    background: BackgroundPalette | None = None
+
+
+@dataclass(frozen=True)
+class PlateRect:
+    """生成尺寸上的矩形（像素，可以有小數）。"""
+
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+@dataclass(frozen=True)
+class PlateResult:
+    """ComfyUI 生成背景用的商品底圖與遮罩（/plate，Plan 7 規格 §4.3）。"""
+
+    #: 生成尺寸
+    width: int
+    height: int
+    #: 生成的圖放大到模板的倍率（cover），以及放大後置中裁切的左上角位移（模板像素）
+    scale: float
+    crop_x: float
+    crop_y: float
+    #: 商品在生成尺寸上的矩形；沒有商品時為 None
+    product_rect: PlateRect | None
+    #: 中性灰畫布加上商品（PNG）
+    plate: bytes
+    #: 重繪範圍：白色重繪、黑色保留（PNG）
+    mask: bytes
+    #: 商品還沒去背時的說明（「商品尚未去背，背景依外框生成」）
+    warning: str | None
 
 
 @dataclass(frozen=True)
@@ -178,7 +211,7 @@ class ComposerClient:
     async def render(
         self, render: Render, product: Product | None, brand: Brand, images: PosterImages
     ) -> RenderedPoster:
-        """在伺服器端繪製審查用海報（/render）：模板原始尺寸的 PNG，以及從像素量到的品牌主色。"""
+        """在伺服器端繪製審查用海報（/render）：模板原始尺寸的 PNG，以及從像素量到的品牌主色與背景色系。"""
         body = {
             'render': render.to_json(),
             'product': product.to_json() if product else None,
@@ -192,6 +225,31 @@ class ComposerClient:
             png=res.content,
             measured_primary=res.headers.get('X-Measured-Primary') or None,
             primary_share=float(res.headers.get('X-Primary-Share') or 0),
+            background=BackgroundPalette.model_validate_json(bg)
+            if (bg := res.headers.get('X-Background-Palette'))
+            else None,
+        )
+
+    async def plate(self, spec: PromptSpec, product: Product | None, brand: Brand, images: PosterImages) -> PlateResult:
+        """ComfyUI 生成背景用的商品底圖與遮罩（/plate）：商品圖與 /render 相同（images.product）。"""
+        body = {
+            'spec': spec.to_json(),
+            'product': product.to_json() if product else None,
+            'brand': brand_json(brand),
+            'images': images.to_json(),
+        }
+        data = await self._post('/plate', body)
+        rect = data['productRect']
+        return PlateResult(
+            width=data['width'],
+            height=data['height'],
+            scale=data['scale'],
+            crop_x=data['crop']['x'],
+            crop_y=data['crop']['y'],
+            product_rect=PlateRect(rect['x'], rect['y'], rect['w'], rect['h']) if rect else None,
+            plate=base64.b64decode(data['plate']),
+            mask=base64.b64decode(data['mask']),
+            warning=data['warning'],
         )
 
     async def review(
@@ -201,11 +259,17 @@ class ComposerClient:
         measured_primary: str | None,
         vlm: VlmVerdict | None = None,
         vlm_scale: float = 1.0,
+        background: BackgroundPalette | None = None,
     ) -> ReviewResult:
-        """live 模式的審查（/review）：7 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
+        """live 模式的審查（/review）：8 項規則加 3 項 VLM 檢查，分數不加隨機抖動。
         vlm 有值（AGENT_MODE=gemini）時 VLM 三項用 Gemini 的判讀並比對轉錄（vlm_scale 為送出圖片與畫布的比例）；
-        None 時 VLM 三項依內容判斷。"""
-        body: dict[str, Any] = {'spec': spec.to_json(), 'brand': brand_json(brand), 'measuredPrimary': measured_primary}
+        None 時 VLM 三項依內容判斷。background 為 /render 量到的背景色系；None 時背景色系為模擬（通過）。"""
+        body: dict[str, Any] = {
+            'spec': spec.to_json(),
+            'brand': brand_json(brand),
+            'measuredPrimary': measured_primary,
+            'background': background.to_json() if background else None,
+        }
         if vlm is not None:
             body |= {'vlm': vlm.to_json(), 'vlmScale': vlm_scale}
         return _review_result(await self._post('/review', body))

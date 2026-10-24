@@ -128,8 +128,8 @@ function drawLogo(ctx: Ctx, op: LogoOp, assets: PaintAssets) {
   if (op.wordmark) drawText(ctx, op.wordmark, fonts);
 }
 
-/** 等比縮放放進框內，底部對齊（商品站在桌面上） */
-function containBottom(rect: Rect, w: number, h: number): Rect {
+/** 等比縮放放進框內，底部對齊（商品站在桌面上）；ComfyUI 的商品底圖（plate.ts）以同一個矩形放商品 */
+export function containBottom(rect: Rect, w: number, h: number): Rect {
   const s = Math.min(rect.w / w, rect.h / h);
   const dw = w * s;
   const dh = h * s;

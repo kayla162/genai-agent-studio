@@ -53,6 +53,62 @@
 
 （實作時與本計畫原文不同的地方記錄在這裡，程式碼以 commit 為準。）
 
+- **Task 2**：
+  - `bgPaletteCheck` 的完整判定（通過、警告、不通過與說明文字）在 Task 2 就實作，Task 3 只加上量測；色塊用的 `measuredBackgroundOf` 也放在 `background.ts`，由 `rules.ts` 轉出。
+  - `recheckCopy`（文字編輯器改文案後的重新審查）沿用生成時的 `bg_palette`：背景與文案無關，否則會變回「（模擬）」。
+  - 畫面與註解的「規則 7 項」改為 8 項（節點圖、合規報告、結果牆、composer 與 Python 的 docstring）；README 留到 Task 12。
+  - 多一項檢查使審查階段內 `review.check` 的時間間隔變短（總長不變），sample snapshot 的 `seq` 也隨之後移；以 JSON 比對確認除此之外 fixtures 沒有改變，並以暫存腳本在記憶體中執行模擬模式的 `_pipeline`，三條 timelines 的事件完全相同（`test_parity` 需要資料庫，未在本機執行）。
+- **Task 3**：
+  - Python 的 `BackgroundPalette` 放在 `app/pipeline/ports.py`（`ComposedPoster.background` 用到它，放在 `composer.py` 會循環匯入）；`RenderedPoster.background` 與 `ComposedPoster.background` 預設為 None（沒有標頭時背景色系為模擬）。
+  - composer 的 `measureBackground(image, spec, brand)`：把背景以海報相同的拉伸方式縮小到長邊 256 再量，色票用品牌設定檔的（不是 spec 的，偏色的 spec 畫出的背景也要判定為色系外）；`measureBackgroundPalette` 的商品方框為 `BBox`，由呼叫端從 `boxMap` 的矩形轉換。
+  - 程式產生的背景（3 個品牌 × 5 個模板 × 6 個 seed）色系外最多 0.7%（SÉLUNE），其他兩個品牌為 0%，與 15% 的門檻有很大的餘裕。
+  - 審查清單在背景色系的說明旁畫出色系外的主要顏色（與主色色塊共用元件）。
+- **Task 4**：
+  - 生成尺寸用 SDXL 常用的尺寸，邊長都是 64 的倍數：4:3 為 1152 × 896、4:5 為 896 × 1152（規格原本寫 1152 × 864、896 × 1120，邊長不是 64 的倍數）；與模板比例相差都 < 5%，放大後只裁掉一點。規格 §4.3 一併修改。
+  - `/plate` 的回應：`{ width, height, scale, crop: { x, y }, productRect, plate, mask, warning }`（`scale` 與 `crop` 給 worker 放大與裁切用）；Python 為 `PlateResult`（`crop_x`、`crop_y`、`product_rect: PlateRect | None`）。
+  - 商品已刪除時沒有 `productRect`，遮罩全白（整張重繪）。
+  - `renderPlate(input, grow)` 的 `grow` 參數讓測試比較有無擴張；遮罩擴張為正方形鄰域（`dilateMask`，先橫向再縱向）。
+  - 上傳的商品還沒去背時，底圖照樣畫出原照片（給模型參考），遮罩保留整個照片矩形。
+- **Task 5**：
+  - Task 1 還沒做，先手寫 `comfyui/workflows/product_scene_v1.json`（方式 A：`InpaintModelConditioning` 讀底圖與遮罩），只用 ComfyUI 內建節點與 SDXL base 1.0（規格 §4.2 的授權為 CreativeML Open RAIL++-M）。Lightning LoRA 的授權還沒確認，依 Global Constraints 先不放進 workflow，步數暫為 20；Task 1 實測後換成匯出的 workflow。
+  - 對照表沒有 `width`、`height`：重繪的尺寸由底圖決定（`/plate` 已經是生成尺寸）。多了 `scheduler`；`plate_image`、`mask_image` 的檔名含輪次（`{jobId}_r{round}_{templateId}_plate.png`），因為 Gemini 每輪可能調整版面。
+  - 前端的表在 `web/src/lib/agent/comfy.ts`（`PRODUCT_SCENE`、`plateImageName`、`maskImageName`）；`npm run fixtures` 匯出成 `contracts/fixtures/comfy.json`，pytest 確認與 `comfyui/workflows/product_scene_v1.params.json` 相同。`buildInjection` 的輸入改為 `jobId`、`round`、`templateId`、提示詞與畫布（不再需要 `layout`）；mock 的 `logoCrowding` 失誤不再改 `layout_boxes`。
+  - 模擬模式的 timelines 只有 `injection` 改變（以 JSON 比對確認）；記憶體中執行模擬模式的 `_pipeline`，三條 timelines 的事件仍完全相同。
+- **Task 6**：測試與腳本建立 `Settings` 時一律加上 `image_mode='sim'`（conftest 的 `BASE_SETTINGS` 與 api 測試的設定、`test_review`、`test_worker`、`test_api_catalog`、Gemini 相關測試、`gemini_experiment.py`），之後 Task 10 依 `IMAGE_MODE` 選生圖引擎時，測試不會改連 ComfyUI。
+- **Task 7**：
+  - `uv add websockets`：`websockets>=17.2`（`uv.lock` 固定為 17.2）。
+  - 錯誤分兩種：`ComfyError`（連不上、拒絕 workflow、缺少節點或模型、逾時，重試也不會好）與它的子類別 `ComfyExecutionError`（`execution_error`、`execution_interrupted`，`out_of_memory` 標示 GPU 記憶體不足），Task 8 只重試後者。
+  - `missing(workflow, ignore)` 不需要另外傳模型清單：依 `/object_info` 檢查每個節點類型都存在，以及選項型輸入（模型檔名、取樣器、排程器…）的值都在 ComfyUI 的清單裡；`ignore` 排除每個任務上傳的底圖與遮罩。
+  - `POST /free` 的回應沒有內容，只檢查 HTTP 狀態；`/interrupt` 與 `/queue` 失敗時略過（ComfyUI 已經關閉）。HTTP 請求的逾時為 30 秒，等待 prompt 另以 `COMFYUI_TIMEOUT_SECONDS` 計算。
+  - 假的 WebSocket 伺服器送完訊息後等用戶端關閉（`wait_closed`），伺服器才能正常結束；respx 以 `assert_all_called=False` 共用同一組路由。
+- **Task 8**：
+  - `render_round` 的新參數 `product` 放在 `brand` 之後、`run` 之前；`SimImageEngine` 與測試的 `FakeImage` 接受但不使用。
+  - `ComfyImageEngine(comfy, composer, settings, workflows_dir)`：讀參數對照表找 workflow 與底圖、遮罩的節點，商品圖由 `review.py` 抽出的 `product_image`（與 `required_image`）讀取，原本 `ComposerPosters` 的私有方法改用這兩個函式。
+  - 進度只回報取樣節點（`KSampler` 等）的 `generate`；手寫的 workflow 沒有放大節點（放大在 worker 以 Lanczos 進行），所以不送 `upscale`。
+  - `comfy.queued` 的 `promptId` 是 `{jobId}_r{round}_{templateId}_v{variant}`（ComfyUI 的 prompt_id 要送出後才知道），`injection` 的 seed 已加上 variant。
+  - 輸出圖與底圖尺寸不同時任務失敗（放大與裁切的方式會不同，商品對不上原始去背圖）。
+- **Task 9**：
+  - `HeavyMemoryLock(make_lock, enabled, ttl, poll)` 接受建立鎖的函式（`from_redis` 用 redis-py 的 `redis.lock(..., thread_local=False)`），測試以記憶體裡有到期時間的假鎖取代，不需要 Redis；`LockLike` 只描述用到的 `acquire`、`reacquire`、`release`。
+  - 鎖在 `ComfyImageEngine.render_round` 檢查完節點與模型之後取得（缺少模型時不必等去背），等待時送出 log「等待商品去背完成」。
+  - 去背在讀完照片、載入模型之前取得鎖，等待時只寫 logger（商品卡維持「去背中」）。`Services.memory` 預設為 None（不互斥），`build_services` 依 `MEMORY_LOCK` 建立。
+  - `ImageEngine.finish(job_id)` 由 `run_job` 的 `finally` 呼叫（完成、失敗、取消都會）；認領失敗（任務已不在排隊）時不呼叫。
+- **Task 10**：
+  - 依 `IMAGE_MODE` 選生圖引擎的邏輯放在 `comfy_ports(ports, composer, settings, memory)`（與 6B 的 `gemini_ports` 相同的作法），`build_services` 呼叫它；不需要資料庫就能測試。`load_workflow()` 讀對照表與 workflow，`ComfyImageEngine` 與系統狀態共用。
+  - 系統狀態的 ComfyUI 一項名稱改為「ComfyUI（生圖）」；`/object_info` 由 `ComfyClient` 快取 60 秒。沒有做「背景更新、第一次逾時顯示檢查中」：ComfyUI 回應 `/object_info` 很快（本機），逾時時照現有規則顯示「3 秒內沒有回應」，Task 1 實測後若太慢再處理。
+  - 前端的節點圖本來就只顯示目前執行中的節點群組與步數（`COMFY_STEP[progress.node]`），不需修改。已知限制：精簡進度條（`jobProgress`）依節點估算比例，ComfyUI 每個 variant 的 `generate` 進度會從頭開始，所以進度條在生圖階段會來回；之後可在 `render.progress` 加上 variant 再改。
+  - 結果牆的 seed 改用 `renderSeed(render)`（`prompt.ts`）；儀表板的成本說明在 live 模式加上「生圖在本機 GPU，不計費」（live 的成本本來就只有 `job_usage`）。模擬 Agent 的估算以每張 `Render.background.kind` 判斷（`url` 不計生圖費用），任務摘要不需要新欄位。
+- **Task 11**：
+  - 新增設定 `COMFYUI_WORKFLOWS_DIR`（預設 repo 的 `comfyui/workflows`）：容器內的 `REPO_ROOT` 是 `/`，所以與 `PRICING_FILE` 一樣由 compose 指定 `/app/comfyui/workflows` 並唯讀掛載（api 與 worker 的 `volumes` 都加上）。`ComfyImageEngine` 與系統狀態都讀這個設定。
+  - `extra_hosts: host.docker.internal:host-gateway` 放在 `x-backend`（api 與 worker 都有）；Docker Desktop 已內建，加上也不影響。
+  - `.env.example` 的 `COMFYUI_URL` 是註解：docker compose 也讀 `.env` 做變數替換，設成 `127.0.0.1` 會讓容器連不到 Windows 上的 ComfyUI（測試確認沒有未註解的 `COMFYUI_URL=`）。
+  - `record_comfy.py` 用真的 `ComfyImageEngine` 跑一次，以 httpx 的 response hook 與包住 WebSocket 的物件錄下回應；`test_comfy_live.py` 以 `/layout` 換出 5 個模板的 spec，每個模板生成一張。兩者在這台機器都還沒對真的 ComfyUI 執行過。
+- **Task 1**：
+  - 依使用者的指示（「有問題時都依推薦的選項選」）直接選定：ComfyUI v0.42.1 portable、SDXL base 1.0＋SDXL-Lightning 8 步的 LoRA（兩者都是 Open RAIL++-M，允許商用）、只做方式 A。下載中斷時以 curl 的續傳完成，並核對 SHA-256。
+  - `setup.ps1` 要存成有 BOM 的 UTF-8：Windows PowerShell 5.1 把沒有 BOM 的檔案當成 ANSI 讀，中文訊息會讓腳本無法解析。
+  - 實驗發現生成端的問題並修正（色名、正面提示詞、負面提示詞、cfg 2、遮罩擴張 0），量測端的參數以存下的背景離線校準；細節與數字在規格 §12。
+  - `comfy_experiment.py` 的 `sample_product` 與 `hits_of` 複製自 `gemini_experiment.py`：從另一個腳本匯入時 mypy 會把同一個檔案當成兩個模組。
+- **Task 12**：`comfyui/README.md` 先建立（安裝、記憶體、驗證與錄製），ComfyUI 版本、啟動參數、加速模型與記憶體的實測數字標示「待實測」，Task 1 補上；`models.md`、`custom_nodes.md`、`setup.ps1` 仍在 Task 1 建立。README 的進度表把 Plan 7 寫成「程式完成；ComfyUI 的安裝、模型授權確認與實測待執行」。
+
 ## Global Constraints
 
 - **指令位置**：前端在 `web/`，後端在 `backend/`，`docker compose` 在 repo 根目錄；ComfyUI 相關檔案在 `comfyui/`。

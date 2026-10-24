@@ -1,4 +1,4 @@
-"""GeminiReviewer：讀審查用海報、呼叫 VLM（FakeGemini）、以 composer 的 /review 比對轉錄並產生 10 項檢查。
+"""GeminiReviewer：讀審查用海報、呼叫 VLM（FakeGemini）、以 composer 的 /review 比對轉錄並產生 11 項檢查。
 
 使用測試啟動的 composer（需要字型）繪製審查用海報；不需要資料庫。
 """
@@ -20,7 +20,7 @@ from app.errors import AppError, BudgetExceeded
 from app.pipeline import gemini
 from app.pipeline.gemini import GeminiReviewer
 from app.pipeline.gemini_types import VlmVerdict
-from app.pipeline.ports import ComposedPoster, ReviewResult
+from app.pipeline.ports import BackgroundPalette, ComposedPoster, ReviewResult
 from app.pipeline.review import ComposerPosters
 from app.settings import Settings
 from tests.fake_gemini import FakeGemini
@@ -83,9 +83,10 @@ class RecordingComposer(ComposerClient):
         measured_primary: str | None,
         vlm: VlmVerdict | None = None,
         vlm_scale: float = 1.0,
+        background: BackgroundPalette | None = None,
     ) -> ReviewResult:
-        self.reviews.append({'vlm': vlm, 'vlm_scale': vlm_scale})
-        return await super().review(spec, brand, measured_primary, vlm, vlm_scale)
+        self.reviews.append({'vlm': vlm, 'vlm_scale': vlm_scale, 'background': background})
+        return await super().review(spec, brand, measured_primary, vlm, vlm_scale, background)
 
 
 @pytest.fixture
@@ -97,7 +98,13 @@ async def composer(composer_url: str) -> AsyncIterator[RecordingComposer]:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(_env_file=None, agent_mode='gemini', data_dir=tmp_path / 'data', brands_dir=tmp_path / 'brands')
+    return Settings(
+        _env_file=None,
+        image_mode='sim',
+        agent_mode='gemini',
+        data_dir=tmp_path / 'data',
+        brands_dir=tmp_path / 'brands',
+    )
 
 
 @pytest.fixture
@@ -120,8 +127,13 @@ async def test_a_correct_transcription_passes_with_gemini_wording(
 ) -> None:
     fake = FakeGemini(vlm=[verdict(drawn_text(CLEAN.spec))])
     result = await review(composer, settings, poster, fake)
-    assert len(result.checks) == 10
+    assert len(result.checks) == 11
     assert by_id(result.checks, 'ocr_typo').value == '0 處差異'
+    # 背景色系依審查用海報的背景量測判定（程式產生的背景在品牌色系內），不是模擬
+    assert poster.background is not None
+    assert composer.reviews[-1]['background'] == poster.background
+    assert by_id(result.checks, 'bg_palette').status == 'pass'
+    assert by_id(result.checks, 'bg_palette').value.startswith('色系外 ')
     vlm = [c for c in result.checks if c.kind == 'vlm']
     assert [c.value for c in vlm] == ['未發現誇大用語', '無重疊遮擋', '構圖與畫質良好']
     assert result.passed

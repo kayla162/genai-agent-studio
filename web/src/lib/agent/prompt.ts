@@ -1,10 +1,14 @@
 import type {
-  Brand, ChannelTemplate, CheckId, ComfyInjection, Copy, Engine, ParsedBrief, Product, PromptSpec,
+  Brand, ChannelTemplate, CheckId, ComfyInjection, Copy, Engine, ParsedBrief, Product, PromptSpec, Render,
 } from '@/types/contract';
 import { computeLayout } from '@/lib/compose/layout';
 import { claimTexts, hasClaim } from '@/lib/review/rules';
+import { paletteWords } from './color-words';
+import { maskImageName, PRODUCT_SCENE, plateImageName } from './comfy';
 
-export const BASE_NEGATIVE = 'lowres, blurry, watermark, deformed product, extra objects, garbled text';
+/** 固定的負面提示詞。ComfyUI 只重繪商品以外的背景，所以排除其他商品、包裝與文字（Plan 7 規格 §12：沒有這些詞時常生成第二個瓶罐與亂碼標籤） */
+export const BASE_NEGATIVE =
+  'lowres, blurry, watermark, deformed product, extra objects, garbled text, text, letters, logo, other products, bottles, jars, packaging';
 
 const OFFER_SUB: [RegExp, string][] = [
   [/買一送一/, 'BUY 1 GET 1'],
@@ -15,6 +19,7 @@ const OFFER_SUB: [RegExp, string][] = [
 /** 上一輪未通過的檢查 → 這一輪 negative prompt 要加強的詞 */
 export const NEGATIVE_BY_FIX: Partial<Record<CheckId, string>> = {
   color_delta: 'oversaturated, neon, off-brand colors',
+  bg_palette: 'neon colors, fluorescent colors, off-brand color cast',
   vlm_occlusion: 'cluttered composition, overlapping elements',
   vlm_quality: 'overexposed highlights',
 };
@@ -76,11 +81,12 @@ export function buildDisclaimer(
 export function positivePromptOf(template: ChannelTemplate, brand: Brand, brief: ParsedBrief, scene: string | null): string {
   const palette = brand.palette;
   return [
-    `${template.ratio} commercial product photography`,
-    'the provided product photo on a styled surface',
+    // ComfyUI 只重繪商品以外的區域：描述場景與檯面，不要求「商品攝影」（否則會多畫出其他商品）
+    `${template.ratio} commercial photography backdrop`,
+    'empty styled set with a single display surface',
     ...(scene ? [scene] : []),
     brand.visualStyle,
-    `${palette.primary} and ${palette.secondary} color palette with ${palette.accent} accents`,
+    paletteWords(palette),
     ...brief.style,
     'clean negative space for typography',
     'high-end editorial lighting',
@@ -110,13 +116,17 @@ export interface PromptBuildInput {
   fixes: CheckId[];
 }
 
+/**
+ * 送給生圖引擎的參數。ComfyUI 依 product_scene_v1 的參數對照表（comfy.ts）：提示詞、seed、底圖與遮罩的檔名
+ * 由 spec 填入，其他用表上的預設值；這就是 worker 實際送出的參數（Plan 7 規格 §4.4）。
+ */
 export function buildInjection(
-  spec: Pick<PromptSpec, 'positivePrompt' | 'negativePrompt' | 'canvas' | 'layout'>,
+  spec: Pick<PromptSpec, 'jobId' | 'round' | 'templateId' | 'positivePrompt' | 'negativePrompt' | 'canvas'>,
   engine: Engine,
   productId: string,
   seed: number,
 ): ComfyInjection {
-  const { width, height, ratio } = spec.canvas;
+  const { ratio } = spec.canvas;
   if (engine === 'ideogram') {
     return {
       engine,
@@ -131,26 +141,21 @@ export function buildInjection(
       ],
     };
   }
+  const fromSpec: Record<string, string | number> = {
+    positive_prompt: spec.positivePrompt,
+    negative_prompt: spec.negativePrompt,
+    seed,
+    plate_image: plateImageName(spec),
+    mask_image: maskImageName(spec),
+  };
   return {
     engine,
-    workflowFile: 'workflows/product_scene_v1.json',
-    params: [
-      { nodeId: '4', input: 'ckpt_name', label: 'checkpoint', value: 'sd_xl_base_1.0.safetensors' },
-      { nodeId: '6', input: 'text', label: 'positive_prompt', value: spec.positivePrompt },
-      { nodeId: '7', input: 'text', label: 'negative_prompt', value: spec.negativePrompt },
-      { nodeId: '10', input: 'image', label: 'product_image', value: `${productId}.png` },
-      { nodeId: '11', input: 'model', label: 'cutout_model', value: 'BiRefNet-general' },
-      { nodeId: '14', input: 'strength', label: 'controlnet_depth', value: 0.65 },
-      { nodeId: '15', input: 'weight', label: 'ip_adapter_style', value: 0.55 },
-      { nodeId: '20', input: 'width', label: 'width', value: width },
-      { nodeId: '20', input: 'height', label: 'height', value: height },
-      { nodeId: '3', input: 'seed', label: 'seed', value: seed },
-      { nodeId: '3', input: 'sampler_name', label: 'sampler', value: 'dpmpp_2m_sde' },
-      { nodeId: '3', input: 'steps', label: 'steps', value: 28 },
-      { nodeId: '3', input: 'cfg', label: 'cfg', value: 6 },
-      { nodeId: '30', input: 'light_direction', label: 'ic_light', value: 'top-left' },
-      { nodeId: '40', input: 'boxes', label: 'layout_boxes', value: JSON.stringify(spec.layout.map((b) => [b.id, ...b.bbox])) },
-    ],
+    workflowFile: `workflows/${PRODUCT_SCENE.workflow}`,
+    params: PRODUCT_SCENE.params.map(({ nodeId, input, label, default: fixed }) => {
+      const value = fixed ?? fromSpec[label];
+      if (value === undefined) throw new Error(`參數 ${label} 沒有預設值，也不是由 spec 填入`);
+      return { nodeId, input, label, value };
+    }),
   };
 }
 
@@ -160,6 +165,10 @@ export function setParam(injection: ComfyInjection, label: string, value: string
 
 export const seedOf = (spec: PromptSpec): number =>
   Number(spec.injection.params.find((p) => p.label === 'seed')?.value ?? 0);
+
+/** 一張候選實際用的 seed：程序化背景記在背景裡；ComfyUI 的背景是注入的 seed 加上 variant 編號（與 worker 相同） */
+export const renderSeed = (render: Pick<Render, 'background' | 'spec' | 'variant'>): number =>
+  render.background.kind === 'procedural' ? render.background.seed : seedOf(render.spec) + render.variant;
 
 export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
   const { brand, product, brief, template } = input;
@@ -181,7 +190,10 @@ export function buildPromptSpec(input: PromptBuildInput): PromptSpec {
     layout,
     positivePrompt,
     negativePrompt,
-    injection: buildInjection({ positivePrompt, negativePrompt, canvas, layout }, input.engine, product.id, input.seed),
+    injection: buildInjection(
+      { jobId: input.jobId, round: input.round, templateId: template.id, positivePrompt, negativePrompt, canvas },
+      input.engine, product.id, input.seed,
+    ),
     ragRefs: [...input.ragRefs],
   };
 }

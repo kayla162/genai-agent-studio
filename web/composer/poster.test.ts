@@ -9,12 +9,14 @@ import { applyFlaws, FLAWS } from '@/lib/api/mock/flaws';
 import { boxMap } from '@/lib/compose/layout';
 import { fitLogoImage } from '@/lib/compose/scene';
 import { getTemplate } from '@/lib/compose/templates';
+import { backgroundSvg, svgDataUrl } from '@/lib/compose/art';
+import { bgPaletteCheck, type BackgroundPalette } from '@/lib/review/background';
 import { deltaEHex } from '@/lib/review/color';
 import { runRuleChecks } from '@/lib/review/rules';
 import { cleanSpec } from '@/test/fixtures';
 import { createComposerServer } from './app';
 import { FONTS_HINT, missingPosterFonts, registerPosterFonts, resolveFontsDir } from './fonts';
-import { renderPoster, type PosterImages, type RenderedPoster } from './poster';
+import { measureBackground, renderPoster, type PosterImages, type RenderedPoster } from './poster';
 
 const FONTS_DIR = resolveFontsDir();
 const MISSING = missingPosterFonts(FONTS_DIR);
@@ -124,6 +126,24 @@ describe('renderPoster input errors', () => {
   });
 });
 
+// Plan 7 規格 §2：程式產生的背景（3 個品牌 × 5 個模板 × 2 個 seed）在背景色系檢查全部通過
+describe('background palette of the procedural backgrounds', () => {
+  describe.each(CASES)('$brand.id', ({ brand, product }) => {
+    it.each(TEMPLATE_IDS)('%s passes bg_palette for two seeds', async (id: TemplateId) => {
+      const spec = cleanSpec(brand, product, id);
+      for (const seed of [seedOf(spec), seedOf(spec) + 1]) {
+        const svg = backgroundSvg({
+          width: spec.canvas.width, height: spec.canvas.height, palette: spec.palette, seed, style: brand.id,
+          focus: boxMap(spec.layout).product,
+        });
+        const image = await loadImage(Buffer.from(decodeURIComponent(svgDataUrl(svg).split(',')[1]), 'utf8'));
+        const measured = measureBackground(image, spec, brand);
+        expect({ seed, ...bgPaletteCheck(measured) }).toMatchObject({ seed, status: 'pass' });
+      }
+    }, SLOW);
+  });
+});
+
 describe.skipIf(MISSING.length > 0)(`renderPoster with the poster fonts（沒有字型時略過：${FONTS_HINT}）`, () => {
   beforeAll(() => {
     registerPosterFonts(FONTS_DIR);
@@ -173,6 +193,9 @@ describe.skipIf(MISSING.length > 0)(`renderPoster with the poster fonts（沒有
     const logo = fitLogoImage(B.logo, 300, 100);
 
     const normal = await renderPoster({ render, product: upload, brand, images: await images('normal') });
+    // 純藍的背景不在 SÉLUNE 的色系（玫瑰、米白、金）內：量的是疊上文字與商品之前的背景
+    expect(normal.background.offShare).toBe(1);
+    expect(bgPaletteCheck(normal.background)).toMatchObject({ status: 'fail', value: '色系外 100%（主要為 #0000FF）' });
     const px = await pixelsOf(normal.png);
     expect(px(2, 2)).toEqual([0, 0, 255]);
     expect(px(...productCentre)).toEqual([0, 255, 0]);
@@ -214,14 +237,17 @@ describe.skipIf(MISSING.length > 0)(`POST /render（沒有字型時略過：${FO
     const png = Buffer.from(await res.arrayBuffer());
     expect(pngSize(png)).toEqual({ width: getTemplate('story').width, height: getTemplate('story').height });
 
-    const { measured } = await renderPoster(input);
+    const { measured, background } = await renderPoster(input);
     const primary = res.headers.get('x-measured-primary');
     expect(primary).toBe(measured.hex);
     expect(Number(res.headers.get('x-primary-share'))).toBeCloseTo(measured.share, 4);
+    const sent = JSON.parse(res.headers.get('x-background-palette')!) as BackgroundPalette;
+    expect(sent).toEqual({ ...background, offShare: Number(background.offShare.toFixed(4)) });
 
-    const review = await post('/review', { spec, brand: SELUNE, measuredPrimary: primary });
+    const review = await post('/review', { spec, brand: SELUNE, measuredPrimary: primary, background: sent });
     const body = (await review.json()) as { checks: ReviewCheck[]; score: number; passed: boolean };
     expect(body.checks.find((c) => c.id === 'color_delta')!.status).toBe('pass');
+    expect(body.checks.find((c) => c.id === 'bg_palette')).toMatchObject({ status: 'pass', value: expect.stringMatching(/^色系外 \d+%$/) });
     expect(body).toMatchObject({ score: 100, passed: true });
   }, SLOW);
 

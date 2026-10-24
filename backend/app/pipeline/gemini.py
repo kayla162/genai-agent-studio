@@ -5,7 +5,7 @@
   帶著中文說明重問一次；第二次直接使用 /spec 回傳的 spec（仍有問題的欄位已改用預設），並以 warn log 顯示。
 - 需求拆解與 Query Rewriting 的護欄在這裡（規格 §4.3、§4.5）。
 - VLM 審查：讀排版階段存的審查用海報，Gemini 轉錄文字並判斷三項 VLM 檢查（不提供預期文案，避免照抄），
-  再由 composer 的 /review 比對轉錄（ocrDiffs）並產生 10 項檢查。
+  再由 composer 的 /review 比對轉錄（ocrDiffs）並產生 11 項檢查。
 """
 
 import asyncio
@@ -413,7 +413,7 @@ def prepare_poster(path: Path, max_side: int | None) -> tuple[bytes, tuple[int, 
 
 
 class GeminiReviewer(Reviewer):
-    """AGENT_MODE=gemini 的審查：Gemini VLM 讀審查用海報，再以 composer 的 /review 產生 10 項檢查與分數。"""
+    """AGENT_MODE=gemini 的審查：Gemini VLM 讀審查用海報，再以 composer 的 /review 產生 11 項檢查與分數。"""
 
     def __init__(self, client: LlmClient, composer: ComposerClient, settings: Settings) -> None:
         self.client = client
@@ -456,7 +456,9 @@ class GeminiReviewer(Reviewer):
         except GeminiError as error:
             raise AppError(f'{VLM_FAILED}{error.message}') from error
         try:
-            return await self.composer.review(render.spec, brand, poster.measured_primary, verdict, scale)
+            return await self.composer.review(
+                render.spec, brand, poster.measured_primary, verdict, scale, background=poster.background
+            )
         except ComposerError as error:
             raise AppError(f'{REVIEW_FAILED}{error}') from error
 

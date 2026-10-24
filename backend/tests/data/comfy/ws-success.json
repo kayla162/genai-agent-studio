@@ -1,0 +1,1103 @@
+[
+  {
+    "type": "status",
+    "data": {
+      "status": {
+        "exec_info": {
+          "queue_remaining": 0
+        }
+      },
+      "sid": "fb6aa14177a34e30942ff2d02abb9d8a"
+    }
+  },
+  {
+    "type": "status",
+    "data": {
+      "status": {
+        "exec_info": {
+          "queue_remaining": 1
+        }
+      }
+    }
+  },
+  {
+    "type": "status",
+    "data": {
+      "status": {
+        "exec_info": {
+          "queue_remaining": 1
+        }
+      }
+    }
+  },
+  {
+    "type": "execution_start",
+    "data": {
+      "prompt_id": "p-0001",
+      "timestamp": 1792800026880
+    }
+  },
+  {
+    "type": "execution_cached",
+    "data": {
+      "nodes": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "prompt_id": "p-0001",
+      "timestamp": 1792800026883
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 0.0,
+          "max": 1.0,
+          "state": "running",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        }
+      }
+    }
+  },
+  {
+    "type": "executing",
+    "data": {
+      "node": "6",
+      "display_node": "6",
+      "prompt_id": "p-0001"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 0.0,
+          "max": 1.0,
+          "state": "running",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        }
+      }
+    }
+  },
+  {
+    "type": "executing",
+    "data": {
+      "node": "5",
+      "display_node": "5",
+      "prompt_id": "p-0001"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 0.0,
+          "max": 1.0,
+          "state": "running",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        }
+      }
+    }
+  },
+  {
+    "type": "executing",
+    "data": {
+      "node": "8",
+      "display_node": "8",
+      "prompt_id": "p-0001"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 0.0,
+          "max": 1.0,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "executing",
+    "data": {
+      "node": "9",
+      "display_node": "9",
+      "prompt_id": "p-0001"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 1,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 1,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 2,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 2,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 3,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 3,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 4,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 4,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 5,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 5,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 6,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 6,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 7,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 7,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 8,
+          "max": 8,
+          "state": "running",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress",
+    "data": {
+      "value": 8,
+      "max": 8,
+      "prompt_id": "p-0001",
+      "node": "9"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 8,
+          "max": 8,
+          "state": "finished",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 8,
+          "max": 8,
+          "state": "finished",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        },
+        "10": {
+          "value": 0.0,
+          "max": 1.0,
+          "state": "running",
+          "node_id": "10",
+          "prompt_id": "p-0001",
+          "display_node_id": "10",
+          "parent_node_id": null,
+          "real_node_id": "10"
+        }
+      }
+    }
+  },
+  {
+    "type": "executing",
+    "data": {
+      "node": "10",
+      "display_node": "10",
+      "prompt_id": "p-0001"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 8,
+          "max": 8,
+          "state": "finished",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        },
+        "10": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "10",
+          "prompt_id": "p-0001",
+          "display_node_id": "10",
+          "parent_node_id": null,
+          "real_node_id": "10"
+        }
+      }
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 8,
+          "max": 8,
+          "state": "finished",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        },
+        "10": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "10",
+          "prompt_id": "p-0001",
+          "display_node_id": "10",
+          "parent_node_id": null,
+          "real_node_id": "10"
+        },
+        "11": {
+          "value": 0.0,
+          "max": 1.0,
+          "state": "running",
+          "node_id": "11",
+          "prompt_id": "p-0001",
+          "display_node_id": "11",
+          "parent_node_id": null,
+          "real_node_id": "11"
+        }
+      }
+    }
+  },
+  {
+    "type": "executing",
+    "data": {
+      "node": "11",
+      "display_node": "11",
+      "prompt_id": "p-0001"
+    }
+  },
+  {
+    "type": "executed",
+    "data": {
+      "node": "11",
+      "display_node": "11",
+      "output": {
+        "images": [
+          {
+            "filename": "genai_bg_00006_.png",
+            "subfolder": "",
+            "type": "output",
+            "metadata": {
+              "kind": "image",
+              "width": 896,
+              "height": 1152
+            },
+            "id": "2a4b9263-867e-4a80-87d8-2f735c8bcee3"
+          }
+        ]
+      },
+      "prompt_id": "p-0001"
+    }
+  },
+  {
+    "type": "progress_state",
+    "data": {
+      "prompt_id": "p-0001",
+      "nodes": {
+        "6": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "6",
+          "prompt_id": "p-0001",
+          "display_node_id": "6",
+          "parent_node_id": null,
+          "real_node_id": "6"
+        },
+        "5": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "5",
+          "prompt_id": "p-0001",
+          "display_node_id": "5",
+          "parent_node_id": null,
+          "real_node_id": "5"
+        },
+        "8": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "8",
+          "prompt_id": "p-0001",
+          "display_node_id": "8",
+          "parent_node_id": null,
+          "real_node_id": "8"
+        },
+        "9": {
+          "value": 8,
+          "max": 8,
+          "state": "finished",
+          "node_id": "9",
+          "prompt_id": "p-0001",
+          "display_node_id": "9",
+          "parent_node_id": null,
+          "real_node_id": "9"
+        },
+        "10": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "10",
+          "prompt_id": "p-0001",
+          "display_node_id": "10",
+          "parent_node_id": null,
+          "real_node_id": "10"
+        },
+        "11": {
+          "value": 1.0,
+          "max": 1.0,
+          "state": "finished",
+          "node_id": "11",
+          "prompt_id": "p-0001",
+          "display_node_id": "11",
+          "parent_node_id": null,
+          "real_node_id": "11"
+        }
+      }
+    }
+  },
+  {
+    "type": "execution_success",
+    "data": {
+      "prompt_id": "p-0001",
+      "timestamp": 1792800033502
+    }
+  }
+]

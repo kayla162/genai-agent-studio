@@ -212,7 +212,7 @@ describe('jobs', () => {
     const entry = await api.selectRender(jobId, done.bestRenderIds['ig-post']!, copy);
     expect(entry).toMatchObject({ jobId, brandId: 'selune', templateId: 'ig-post', favorite: false, writtenToRag: true });
     expect(entry.render.passed).toBe(true);
-    expect(entry.render.checks).toHaveLength(10);
+    expect(entry.render.checks).toHaveLength(11);
     expect(entry.copy.price.sale).toBe(999);
     expect(entry.input.brief).toBe(BRIEF);
     expect(entry.input.templateIds).toEqual(['ig-post']);
@@ -441,7 +441,7 @@ describe('stored jobs', () => {
     if (prompt?.type !== 'prompt.generated') throw new Error('missing round 2 prompt');
     const entry = await reloaded.selectRender(jobId, done.bestRenderIds['ig-post']!, prompt.spec.copy);
     expect(entry.render).toMatchObject({ passed: true, round: 2 });
-    expect(entry.render.checks).toHaveLength(10);
+    expect(entry.render.checks).toHaveLength(11);
   });
 
   it('seeds finished sample jobs with 1× timestamps and keeps only the newest ones', async () => {

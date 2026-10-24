@@ -43,7 +43,7 @@ describe('reduceJob (default demo: fail → rewrite → pass)', () => {
   it('accumulates checks and scores onto renders', () => {
     expect(v.renderIds).toHaveLength(16);
     for (const id of v.renderIds) {
-      expect(v.renders[id].checks).toHaveLength(10);
+      expect(v.renders[id].checks).toHaveLength(11);
       expect(v.renders[id].score).not.toBeNull();
     }
     expect(v.specs[specKey(2, 'story')].round).toBe(2);

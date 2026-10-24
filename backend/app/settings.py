@@ -16,6 +16,8 @@ from app.rag.state import RagMode
 ReviewMode = Literal['composer', 'sim']
 #: Agent 與 VLM：gemini（Gemini 拆解需求、構建 Prompt、Query Rewriting 與 VLM 審查）或 sim（模擬，測試與作品集 Demo）
 AgentMode = Literal['gemini', 'sim']
+#: 生圖：comfyui（ComfyUI 依商品底圖生成背景，需要 REVIEW_MODE=composer）或 sim（程序化背景；測試與作品集 Demo）
+ImageMode = Literal['comfyui', 'sim']
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -61,6 +63,19 @@ class Settings(BaseSettings):
     #: Gemini 單價表（Docker 內為 /app/pricing.yaml）
     pricing_file: Path = REPO_ROOT / 'pricing.yaml'
 
+    #: 生圖：comfyui（預設，需要 REVIEW_MODE=composer 與在 Windows 啟動的 ComfyUI）或 sim
+    image_mode: ImageMode = 'comfyui'
+    #: ComfyUI 的位址（docker compose 內為 http://host.docker.internal:8188）
+    comfyui_url: str = 'http://127.0.0.1:8188'
+    #: 每個 ComfyUI prompt 的逾時（秒），含排隊與第一次載入模型
+    comfyui_timeout_seconds: float = Field(default=600, gt=0)
+    #: 每個任務生圖結束後是否請 ComfyUI 釋放模型與記憶體（/free；Plan 7 Task 1 實驗決定）
+    comfyui_free_after_job: bool = False
+    #: 生圖與商品去背互斥（16 GB 記憶體的筆電兩者同時執行會不夠）
+    memory_lock: bool = True
+    #: workflow 與參數對照表（Docker 內為 /app/comfyui/workflows，唯讀掛載）
+    comfyui_workflows_dir: Path = REPO_ROOT / 'comfyui' / 'workflows'
+
     #: 去背模型：birefnet-general（預設）、birefnet-general-lite，或不需要模型的 sim（測試與 live E2E）
     cutout_model: str = 'birefnet-general'
     #: 去背與 RAG 模型的存放位置（Docker 為 models volume）
@@ -91,6 +106,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 'AGENT_MODE=gemini 需要 REVIEW_MODE=composer（目前為 sim）：'
                 '請改為 REVIEW_MODE=composer，或設定 AGENT_MODE=sim'
+            )
+        return self
+
+    @model_validator(mode='after')
+    def _comfyui_needs_the_composer(self) -> Self:
+        """ComfyUI 生成背景用的商品底圖由 composer 的 /plate 產生，所以 IMAGE_MODE=comfyui 不能搭配 REVIEW_MODE=sim。"""
+        if self.image_mode == 'comfyui' and self.review_mode == 'sim':
+            raise ValueError(
+                'IMAGE_MODE=comfyui 需要 REVIEW_MODE=composer（目前為 sim）：'
+                '請改為 REVIEW_MODE=composer，或設定 IMAGE_MODE=sim'
             )
         return self
 

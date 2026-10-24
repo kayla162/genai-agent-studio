@@ -34,7 +34,7 @@ function techOf(id: FlowNodeId, fallback: string, input: JobInput | null): strin
   if (!input) return fallback;
   if (id === 'brief') return input.llm;
   if (id === 'comfy') return ENGINE_LABEL[input.engine];
-  if (id === 'review') return `規則 7 項 + ${input.vlm}`;
+  if (id === 'review') return `規則 8 項 + ${input.vlm}`;
   return fallback;
 }
 

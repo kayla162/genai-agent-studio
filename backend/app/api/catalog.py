@@ -16,6 +16,7 @@ from fastapi import APIRouter, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
+from app.adapters.comfyui import ComfyError
 from app.adapters.composer import ComposerClient, ComposerError
 from app.adapters.gemini import NOT_CONFIGURED, GeminiError
 from app.api.services import ApiServices, Services
@@ -37,6 +38,7 @@ from app.core.clock import utc_now
 from app.cutout.state import STATE_KEY as CUTOUT_STATE_KEY
 from app.errors import Invalid, NotFound, Unavailable
 from app.files import product_folder
+from app.pipeline.comfy import load_workflow
 from app.pipeline.runner import failure_reason
 from app.queues import ingest_channel
 from app.rag.chunking import chunk_document
@@ -52,10 +54,6 @@ router = APIRouter(tags=['品牌與商品'])
 
 ComponentState = Literal['ok', 'sim', 'off', 'error']
 
-#: 還是模擬版的外部服務（Plan 7 換成真實版）
-SIMULATED = [
-    ComponentStatus(id='comfyui', label='ComfyUI', status='sim', detail='模擬生圖：程序化背景'),
-]
 #: 系統狀態每一項最多等待的秒數
 STATUS_TIMEOUT = 3
 #: 文件上傳最多多久沒有進度（秒）：超過時回報錯誤，worker 仍會繼續處理。
@@ -202,9 +200,25 @@ async def _gemini(services: ApiServices) -> str | tuple[ComponentState, str]:
     return f'{shown}・本月 {usd(month)}／{budget}・key {gemini.key_hint}'
 
 
+async def _comfyui(services: ApiServices) -> str | tuple[ComponentState, str]:
+    """IMAGE_MODE=comfyui：連得上、workflow 用到的節點與模型都在（/object_info 的結果快取 60 秒）時顯示 GPU、VRAM 與
+    ComfyUI 版本；連不上或缺少項目時為 error 並說明原因。"""
+    if services.settings.image_mode == 'sim':
+        return 'sim', '模擬生圖：程序化背景'
+    comfy = services.comfy
+    if comfy is None:
+        raise Unavailable('IMAGE_MODE=comfyui，但 api 沒有建立 ComfyUI client')
+    stats = await comfy.system_stats()
+    workflow, ignore = load_workflow(services.settings.comfyui_workflows_dir)
+    missing = await comfy.missing(workflow, ignore=ignore)
+    if missing:
+        raise ComfyError(f'ComfyUI 缺少 workflow 需要的項目：{"、".join(missing)}（安裝方式見 comfyui/README.md）')
+    return f'{stats.gpu}・VRAM {stats.vram_total / 2**30:.1f} GB・ComfyUI {stats.version}'
+
+
 @router.get('/api/status')
 async def get_status(services: Services) -> SystemStatus:
-    *probed, gemini, cutout = await asyncio.gather(
+    *probed, gemini, comfyui, cutout = await asyncio.gather(
         _probe('db', 'PostgreSQL', _db(services)),
         _probe('redis', 'Redis（佇列與事件推送）', _redis(services)),
         _probe('worker', 'worker（SAQ）', _workers(services)),
@@ -213,9 +227,10 @@ async def get_status(services: Services) -> SystemStatus:
         _probe('chroma', '向量庫（Chroma）', _chroma(services)),
         _probe('rag', 'RAG 模型（BGE-M3＋Reranker）', _rag_model(services)),
         _probe('gemini', 'Gemini（LLM／VLM）', _gemini(services)),
+        _probe('comfyui', 'ComfyUI（生圖）', _comfyui(services)),
         _probe('cutout', '去背模型（BiRefNet）', _cutout_model(services)),
     )
-    return SystemStatus(components=[*probed, gemini, *SIMULATED, cutout])
+    return SystemStatus(components=[*probed, gemini, comfyui, cutout])
 
 
 async def _rag_model(services: ApiServices) -> tuple[ComponentState, str]:

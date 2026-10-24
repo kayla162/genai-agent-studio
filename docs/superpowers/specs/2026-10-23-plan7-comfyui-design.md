@@ -105,7 +105,7 @@
 - 共用 `web/src/lib/compose/` 計算商品矩形的函式，與 `paint` 的商品圖層一致（以 Vitest 測試兩者的矩形相同）。
 - **示範商品**（向量 SVG）同樣可以產生底圖。**去背還沒完成**的商品（`cutout.status` 不是 `done`）：任務照常執行，但底圖改用原照片的矩形外框，並在 Agent 透視顯示警告「商品尚未去背，背景依外框生成」（實驗確認效果；不行時改為建立任務時拒絕）。
 
-**生成解析度**：依模板比例選 SDXL 常用的約 100 萬像素尺寸（例如 1:1 → 1024 × 1024、4:5 → 896 × 1120、9:16 → 768 × 1344、16:9 → 1344 × 768、4:3 → 1152 × 864），放大後裁切到模板尺寸（裁切方式與底圖的縮放一致，商品位置不偏移）。
+**生成解析度**：依模板比例選 SDXL 常用的約 100 萬像素尺寸（邊長為 64 的倍數：1:1 → 1024 × 1024、4:5 → 896 × 1152、9:16 → 768 × 1344、16:9 → 1344 × 768、4:3 → 1152 × 896），放大後裁切到模板尺寸（裁切方式與底圖的縮放一致，商品位置不偏移）。
 
 **兩種生成方式**（§2 實驗後只保留一種）：
 - **A：商品周圍重繪**：SDXL inpainting 讀 `plate` 與 `mask`，只重繪商品以外的區域。模型看得到商品，透視、接觸面與陰影較自然。
@@ -282,4 +282,42 @@
 
 ## 12. 實驗結果
 
-（實作計畫的第一個 Task 完成後填入，見 §2。）
+### §2 的實驗（2026-10-24，RTX 3060 Laptop 6 GB、16 GB，`uv run python -m scripts.comfy_experiment all`）
+
+環境：ComfyUI v0.42.1 portable（PyTorch 2.14＋CUDA 13.0，`--listen 127.0.0.1 --port 8188`，VRAM 模式自動為 NORMAL_VRAM）；模型為 SDXL base 1.0 加上 SDXL-Lightning 8 步的 LoRA（授權見 `comfyui/models.md`）。提示詞用模擬 Agent（不需要 Gemini key）。每組 24 張：3 個品牌 × 5 個模板，加上 3 個品牌 × 3 種刻意偏離色系的提示詞（IG 貼文）。
+
+| 回合 | 設定 | 一般背景通過（≤ 15%） | 刻意偏色抓到（不通過／警告） | 每張秒數 | 發現 |
+|---|---|---|---|---|---|
+| 1 | 提示詞寫色碼、cfg 1、遮罩擴張 8 px | 7/15 | 5／0 | 11.6 | SÉLUNE 的玫瑰色系生成綠色背景（SDXL 看不懂色碼）；背景多畫出帶亂碼標籤的瓶罐（cfg 1 時負面提示詞沒有作用）；商品周圍一圈中性灰的光暈 |
+| 2 | 色名、cfg 1 | 9/15 | 6／0 | 11.9 | SÉLUNE、Kayla 的配色正確；misty-isle 的深青綠主色（C* 11.8）被當成中性色而不算色相參考，品牌色的背景也判定色系外 |
+| 3 | 色名、cfg 2 | 6/15 | 8／0 | 15.9 | 負面提示詞開始作用，但仍有多餘的商品（正面提示詞寫「product photography」） |
+| 4 | 色名、cfg 2、以場景描述取代「商品攝影」、負面提示詞排除其他商品與文字、遮罩擴張 0、量測調整（下方） | **15/15** | **7／1** | **14.3** | 沒有多餘的商品與文字、沒有光暈；一般背景色系外最多 4% |
+
+決定（都已寫進程式與測試）：
+- **提示詞**：色票改用色名（`web/src/lib/agent/color-words.ts`，例如「dusty rose and warm off-white color palette with muted gold accents」）；正面提示詞描述場景與檯面（「commercial photography backdrop, empty styled set with a single display surface」），不寫「product photography」；`BASE_NEGATIVE` 加上 text、letters、logo、other products、bottles、jars、packaging。
+- **cfg 2**（SDXL-Lightning 建議 1，但 1 時負面提示詞沒有作用）：每張多約 2–4 秒。
+- **`PLATE_MASK_GROW = 0`**：模型重繪到商品邊緣，原始去背圖蓋住商品，沒有光暈。
+- **背景色系**：`neutralChroma` 12 → 18（很淡的灰綠、灰米色色相不穩定，視為中性）、新增 `brandMinChroma = 5`（很暗、很淡的品牌色仍作為色相參考）、`chromaMargin` 25 → 15。以回合 4 存下的 24 張背景離線重新量測校準（`measureBackgroundPalette` 的 `params` 參數）：
+
+  | neutralChroma／chromaMargin | 一般背景最高 | 刻意偏色（不通過／警告／通過） |
+  |---|---|---|
+  | 18／20 | 4% | 6／2／1 |
+  | **18／15** | **4%** | **7／1／1** |
+  | 18／12 | 26%（misty-isle banner 變成警告） | 7／1／1 |
+  | 15／15 | 18% | 8／0／1 |
+
+  判定門檻（15%／30%）不變；程式產生的背景仍全部通過。
+- **已知限制**：Kayla 的「deep blue」那張只有球體與商品後方的圓盤是深藍，背景大部分仍是品牌的灰紫色（色系外 3%，通過）；misty-isle 的「deep blue」為警告（17%）。刻意偏色的提示詞模型不一定照做，所以 §2「刻意偏離的全部不通過」只達到 7/9，另 1 張警告。
+- **時間**：每張平均 14.3 秒、最長 14.5 秒（cfg 2）；第一張含載入模型 15–18 秒（live 測試 18.1 秒）。遠低於 60 秒。
+- **記憶體**：GPU 尖峰 5.42 GB（6 GB 沒有 OOM）；系統尖峰 13.1 GB，開始時已有 12.8 GB（瀏覽器、IDE 等），ComfyUI 本身約 6 GB。Docker 沒有在這台執行，生圖與去背同時執行的尖峰沒有量測，`MEMORY_LOCK` 維持預設開啟；`/free` 與重新載入的秒數沒有量測，`COMFYUI_FREE_AFTER_JOB` 維持 `false`。
+- **生成方式**：只做方式 A（商品周圍重繪）：通過所有標準，方式 B（ControlNet）不需要，也不必多下載模型。
+- **放大**：Lanczos（人工看不出模糊）；沒有 Gemini key，未以 VLM 的 `vlm_quality` 判讀。
+- **錄製**：`scripts/record_comfy.py` 以真的 ComfyUI 錄下 `system_stats`、`object_info`、`history`、`ws-success`（8 步的進度、`progress_state` 等訊息），取代手寫的回應；錯誤的情況（執行錯誤、OOM、只有進度、拒絕 workflow）維持手寫。
+- **`pytest -m live`**：通過（5 個模板各一張，ecom-main 18.1 秒含載入，其餘 6.4–8.9 秒，cfg 1 時）。
+- **沒做**：Docker 內以 `host.docker.internal` 連線（這台沒有 Docker）；VLM 判讀（沒有 key）。
+
+**實作時不需要 ComfyUI 就能確認的結果**：
+
+- **背景色系的校準**：程式產生的背景（3 個品牌 × 5 個模板 × 6 個 seed）色系外最多 0.7%（SÉLUNE），另外兩個品牌為 0%，都通過；純藍的背景對 SÉLUNE 為 100% 色系外、不通過。
+- **商品位置**：`plateGeometry` 換算回模板尺寸的商品矩形與 `paint` 畫的矩形誤差 ≤ 1 像素（5 個模板 × 2 個商品 × 3 種長寬比）。
+- **模擬模式**：timelines 只因 `bg_palette`（模擬為通過）與 `injection` 的參數改變；在記憶體中執行模擬模式的任務流程，三條 timelines 的事件完全相同。

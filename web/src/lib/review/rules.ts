@@ -4,7 +4,10 @@ import { areaRatio, verticalGap } from '@/lib/core/geometry';
 import { clamp, round1 } from '@/lib/core/num';
 import { deltaEHex } from './color';
 import { PRIMARY_MEASURE } from './measure';
+import { BG_PASS_MAX, bgPaletteCheck, type BackgroundPalette } from './background';
 import { ocrCheck, type OcrResult } from './ocr';
+
+export { measuredBackgroundOf } from './background';
 
 export function findBannedWords(texts: string[], banned: string[]): string[] {
   const joined = texts.join('\n');
@@ -64,6 +67,8 @@ export interface RuleContext {
   measuredPrimary: string | null;
   /** VLM 轉錄與海報文字的比對結果（ocrDiffs）；沒有轉錄時（模擬模式）為 0 處差異 */
   ocr?: OcrResult;
+  /** 背景色系的量測（measureBackgroundPalette）；沒有量測時（模擬模式）為通過 */
+  background?: BackgroundPalette | null;
 }
 
 /**
@@ -100,7 +105,7 @@ export function layoutRuleChecks(spec: Pick<PromptSpec, 'canvas' | 'layout'>, br
   ];
 }
 
-export function runRuleChecks({ brand, spec, measuredPrimary, ocr }: RuleContext): ReviewCheck[] {
+export function runRuleChecks({ brand, spec, measuredPrimary, ocr, background }: RuleContext): ReviewCheck[] {
   const { words: banned, target: bannedTarget } = bannedWordHits(spec, brand);
 
   const color = measuredPrimary === null
@@ -122,6 +127,10 @@ export function runRuleChecks({ brand, spec, measuredPrimary, ocr }: RuleContext
       id: 'color_delta', name: '品牌主色色差', kind: 'rule', rule: `ΔE2000 ≤ ${brand.rules.maxDeltaE}`,
       value: color ? `ΔE ${round1(color.dE)} · ${MEASURED_PRIMARY_LABEL} ${color.hex}` : NO_PRIMARY_MESSAGE,
       status: color && color.dE <= brand.rules.maxDeltaE ? 'pass' : 'fail', target: 'canvas', ragRef: ragRefFor(brand, 'color'),
+    },
+    {
+      id: 'bg_palette', name: '背景色系', kind: 'rule', rule: `品牌色系外 ≤ ${BG_PASS_MAX * 100}%`,
+      ...bgPaletteCheck(background), ragRef: ragRefFor(brand, 'color'),
     },
     logoClearance,
     {

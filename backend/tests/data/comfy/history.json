@@ -1,0 +1,206 @@
+{
+  "p-0001": {
+    "prompt": [
+      5,
+      "p-0001",
+      {
+        "1": {
+          "class_type": "CheckpointLoaderSimple",
+          "inputs": {
+            "ckpt_name": "sd_xl_base_1.0.safetensors"
+          }
+        },
+        "2": {
+          "class_type": "LoraLoader",
+          "inputs": {
+            "model": [
+              "1",
+              0
+            ],
+            "clip": [
+              "1",
+              1
+            ],
+            "lora_name": "sdxl_lightning_8step_lora.safetensors",
+            "strength_model": 1.0,
+            "strength_clip": 1.0
+          }
+        },
+        "3": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {
+            "text": "4:5 commercial product photography, the provided product photo on a styled surface, serene luxury skincare, crescent moon halo, aurora light ribbons, pearl-gold bokeh, soft diffused studio light, #B76E79 and #F6EFE9 color palette with #C9A96E accents, soft, healing, clean negative space for typography, high-end editorial lighting",
+            "clip": [
+              "2",
+              1
+            ]
+          }
+        },
+        "4": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {
+            "text": "lowres, blurry, watermark, deformed product, extra objects, garbled text, oversaturated, neon, off-brand colors, cluttered composition, overlapping elements",
+            "clip": [
+              "2",
+              1
+            ]
+          }
+        },
+        "5": {
+          "class_type": "LoadImage",
+          "inputs": {
+            "image": "job_20261007_1000_a1b2_r2_ig-post_plate.png"
+          }
+        },
+        "6": {
+          "class_type": "LoadImageMask",
+          "inputs": {
+            "image": "job_20261007_1000_a1b2_r2_ig-post_mask.png",
+            "channel": "red"
+          }
+        },
+        "8": {
+          "class_type": "InpaintModelConditioning",
+          "inputs": {
+            "positive": [
+              "3",
+              0
+            ],
+            "negative": [
+              "4",
+              0
+            ],
+            "vae": [
+              "1",
+              2
+            ],
+            "pixels": [
+              "5",
+              0
+            ],
+            "mask": [
+              "6",
+              0
+            ],
+            "noise_mask": true
+          }
+        },
+        "9": {
+          "class_type": "KSampler",
+          "inputs": {
+            "model": [
+              "2",
+              0
+            ],
+            "seed": 146032080,
+            "steps": 8,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "sgm_uniform",
+            "denoise": 1.0,
+            "positive": [
+              "8",
+              0
+            ],
+            "negative": [
+              "8",
+              1
+            ],
+            "latent_image": [
+              "8",
+              2
+            ]
+          }
+        },
+        "10": {
+          "class_type": "VAEDecode",
+          "inputs": {
+            "samples": [
+              "9",
+              0
+            ],
+            "vae": [
+              "1",
+              2
+            ]
+          }
+        },
+        "11": {
+          "class_type": "SaveImage",
+          "inputs": {
+            "images": [
+              "10",
+              0
+            ],
+            "filename_prefix": "genai_bg"
+          }
+        }
+      },
+      {
+        "client_id": "fb6aa14177a34e30942ff2d02abb9d8a",
+        "create_time": 1792800026879
+      },
+      [
+        "11"
+      ]
+    ],
+    "outputs": {
+      "11": {
+        "images": [
+          {
+            "filename": "genai_bg_00006_.png",
+            "subfolder": "",
+            "type": "output",
+            "metadata": {
+              "kind": "image",
+              "width": 896,
+              "height": 1152
+            },
+            "id": "2a4b9263-867e-4a80-87d8-2f735c8bcee3"
+          }
+        ]
+      }
+    },
+    "status": {
+      "status_str": "success",
+      "completed": true,
+      "messages": [
+        [
+          "execution_start",
+          {
+            "prompt_id": "p-0001",
+            "timestamp": 1792800026880
+          }
+        ],
+        [
+          "execution_cached",
+          {
+            "nodes": [
+              "1",
+              "2",
+              "3",
+              "4"
+            ],
+            "prompt_id": "p-0001",
+            "timestamp": 1792800026883
+          }
+        ],
+        [
+          "execution_success",
+          {
+            "prompt_id": "p-0001",
+            "timestamp": 1792800033502
+          }
+        ]
+      ]
+    },
+    "meta": {
+      "11": {
+        "node_id": "11",
+        "display_node": "11",
+        "parent_node": null,
+        "real_node_id": "11"
+      }
+    }
+  }
+}

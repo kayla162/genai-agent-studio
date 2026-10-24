@@ -6,6 +6,7 @@ import json
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ from app.db.session import Database
 from app.errors import Unavailable
 from app.events import EventStore
 from app.pipeline.gemini import GeminiAgent, GeminiReviewer
+from app.pipeline.memory import HeavyMemoryLock
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.sim import SimPosters, SimRetriever, SimReviewer, sim_ports
 from app.queues import Queues, TaskFailed, cutout_key, ingest_channel
@@ -82,6 +84,7 @@ async def services(db: Database, redis: Redis, composer_url: str, tmp_path: Path
         await catalog.sync_brands(s, load_brands(BRANDS_DIR)[0], NOW)
     settings = Settings(
         _env_file=None,
+        image_mode='sim',
         agent_mode='sim',
         data_dir=tmp_path / 'data',
         local_photos_dir=tmp_path / 'local',
@@ -289,6 +292,22 @@ async def test_cutout_runs_on_its_own_queue_and_writes_a_transparent_png(service
     alpha = np.asarray(Image.open(services.settings.data_dir / cut.url.removeprefix('/files/')))[:, :, 3]
     assert (alpha[0, 0], alpha[30, 20]) == (0, 255)
     assert [w.concurrency for w in build_workers(services, queues)] == [1, 2, 1]
+
+
+async def test_cutout_waits_while_an_image_is_being_generated(services: Services) -> None:
+    """MEMORY_LOCK：生圖持有 heavy-memory 鎖時，去背在鎖釋放後才開始（16 GB 的筆電兩者同時執行會不夠）。"""
+    product = await photo_product(services, write_upload(services, 'wait.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    memory = HeavyMemoryLock.from_redis(services.redis, poll=0.02)
+    waiting = replace(services, memory=memory)
+    async with memory.hold():
+        task = asyncio.create_task(cutout(waiting, product.id, product.photo.url))
+        await asyncio.sleep(0.3)
+        assert not task.done()
+        assert (await current(services, product.id)).cutout == PENDING
+    await task
+    cut = (await current(services, product.id)).cutout
+    assert cut is not None and cut.status == 'done'
 
 
 async def test_cutout_reports_missing_and_unreadable_photos(services: Services) -> None:
@@ -532,7 +551,8 @@ async def test_build_services_picks_the_retriever_by_rag_mode(
     mode: RagMode, retriever: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, rag_mode=mode)
+        'app.worker.settings',
+        Settings(_env_file=None, image_mode='sim', agent_mode='sim', brands_dir=BRANDS_DIR, rag_mode=mode),
     )
     built = build_services()
     try:
@@ -556,7 +576,8 @@ async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
     mode: ReviewMode, posters: type, reviewer: type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        'app.worker.settings', Settings(_env_file=None, agent_mode='sim', brands_dir=BRANDS_DIR, review_mode=mode)
+        'app.worker.settings',
+        Settings(_env_file=None, image_mode='sim', agent_mode='sim', brands_dir=BRANDS_DIR, review_mode=mode),
     )
     built = build_services()
     try:
@@ -575,7 +596,13 @@ async def test_build_services_picks_the_posters_and_the_reviewer_by_review_mode(
 async def test_build_services_uses_gemini_for_the_agent_and_the_review_when_agent_mode_is_gemini(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gemini = Settings(_env_file=None, agent_mode='gemini', gemini_api_key='AIza-test-key-0000', brands_dir=BRANDS_DIR)
+    gemini = Settings(
+        _env_file=None,
+        image_mode='sim',
+        agent_mode='gemini',
+        gemini_api_key='AIza-test-key-0000',
+        brands_dir=BRANDS_DIR,
+    )
     monkeypatch.setattr('app.worker.settings', gemini)
     built = build_services()
     try:

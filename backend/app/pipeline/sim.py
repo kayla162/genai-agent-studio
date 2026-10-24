@@ -118,7 +118,14 @@ class SimImageEngine:
     """不生圖：回報與 mock 相同的 ComfyUI 進度，背景用程序化圖（前端依 seed 與色票繪製）。"""
 
     async def render_round(
-        self, job_id: str, round: int, specs: list[PromptSpec], variants: int, brand: Brand, run: RunContext
+        self,
+        job_id: str,
+        round: int,
+        specs: list[PromptSpec],
+        variants: int,
+        brand: Brand,
+        product: Product,
+        run: RunContext,
     ) -> dict[tuple[TemplateId, int], RenderBackground]:
         for spec in specs:
             await run.emit(
@@ -146,6 +153,9 @@ class SimImageEngine:
             for spec in specs
             for v in range(variants)
         }
+
+    async def finish(self, job_id: str) -> None:
+        return None
 
 
 class SimPosters:

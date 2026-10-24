@@ -75,11 +75,11 @@ async def status() -> AsyncIterator[Status]:
 
 
 def gemini_settings(**overrides: Any) -> Settings:
-    return Settings(_env_file=None, agent_mode='gemini', **overrides)
+    return Settings(_env_file=None, image_mode='sim', agent_mode='gemini', **overrides)
 
 
 async def test_simulated_mode(status: Status) -> None:
-    result = await status(Settings(_env_file=None, agent_mode='sim'))
+    result = await status(Settings(_env_file=None, image_mode='sim', agent_mode='sim'))
     assert (result.status, result.detail) == ('sim', 'AGENT_MODE=sim：模擬 Agent 與 VLM 審查')
 
 

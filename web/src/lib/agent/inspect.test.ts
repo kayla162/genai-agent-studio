@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { makeJobSnapshot } from '@/test/fixtures';
 import { applyEvents } from '@/lib/jobs/view';
+import { PRODUCT_SCENE } from './comfy';
+import { BASE_NEGATIVE } from './prompt';
 import { injectionRows, overlayFor, rerankRows, retryDiffs, specOptions } from './inspect';
 
 const { events } = makeJobSnapshot();
@@ -17,15 +19,15 @@ describe('specOptions', () => {
 describe('injectionRows', () => {
   it('has no previous values in the first round', () => {
     const rows = injectionRows(view, '1:ig-post');
-    expect(rows).toHaveLength(15);
+    expect(rows).toHaveLength(PRODUCT_SCENE.params.length);
     expect(rows.every((r) => r.previous === null && !r.changed)).toBe(true);
   });
 
   it('marks the parameters the rewrite changed', () => {
     const rows = injectionRows(view, '2:ig-post');
-    expect(rows.filter((r) => r.changed).map((r) => r.label)).toEqual(['positive_prompt', 'negative_prompt', 'seed', 'layout_boxes']);
+    expect(rows.filter((r) => r.changed).map((r) => r.label)).toEqual(['positive_prompt', 'negative_prompt', 'plate_image', 'mask_image', 'seed']);
     const negative = rows.find((r) => r.label === 'negative_prompt')!;
-    expect(negative.previous).toBe('lowres, blurry, watermark, deformed product, extra objects, garbled text');
+    expect(negative.previous).toBe(BASE_NEGATIVE);
     expect(String(negative.value)).toContain('off-brand colors');
   });
 

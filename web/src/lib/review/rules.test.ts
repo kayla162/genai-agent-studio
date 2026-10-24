@@ -3,8 +3,8 @@ import type { ReviewCheck } from '@/types/contract';
 import { SELUNE, MISTY_ISLE } from '@/lib/api/mock/data';
 import { makeSpec } from '@/test/fixtures';
 import {
-  bannedWordHits, findBannedWords, hasClaim, layoutRuleChecks, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor, runRuleChecks,
-  scoreChecks,
+  bannedWordHits, findBannedWords, hasClaim, layoutRuleChecks, measuredBackgroundOf, measuredPrimaryOf, NO_PRIMARY_MESSAGE, ragRefFor,
+  runRuleChecks, scoreChecks,
 } from './rules';
 
 const byId = (checks: ReviewCheck[], id: ReviewCheck['id']) => checks.find((c) => c.id === id)!;
@@ -34,12 +34,43 @@ describe('text rules', () => {
 });
 
 describe('runRuleChecks', () => {
-  it('passes all 7 rule checks for a compliant spec', () => {
+  it('passes all 8 rule checks for a compliant spec', () => {
     const checks = runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79' });
     expect(checks.map((c) => c.id)).toEqual([
-      'banned_words', 'color_delta', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
+      'banned_words', 'color_delta', 'bg_palette', 'logo_clearance', 'disclaimer', 'product_ratio', 'whitespace', 'ocr_typo',
     ]);
     expect(checks.every((c) => c.status === 'pass' && c.kind === 'rule')).toBe(true);
+  });
+
+  it('treats a missing background measurement as simulated and passes it', () => {
+    const c = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79' }), 'bg_palette');
+    expect(c).toEqual({
+      id: 'bg_palette', name: '背景色系', kind: 'rule', rule: '品牌色系外 ≤ 15%',
+      value: '（模擬）', status: 'pass', target: 'canvas', ragRef: 'selune#color',
+    });
+    const none = byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', background: null }), 'bg_palette');
+    expect(none).toEqual(c);
+  });
+
+  it('judges the off-palette share of the background', () => {
+    const at = (offShare: number, offHex: string | null = null) =>
+      byId(runRuleChecks({
+        brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', background: { offShare, offHex, sampled: 60000 },
+      }), 'bg_palette');
+    expect(at(0.08)).toMatchObject({ status: 'pass', value: '色系外 8%' });
+    expect(at(0.15)).toMatchObject({ status: 'pass', value: '色系外 15%' });
+    expect(at(0.2, '#39ff14')).toMatchObject({ status: 'warn', value: '色系外 20%（主要為 #39FF14）' });
+    expect(at(0.3)).toMatchObject({ status: 'warn' });
+    expect(at(0.42, '#3FD27A')).toMatchObject({ status: 'fail', value: '色系外 42%（主要為 #3FD27A）' });
+  });
+
+  it('measuredBackgroundOf reads the off-palette colour back from the background check, for the swatch', () => {
+    const checks = runRuleChecks({
+      brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79', background: { offShare: 0.42, offHex: '#3fd27a', sampled: 60000 },
+    });
+    expect(measuredBackgroundOf(byId(checks, 'bg_palette'))).toBe('#3FD27A');
+    expect(measuredBackgroundOf(byId(checks, 'color_delta'))).toBeNull();
+    expect(measuredBackgroundOf(byId(runRuleChecks({ brand: SELUNE, spec: makeSpec(), measuredPrimary: '#B76E79' }), 'bg_palette'))).toBeNull();
   });
 
   it('shares the layout rules with layoutRuleChecks', () => {

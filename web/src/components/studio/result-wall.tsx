@@ -8,6 +8,7 @@ import { ScoreBadge } from '@/components/poster/score-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { renderSeed } from '@/lib/agent/prompt';
 import { getTemplate } from '@/lib/compose/templates';
 import { finalCandidates } from '@/lib/jobs/view';
 import { useStudioStore } from '@/lib/store/studio';
@@ -101,7 +102,7 @@ export function ResultWall({ brand, product }: { brand: Brand; product: Product 
             <DialogHeader>
               <DialogTitle>{getTemplate(open.templateId).label} · 候選 #{open.variant + 1}</DialogTitle>
               <DialogDescription>
-                第 {open.round} 輪・seed {open.background.kind === 'procedural' ? open.background.seed : '—'}
+                第 {open.round} 輪・seed {renderSeed(open)}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 md:grid-cols-2">
@@ -111,7 +112,7 @@ export function ResultWall({ brand, product }: { brand: Brand; product: Product 
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <ScoreBadge render={open} />
-                  <span className="text-sm text-muted-foreground">規則 7 項 + VLM 3 項</span>
+                  <span className="text-sm text-muted-foreground">規則 8 項 + VLM 3 項</span>
                 </div>
                 <CheckList checks={open.checks} />
               </div>
