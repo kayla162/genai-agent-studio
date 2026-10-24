@@ -218,7 +218,7 @@ async def test_select_a_render_then_favorite_it_and_count_the_job(api: LiveApi) 
     )
     assert (entry['render']['passed'], len(entry['render']['checks']), entry['favorite'], entry['writtenToRag']) == (
         True,
-        10,
+        11,
         False,
         True,
     )

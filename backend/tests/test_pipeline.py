@@ -444,7 +444,9 @@ async def test_cancelling_interrupts_a_wait_within_a_second(store: EventStore, d
     events = await all_messages(db)
     assert events[-1] == {**events[-1], 'type': 'job.status', 'stage': 'cancelled'}
     assert events[-2] == {**events[-2], 'type': 'log', 'level': 'warn', 'message': '已中斷進行中的 Gemini 呼叫'}
-    assert not any(m['type'] == 'prompt.generated' for m in events)
+    # Prompt 構建並行、事件依模板順序送出：先完成的 ig-post 已送出，被取消的 story 沒有
+    generated = [m['spec']['templateId'] for m in events if m['type'] == 'prompt.generated']
+    assert 'story' not in generated
 
 
 async def test_the_budget_fails_the_job_with_its_reason(store: EventStore, db: Database) -> None:

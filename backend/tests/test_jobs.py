@@ -64,7 +64,7 @@ async def test_rebuilds_a_render_and_its_review_from_the_events(
     job_id, best = await replay_fixture(session, db, redis)
     render = await jobs.get_render(session, job_id, best['ig-post'])
     assert render is not None
-    assert (render.round, render.template_id, render.passed, len(render.checks)) == (2, 'ig-post', True, 10)
+    assert (render.round, render.template_id, render.passed, len(render.checks)) == (2, 'ig-post', True, 11)
     snap = await jobs.get_job(session, job_id)
     assert snap is not None
     assert snap.summary.best_render_ids == best
