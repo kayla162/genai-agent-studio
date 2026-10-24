@@ -86,22 +86,40 @@ def test_flat_output_does_not_divide_by_zero() -> None:
 
 
 def test_compose_keeps_the_photo_colors_and_uses_the_mask_as_alpha() -> None:
-    photo = Image.new('RGB', (4, 2), (10, 20, 30))
-    mask = Image.new('L', (4, 2), 0)
-    mask.putpixel((3, 1), 255)
+    photo = Image.new('RGB', (4, 3), (10, 20, 30))
+    mask = Image.new('L', (4, 3), 0)
+    mask.putpixel((1, 1), 255)
+    mask.putpixel((2, 1), 128)
     out = Image.open(io.BytesIO(compose(photo, mask)))
     assert out.mode == 'RGBA'
     px = np.asarray(out)
-    assert px[1, 3].tolist() == [10, 20, 30, 255]
-    assert px[0, 0, 3] == 0
+    assert px[0, 0].tolist() == [10, 20, 30, 255]
+    assert px[0, 1, 3] == 128
+
+
+def test_compose_crops_the_transparent_margin_around_the_product() -> None:
+    # 商品只佔照片的一小塊：裁掉四周透明的部分，排版時商品才會填滿商品框
+    photo = Image.new('RGB', (600, 600), (200, 200, 200))
+    mask = Image.new('L', (600, 600), 0)
+    mask.paste(255, (219, 89, 383, 510))
+    out = Image.open(io.BytesIO(compose(photo, mask)))
+    assert out.size == (164, 421)
+    assert np.asarray(out)[..., 3].min() == 255
+
+
+def test_compose_keeps_the_whole_photo_when_nothing_was_detected() -> None:
+    out = Image.open(io.BytesIO(compose(Image.new('RGB', (40, 30)), Image.new('L', (40, 30), 0))))
+    assert out.size == (40, 30)
 
 
 def test_sim_segmenter_cuts_a_centered_ellipse() -> None:
     out = Image.open(io.BytesIO(SimSegmenter().cut(png(Image.new('RGB', (60, 80), (90, 60, 120))))))
-    assert (out.size, out.mode) == ((60, 80), 'RGBA')
+    # 裁到橢圓的外接矩形（照片 60×80，橢圓從 10% 到 90% 寬、5% 到 95% 高）
+    assert out.mode == 'RGBA'
+    assert 47 <= out.size[0] <= 50 and 71 <= out.size[1] <= 74
     px = np.asarray(out)
     assert px[0, 0, 3] == 0
-    assert px[40, 30].tolist() == [90, 60, 120, 255]
+    assert px[out.size[1] // 2, out.size[0] // 2].tolist() == [90, 60, 120, 255]
 
 
 def tiny_model(path: Path) -> Path:
@@ -126,10 +144,11 @@ def test_onnx_segmenter_runs_the_model_without_a_memory_arena(tmp_path: Path) ->
     photo = Image.new('RGB', (64, 32), (0, 0, 0))
     photo.paste((255, 255, 255), (32, 0, 64, 32))
     out = Image.open(io.BytesIO(segmenter.cut(png(photo))))
-    assert (out.size, out.mode) == ((64, 32), 'RGBA')
+    # 只留下右半邊的白色（前景）：左半邊透明的部分被裁掉
+    assert out.mode == 'RGBA'
+    assert out.size[1] == 32 and 32 <= out.size[0] <= 36
     px = np.asarray(out)
-    assert px[16, 8, 3] == 0
-    assert px[16, 56].tolist() == [255, 255, 255, 255]
+    assert px[16, -8].tolist() == [255, 255, 255, 255]
 
 
 def png_chunk(kind: bytes, data: bytes) -> bytes:
