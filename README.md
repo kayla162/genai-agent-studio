@@ -21,8 +21,9 @@
 | Plan 5 | RAG：Chroma、BGE-M3 與 Reranker、PDF 手冊上傳、歷史回寫 | 完成（Agent、生圖與審查仍為模擬版） |
 | Plan 6A | 伺服器端排版與規則審查：審查用海報、從像素量測品牌主色 | 完成（Agent、生圖與 VLM 審查仍為模擬版） |
 | Plan 6B | Gemini Agent、VLM 審查、用量與成本 | 完成（生圖仍為模擬版） |
-| Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（Docker＋Gemini 驗收：3 個品牌的任務完成、每張約 17 秒、取消與 ComfyUI 未開啟都正確；WSL 記憶體 12 GB 時生圖與去背互斥正確；16 GB 的筆電需關掉其他程式，見 Plan 7 規格 §12） |
+| Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（Docker＋Gemini 驗收：3 個品牌的任務完成、每張約 17 秒、取消與 ComfyUI 未開啟都正確；WSL 記憶體 12 GB 時生圖與去背互斥正確；16 GB 的筆電需關掉其他程式。補驗：要求螢光色背景時第 1 輪不通過、改寫後通過；海報上的商品與原始去背圖相同；生圖中重新整理可以接續。見 Plan 7 規格 §12） |
 | Plan 8 | 作品集 Demo（Cloudflare Pages＋Access） | 完成（部署與觀看名單由使用者以自己的 Cloudflare 帳號設定，見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)） |
+| 之後的改進 | 多組背景風格（[設計規格](docs/superpowers/specs/2026-10-24-visual-styles-design.md)）、品牌知識庫列出與刪除上傳的手冊、去背結果裁掉四周空白、修正背景多畫出瓶子、RAG 模型準備中可以取消、CI、ComfyUI 啟動腳本 | 完成 |
 
 ## 架構
 
@@ -65,11 +66,12 @@ flowchart LR
 - **背景色系**（Plan 7）：量疊上文字與商品之前的背景（商品方框以外、縮小到長邊 256 px），每個像素轉成 LCh：彩度低於 18 的中性色算色系內；與品牌色（含很暗、很淡的品牌色）色相相差 30° 以內、彩度不比品牌色高出 15 以上的算色系內；其他（包括螢光色）算色系外。色系外 ≤ 15% 通過、≤ 30% 警告、超過不通過，說明顯示色系外最多的顏色（例如「色系外 42%（主要為 #3FD27A）」），合規報告在旁邊畫出色塊。門檻以 ComfyUI 實測的背景校準（規格 §12）：生成的一般背景（3 個品牌 × 5 個模板）色系外最多 4%，刻意指定偏離色系的 9 張有 7 張不通過、1 張警告；程式產生的背景色系外最多 0.7%。模擬審查時為通過（「（模擬）」）。
 - **Gemini Agent**（`AGENT_MODE=gemini`，預設；需要 `REVIEW_MODE=composer`）：
   - 需求拆解、Prompt 構建（文案、8 個元素的版面方框、生圖場景）與 Query Rewriting 都由 Gemini 產生，提示詞在 `backend/app/pipeline/prompts/*.md`。
-  - **護欄**：composer 的 `/spec` 檢查 Gemini 寫的文案與版面：替代用語、移除 emoji、字型沒有的字、禁用詞、長度、需求沒有的價格或優惠、版面是否合法、商品佔比、留白、Logo 淨空區與字級。有問題時帶著中文說明請 Gemini 修正一次，仍不合格就改用預設文案或版型，Agent 透視以警告顯示。
+  - **護欄**：composer 的 `/spec` 檢查 Gemini 寫的文案與版面：替代用語、移除 emoji、字型沒有的字、禁用詞、長度、需求沒有的價格或優惠、版面是否合法、商品佔比、留白、Logo 淨空區與字級。生圖場景（`scene`）只能描述空著的展示檯面、背景、道具與光線，提到商品或容器（bottle、jar、tube、packaging 等）時也算問題：ComfyUI 會照著在背景多畫出帶假標籤的瓶子。有問題時帶著中文說明請 Gemini 修正一次，仍不合格就改用預設文案、版型或場景，Agent 透視以警告顯示。
   - **VLM 審查**：Gemini 讀審查用海報，判斷誇大用語、遮擋與畫質，並轉錄畫面上的文字（不提供預期文案，避免照抄）；`ocrDiffs` 把轉錄與實際畫出的文字比對，0 處差異通過、1 處警告、2 處以上或畫面有方塊（字型沒有的字）不通過。
   - **用量與費用**：每次呼叫寫入 `job_usage`（tokens 含思考、依 `pricing.yaml` 的單價計算費用），Agent 透視顯示每次呼叫的用量與任務的合計，儀表板的每張成本改用實際費用。單一任務與每月（台北時間）各有費用上限（`GEMINI_JOB_BUDGET_USD`、`GEMINI_MONTHLY_BUDGET_USD`）。
   - `AGENT_MODE=sim`：Agent 與 VLM 都是模擬版，行為與 mock 模式的劇本相同（第一輪刻意失誤，Query Rewriting 後通過），不需要 key。
 - **ComfyUI 生圖**（`IMAGE_MODE=comfyui`，預設；需要 `REVIEW_MODE=composer`）：每個模板由 composer 畫出商品底圖與遮罩（商品放在版面的商品方框），ComfyUI 只重繪商品以外的背景與光影；生成圖放大、裁切成模板尺寸後存到 `data/jobs/{任務 id}/bg-…png`，排版時再把原始去背圖疊在同一個位置，標籤文字與商品外形完全不變。每個 variant 一個 prompt、依序執行（只有一張 GPU），執行錯誤時重試一次，取消會中斷 ComfyUI 正在執行的 prompt。`IMAGE_MODE=sim` 時為程序化背景（測試、live E2E 與作品集 Demo）。
+- **背景風格**：每個品牌在設定檔的 `visualStyles` 設定 1–6 組背景風格（名稱、英文提示詞、對應的語氣）。新任務表單的「背景風格」可以手選一組，預設「自動」：取第一組對應需求語氣的風格，都沒有時用第一組。同一個任務的所有模板、候選與重試都用同一組；Agent 透視的 log 顯示用了哪一組（例如「背景風格：節慶（指定）」），選定的提示詞放進每個模板的正向提示詞。
 - 右上角的連線狀態可以展開各服務的狀態，模擬版會標示「模擬」；composer 一項顯示目前的 `REVIEW_MODE` 與載入的海報字型，Gemini 一項顯示模型、本月費用與上限、key 末 4 碼（`models.get` 檢查 key 與模型，不計費），ComfyUI 一項顯示 GPU、VRAM 與版本，連不上或缺少 workflow 需要的節點與模型時說明原因。
 
 ## 用 Docker 執行（live 模式）
@@ -88,11 +90,12 @@ docker compose up -d --build
 - 審查模式：`REVIEW_MODE=composer`（預設）繪製審查用海報並依它審查；`REVIEW_MODE=sim` 不畫圖，審查結果與 mock 模式相同。api 與 worker 讀同一個值（`docker-compose.yml` 預設 `composer`，`.env` 或環境變數可以覆寫）。
 - Gemini：在 `.env` 加上 `GEMINI_API_KEY=…`（Google AI Studio 建立；`.env` 不會上傳 GitHub），再 `docker compose up -d`。沒有 key 時服務照常啟動，系統狀態顯示提示，需求拆解與新任務會被拒絕；不想使用 Gemini 時設 `AGENT_MODE=sim`。`AGENT_MODE=gemini` 搭配 `REVIEW_MODE=sim` 是設定錯誤，api 與 worker 會啟動失敗並說明原因。
 - 費用：單價表是 repo 根目錄的 `pricing.yaml`（唯讀掛載到 `/app/pricing.yaml`，有生效日期；`gemini-3.8-flash` 2027-01-01 起加倍）。單一任務的上限預設 US$1、每月 US$20，設為 0 表示不設上限；上限在每次呼叫前檢查，最多超出並行中的呼叫的費用（約 4 次呼叫）。估算：3 個模板 × 2 張、重試一輪的任務約 US$0.18。
-- ComfyUI：在 Windows 安裝並啟動 ComfyUI（見 [comfyui/README.md](comfyui/README.md)），容器以 `http://host.docker.internal:8188` 連線；沒有啟動時任務在生圖階段失敗，原因為「ComfyUI 沒有回應（網址），請先啟動 ComfyUI」，系統狀態顯示「異常」。不想使用 GPU 時設 `IMAGE_MODE=sim`（程序化背景）。`IMAGE_MODE=comfyui` 搭配 `REVIEW_MODE=sim` 是設定錯誤。生圖在本機 GPU，不計費：儀表板的每張成本只含 Gemini 的實際用量；每張的生成秒數記在任務透視的 log。
-- 生圖與去背的記憶體：ComfyUI（SDXL）約用 6–8 GB 系統記憶體，與去背的尖峰相加會超過 16 GB，所以兩者以 Redis 鎖互斥（`MEMORY_LOCK=true`，預設）：生圖期間上傳的商品維持「去背中」，生圖結束後才開始；去背進行中時，任務在生圖前等候（log 顯示「等待商品去背完成」）。記憶體夠大時可以設 `MEMORY_LOCK=false`。`COMFYUI_FREE_AFTER_JOB=true` 時每個任務結束後請 ComfyUI 卸載模型（下一個任務要重新載入）。
+- ComfyUI：在 Windows 安裝 ComfyUI（見 [comfyui/README.md](comfyui/README.md)），雙擊 `comfyui/start.cmd` 啟動（只監聽 127.0.0.1:8188；portable 版不在 `%USERPROFILE%\ComfyUI\ComfyUI_windows_portable` 時以 PowerShell 執行 `comfyui\start.ps1 -PortableDir <資料夾>`，GPU 記憶體不足時加上 `-LowVram`；關掉視窗就會停止），容器以 `http://host.docker.internal:8188` 連線；沒有啟動時任務在生圖階段失敗，原因為「ComfyUI 沒有回應（網址），請先啟動 ComfyUI」，系統狀態顯示「異常」。不想使用 GPU 時設 `IMAGE_MODE=sim`（程序化背景）。`IMAGE_MODE=comfyui` 搭配 `REVIEW_MODE=sim` 是設定錯誤。生圖在本機 GPU，不計費：儀表板的每張成本只含 Gemini 的實際用量；每張的生成秒數記在任務透視的 log。
+- 生圖與去背的記憶體：ComfyUI（SDXL）在 Windows 上另外佔用記憶體（Plan 7 實驗量到約 6 GB；模型大多放在 GPU 時，Docker 驗收量到 ComfyUI 本身約 2 GB），與去背的尖峰相加會超過 16 GB，所以兩者以 Redis 鎖互斥（`MEMORY_LOCK=true`，預設）：生圖期間上傳的商品維持「去背中」，生圖結束後才開始；去背進行中時，任務在生圖前等候（log 顯示「等待商品去背完成」）。記憶體夠大時可以設 `MEMORY_LOCK=false`。`COMFYUI_FREE_AFTER_JOB=true` 時每個任務結束後請 ComfyUI 卸載模型（下一個任務要重新載入）。
+- 16 GB 筆電的實測（Plan 7 規格 §12）：WSL 預設的 8 GB 不夠在 Docker 裡去背（逾時、worker 重新啟動），`.wslconfig` 設 `memory=12GB` 後生圖與去背互斥正確（去背時 worker 尖峰約 8.9 GiB）。整套服務加上 ComfyUI 時記憶體很緊：瀏覽器等其他程式還開著時，Windows 的認可記憶體接近上限，WSL 與 ComfyUI 可能被結束；請先關掉其他吃記憶體的程式。
 - 免費方案：Google 可能用免費方案的輸入（包括商品照與海報）改善產品，並可能由人工審閱，未發表的商品請用付費方案的 key。免費方案實際不收費，但 `job_usage` 仍依付費單價記錄，上限照樣生效。
 - 免費方案的配額很小：2026-10 實測 `gemini-3.8-flash` 每個專案每天只有 20 次請求，一個任務（3 個模板 × 2 張、重試一輪）約 18 次呼叫，所以實際使用請在 Google AI Studio 啟用付費方案。配額用完時任務失敗，原因會說明約多久後恢復。
-- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）。兩個模型的 Docker 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，WSL2 則改 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦只用去背時請把上限調到約 10 GB（同時使用 RAG 見下面的「RAG 的記憶體」），WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。
+- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。去背結果會裁掉商品四周的透明空白，排版時商品才會填滿商品框（之前已去背的商品要在商品庫按「重新去背」才會套用）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）。兩個模型的 Docker 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，WSL2 則改 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦只用去背時請把上限調到約 10 GB（同時使用 RAG 見下面的「RAG 的記憶體」），WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。
 - RAG（`RAG_MODE=bge`，預設）：worker 第一次啟動時下載 BGE-M3、bge-reranker-v2-m3 與共用的 tokenizer（int8 ONNX，合計約 1.2 GB，存在 `models` volume），核對後先不載入：worker 啟動時的同步發現索引有差異（例如第一次啟動或 Chroma 重建）時就會載入；沒有差異時，第一次檢索才載入。載入後常駐。系統狀態的「RAG 模型」依序顯示下載中、已就緒（第一次檢索時載入）、載入中、已載入。下載或載入期間送出的任務會在「檢索」階段等候。
 - RAG 的記憶體：模型載入後 worker 約再多用 1.7 GB（Docker 實測 1.75 GB；沒有載入時約 0.1 GB，為去背用模擬版時的實測）。與去背的尖峰相加約 10 GB，Docker 的記憶體上限請比上面的建議再多留約 2 GB（例如 12 GB）。16 GB 的電腦同時使用去背與 RAG 時，Docker 上限請設約 12 GB；不夠時改用 `RAG_MODE=sim`，也就是模擬檢索（不下載模型、不寫入 Chroma）。
 - Chroma：`chroma` 服務（`127.0.0.1:8001`，容器之間為 `chroma:8000`），資料存在 `chroma` volume，worker 等它健康後才啟動。
@@ -100,9 +103,13 @@ docker compose up -d --build
 自己的資料：
 
 - **品牌**：複製 `brands/_template.yaml` 成 `brands/<品牌 id>.yaml` 填寫，改完執行 `docker compose restart api worker`（變更的切塊在 worker 啟動時或下一次檢索前重新向量化，寫入 Chroma）。格式錯誤的品牌會略過，原因顯示在系統狀態。
-- **品牌手冊**：到「品牌知識庫」上傳 `.md`、`.markdown`、`.txt`（UTF-8）或 `.pdf`。PDF 只讀取文字層：掃描檔沒有文字，要先轉成文字（不做 OCR）；有密碼或權限保護的要先移除保護。單檔 20 MB、20 萬字以內。進度條顯示切塊、向量化（`bge` 模式為真實向量的前 6 維）與寫入；同一個檔名重新上傳會取代原本的切塊。
+  - 背景風格寫在 `visualStyles`（寫法見範本）：`id` 只用小寫英文、數字與連字號，`tones` 只能是 gentle、science、playful、minimal（可以留空 `[]`，只在手選時使用）；提示詞只描述背景與場景，不要寫 product photography 或瓶子等容器。
+  - Logo 放在 `brands/assets/`，在 `logo` 填相對路徑。請用**真正透明背景**的 PNG 或 SVG（圖裡畫的棋盤格不是透明，海報上會出現灰白格子）、橫式（比例約 3:1 到 5:1）、四周不留空白、高度 200 px 以上；Logo 框約 350–390 × 72–82 px，等比例縮放、靠左放。
+- **品牌手冊**：到「品牌知識庫」上傳 `.md`、`.markdown`、`.txt`（UTF-8）或 `.pdf`。PDF 只讀取文字層：掃描檔沒有文字，要先轉成文字（不做 OCR）；有密碼或權限保護的要先移除保護。單檔 20 MB、20 萬字以內。進度條顯示切塊、向量化（`bge` 模式為真實向量的前 6 維）與寫入；同一個檔名重新上傳會取代原本的切塊。Markdown 的 `#` 標題會成為段落名稱，一段只寫一個主題，標籤（色彩、Logo、法規、版型等）依內文的關鍵字判斷。
+  - 「已上傳的手冊」列出每份手冊的檔名與切塊數，可以刪除（品牌設定檔的規範與歷史案例不在這裡、不會被刪除）；向量庫在下一次檢索時同步刪除。
+  - 手冊切塊存在資料庫（Docker 的 volume），不在 Git 裡；`docker compose down -v` 或刪除 volume 時會一起消失。原稿請自己另外保存（例如 `brands/docs/`），需要時重新上傳。
 - **歷史回寫**：在新任務選定海報後，worker 把它寫成「歷史回寫」切塊（商品名稱、模板、審查分數、標題與副標、賣點、正向提示詞的前 120 字），之後的任務檢索得到。
-- **商品照**：放在 `assets/products/`，到「商品庫 → 本機資料夾」匯入；也可以直接上傳（存在 `data/`）。這兩個資料夾都不會上傳 GitHub。去背結果存在 `data/products/{商品 id}/`。
+- **商品照**：放在 `assets/products/`，到「商品庫 → 本機資料夾」匯入；也可以直接上傳（存在 `data/`）。這兩個資料夾都不會上傳 GitHub。去背結果存在 `data/products/{商品 id}/`。建議商品本身至少 1500 px 高：海報上的商品會放大到商品框的大小，照片太小時標籤會模糊（四周的空白去背後會自動裁掉，不影響大小）。
 
 ## 只看前端（mock 模式）
 
