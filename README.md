@@ -20,7 +20,7 @@
 | Plan 5 | RAG：Chroma、BGE-M3 與 Reranker、PDF 手冊上傳、歷史回寫 | 完成（Agent、生圖與審查仍為模擬版） |
 | Plan 6A | 伺服器端排版與規則審查：審查用海報、從像素量測品牌主色 | 完成（Agent、生圖與 VLM 審查仍為模擬版） |
 | Plan 6B | Gemini Agent、VLM 審查、用量與成本 | 完成（生圖仍為模擬版） |
-| Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（RTX 3060 Laptop 實測每張約 14 秒；Docker 內的連線與 VLM 判讀待在有 Docker 與 Gemini key 的環境驗收） |
+| Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（Docker＋Gemini 驗收：3 個品牌的任務完成、每張約 17 秒、取消與 ComfyUI 未開啟都正確；Docker 內去背需要 10–12 GB 的 WSL 記憶體，見 Plan 7 規格 §12） |
 | Plan 8 | 作品集 Demo（Cloudflare Pages＋Access） | 完成（部署與觀看名單由使用者以自己的 Cloudflare 帳號設定，見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)） |
 
 ## 架構
