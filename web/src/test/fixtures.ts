@@ -49,7 +49,7 @@ export function cleanSpec(brand: Brand = SELUNE, product: Product = SERUM, templ
 }
 
 /** 把 PromptSpec 的文案與版面轉成 Gemini 的 SpecDraft（護欄不會有意見的 draft） */
-export function draftOf(spec: PromptSpec, scene = 'serum bottle on a pearl tray with soft aurora light'): SpecDraft {
+export function draftOf(spec: PromptSpec, scene = 'pearl-white marble tray with soft aurora light'): SpecDraft {
   const { copy } = spec;
   return {
     headline: [...copy.headline], subhead: copy.subhead, features: [...copy.features], badge: { ...copy.badge },
