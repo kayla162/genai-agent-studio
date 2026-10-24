@@ -10,6 +10,7 @@
 - **Gemini**：官方 `google-genai` SDK（`gemini-3.8-flash`）負責需求拆解、Prompt 構建、Query Rewriting 與 VLM 審查，每次呼叫記錄用量與費用：[Gemini Agent 與 VLM 審查設計規格](docs/superpowers/specs/2026-10-23-plan6b-gemini-vlm-design.md)
 - **ComfyUI**：在 Windows 以 GPU 生成背景（SDXL），商品像素一律使用原始去背圖；安裝與模型授權見 [comfyui/README.md](comfyui/README.md)：[ComfyUI 生圖設計規格](docs/superpowers/specs/2026-10-23-plan7-comfyui-design.md)
 - **規格**：[第二階段設計規格](docs/superpowers/specs/2026-10-07-phase2-backend-design.md)；各計畫在 [docs/superpowers/plans/](docs/superpowers/plans/)
+- **CI**：GitHub Actions（`.github/workflows/ci.yml`）在 PR 與推送到 main 時執行前端的 typecheck、lint、vitest、build、`demo:check` 與 mock E2E，以及後端的 ruff、mypy 與 pytest（PostgreSQL、Redis、Chroma 以服務容器啟動）；不呼叫 Gemini、不連 ComfyUI
 
 ## 進度
 

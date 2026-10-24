@@ -1,0 +1,104 @@
+# PR 與推送到 main 時執行前後端的檢查與測試（不呼叫 Gemini、不連 ComfyUI：pytest -m live 只在本機手動執行）
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: web（typecheck、lint、vitest、build、E2E）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # 海報字型（約 28 MB）：依 fonts.lock.json 快取，需要字型的 vitest 才不會略過
+      - uses: actions/cache@v4
+        with:
+          path: web/composer/fonts
+          key: poster-fonts-${{ hashFiles('web/composer/fonts.lock.json') }}
+      - run: npm run fonts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+      - run: npm run demo:check
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+
+  backend:
+    name: backend（ruff、mypy、pytest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 與 docker-compose.yml 相同版本的映像檔與對外埠（測試的預設連線位址）；
+    # 從 Docker Hub 取得：GitHub 的 runner 以匿名方式拉 public.ecr.aws 會碰到流量上限（toomanyrequests）
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: genai
+          POSTGRES_PASSWORD: genai
+          POSTGRES_DB: genai
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U genai -d genai" --health-interval 3s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 3s --health-timeout 3s --health-retries 30
+      chroma:
+        image: ghcr.io/chroma-core/chroma:1.5.9
+        ports: ['8001:8000']
+    steps:
+      - uses: actions/checkout@v4
+      # 測試在 3902 埠啟動 composer：需要 web/ 的套件與海報字型
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - uses: actions/cache@v4
+        with:
+          path: web/composer/fonts
+          key: poster-fonts-${{ hashFiles('web/composer/fonts.lock.json') }}
+      - run: npm run fonts
+        working-directory: web
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked
+        working-directory: backend
+      # chroma 的映像檔沒有 curl，不設定健康檢查：在這裡等 heartbeat
+      - run: |
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8001/api/v2/heartbeat && exit 0; sleep 2; done
+          echo 'Chroma 沒有回應' >&2; exit 1
+      - run: uv run ruff check app tests
+        working-directory: backend
+      - run: uv run ruff format --check app tests
+        working-directory: backend
+      - run: uv run mypy app tests
+        working-directory: backend
+      - run: uv run pytest -q
+        working-directory: backend

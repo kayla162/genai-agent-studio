@@ -125,12 +125,20 @@ async def test_the_review_poster_is_written_under_the_job_and_served_through_fil
     assert composer.sent == [PosterImages()]
 
 
+def near(measured: str | None, expected: str) -> bool:
+    """量到的主色與品牌主色每個色版相差 ≤ 2：繪製在 Windows 與 Linux 的捨入不同（例如 #b76e79 與 #b76f79）。"""
+    if measured is None:
+        return False
+    pairs = zip(bytes.fromhex(measured.lstrip('#')), bytes.fromhex(expected.lstrip('#')), strict=True)
+    return all(abs(a - b) <= 2 for a, b in pairs)
+
+
 async def test_a_clean_spec_measures_the_brand_primary_and_passes_color_delta(
     composer: RecordingComposer, settings: Settings
 ) -> None:
     posters, reviewer = ComposerPosters(composer, settings), ComposerReviewer(composer)
     clean = await posters.compose(JOB_ID, CLEAN, SERUM, SELUNE)
-    assert clean.measured_primary == SELUNE.palette.primary.lower()
+    assert near(clean.measured_primary, SELUNE.palette.primary)
     assert clean.background is not None and clean.background.off_share <= 0.15
     result = await reviewer.review(SELUNE, CLEAN, 1, clean, FakeRun())
     assert len(result.checks) == 11
@@ -167,7 +175,7 @@ async def test_uploaded_products_send_the_cutout_or_the_photo_and_large_photos_a
         product = SERUM.model_copy(update={'id': 'prod_up', 'photo': photo, 'cutout': cutout})
         poster = await posters.compose(JOB_ID, CLEAN, product, SELUNE)
         # 商品框不在主色的量測範圍內，換了商品圖仍量得到主色
-        assert poster.measured_primary == SELUNE.palette.primary.lower()
+        assert near(poster.measured_primary, SELUNE.palette.primary)
 
     sent = [images.product for images in composer.sent]
     assert all(p is not None for p in sent)
