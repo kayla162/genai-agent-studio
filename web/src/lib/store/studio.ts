@@ -6,7 +6,7 @@ import { MOCK_OPTIONS } from '@/lib/api/mock/options';
 import { defaultSelection, emptyJobView, reduceJob, type JobView } from '@/lib/jobs/view';
 import { useAppStore } from './app';
 
-export const ENGINE_LABEL: Record<Engine, string> = { comfyui: 'ComfyUI（SDXL + ControlNet + IP-Adapter）', ideogram: 'Ideogram 4.0' };
+export const ENGINE_LABEL: Record<Engine, string> = { comfyui: 'ComfyUI（SDXL inpainting）', ideogram: 'Ideogram 4.0' };
 export const TONE_LABEL: Record<Tone, string> = { gentle: '溫柔療癒', science: '專業科研', playful: '活潑年輕', minimal: '簡約' };
 
 /** 各品牌的示範需求（第一個就是規格書的 Demo 句） */
