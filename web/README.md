@@ -19,7 +19,7 @@ npm run dev
 
 開啟 http://127.0.0.1:3000（會導向「新任務」），預設為 mock 模式。
 
-live 模式：先啟動後端（要先停掉 Docker 的 web、api 與 worker，見 [repo 根目錄的 README](../README.md#開發-live-模式)），再執行：
+live 模式：先啟動後端（要先停掉 Docker 的 web、api 與 worker，見 [操作手冊](../docs/operations.md#開發-live-模式)），再執行：
 
 ```bash
 # bash／zsh

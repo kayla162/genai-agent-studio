@@ -1,29 +1,116 @@
 # 虛實整合 GenAI Agent
 
-一句話需求 → Agent 拆解 → RAG 檢索品牌規範 → 多通路生圖 → 合規審查與自動重試 → 挑圖改字 → 匯出。
-既是每天做商品圖的工具，也是全端技術的作品集。
+**以 LLM Agent、RAG 與擴散模型產生電商海報，並以規則與 VLM 自動審查品牌合規的多模態系統。**
 
-- **前端**：Next.js 16（靜態輸出）、TypeScript、Tailwind CSS v4、shadcn/ui、Zustand：[web/README.md](web/README.md)
-- **後端**：FastAPI、SAQ worker、PostgreSQL（SQLAlchemy、Alembic）、Redis：[backend/README.md](backend/README.md)
-- **RAG**：Chroma 向量庫、BGE-M3 向量化與 bge-reranker-v2-m3 Rerank（ONNX Runtime，CPU）：[RAG 設計規格](docs/superpowers/specs/2026-10-21-plan5-rag-design.md)
-- **composer**：Node 服務，直接執行前端的 TypeScript（版型、審查用海報的繪製、規則審查、Gemini 結果的護欄與模擬邏輯），讓前後端只有一份實作；以 `@napi-rs/canvas` 在伺服器端畫出與瀏覽器相同的海報：[伺服器端排版設計規格](docs/superpowers/specs/2026-10-22-plan6a-server-compose-design.md)
-- **Gemini**：官方 `google-genai` SDK（`gemini-3.8-flash`）負責需求拆解、Prompt 構建、Query Rewriting 與 VLM 審查，每次呼叫記錄用量與費用：[Gemini Agent 與 VLM 審查設計規格](docs/superpowers/specs/2026-10-23-plan6b-gemini-vlm-design.md)
-- **ComfyUI**：在 Windows 以 GPU 生成背景（SDXL），商品像素一律使用原始去背圖；安裝與模型授權見 [comfyui/README.md](comfyui/README.md)：[ComfyUI 生圖設計規格](docs/superpowers/specs/2026-10-23-plan7-comfyui-design.md)
-- **規格**：[第二階段設計規格](docs/superpowers/specs/2026-10-07-phase2-backend-design.md)；各計畫在 [docs/superpowers/plans/](docs/superpowers/plans/)
-- **CI**：GitHub Actions（`.github/workflows/ci.yml`）在 PR 與推送到 main 時執行前端的 typecheck、lint、vitest、build、`demo:check` 與 mock E2E，以及後端的 ruff、mypy 與 pytest（PostgreSQL、Redis、Chroma 以服務容器啟動）；不呼叫 Gemini、不連 ComfyUI
+輸入一句話需求，例如「週年慶主打買一送一，要溫柔療癒的感覺」，系統依序：
+1. 以 Gemini 拆解需求。
+2. 從品牌知識庫檢索規範。
+3. 產生文案、版面與生圖提示詞。
+4. 在本機 GPU 以 SDXL 生成背景。
+5. 疊上原始商品圖，排出 5 種通路尺寸的海報。
+6. 以 11 項檢查審查品牌合規。
+7. 不通過時自動改寫、重新生成。
 
-## 進度
+> *A multimodal agent system that turns a one-line brief into brand-compliant e-commerce posters: Gemini for planning and VLM review, RAG over brand guidelines (BGE-M3 + reranker on ONNX), SDXL inpainting on a local GPU, and an event-sourced FastAPI/PostgreSQL backend with measured, test-covered behaviour.*
 
-| 計畫 | 內容 | 狀態 |
+## 重點
+
+| 面向 | 做了什麼 |
+|---|---|
+| **LLM Agent** | 結構化輸出（JSON Schema）＋程式護欄＋帶說明重問；不通過審查時以 Query Rewriting 重新檢索、改寫後再生成一輪 |
+| **RAG** | BGE-M3 向量化、bge-reranker-v2-m3 重新排序（int8 ONNX，CPU）；PostgreSQL 為資料來源、Chroma 為可重建的索引；PDF／Markdown 手冊上傳與歷史回寫 |
+| **電腦視覺** | BiRefNet 商品去背；SDXL＋Lightning LoRA 只重繪商品以外的背景，商品像素一律用原圖；從像素量測品牌色差（ΔE2000）與背景色系（LCh） |
+| **評估** | Gemini 作為 VLM 評審（誇大、遮擋、畫質）＋轉錄文字與實際文案比對錯字；每個門檻都以實驗校準並記錄在設計規格 |
+| **資料工程** | 事件溯源：每個任務事件依序號寫入 PostgreSQL，經 Redis 推送到 WebSocket，斷線以序號補送；用量帳本與費用上限；佇列、取消與資源鎖 |
+| **工程品質** | 後端 400+、前端 600+ 個測試；Python 與 TypeScript 共用的契約測資；GitHub Actions 以服務容器跑 PostgreSQL、Redis、Chroma |
+
+## 系統流程
+
+```mermaid
+flowchart LR
+  brief([一句話需求]) --> parse[需求拆解<br/>Gemini 結構化輸出]
+  parse --> rag[RAG 檢索<br/>BGE-M3 召回 8 筆<br/>Reranker 取前 5]
+  rag --> spec[Prompt 構建<br/>文案、版面、生圖場景]
+  spec --> guard{程式護欄}
+  guard -- 不合格：帶說明重問 --> spec
+  guard --> gen[背景生成<br/>ComfyUI・SDXL inpainting]
+  gen --> compose[排版<br/>疊上原始去背商品]
+  compose --> review[合規審查<br/>8 項規則＋3 項 VLM]
+  review -- 不通過 --> rewrite[Query Rewriting<br/>重新檢索、改寫]
+  rewrite --> spec
+  review -- 通過 --> pick([挑圖、改字、匯出])
+  pick --> history[(歷史回寫<br/>成為之後的 RAG 切塊)]
+```
+
+## 技術重點
+
+### AI 與 LLM 應用
+
+- **可控的 LLM 輸出**：
+  - Gemini 以 JSON Schema 產生每個模板的文案、8 個元素的版面方框與生圖場景。
+  - 程式護欄檢查：禁用詞、字型缺字、需求沒提到的價格、版面重疊、商品佔比、留白、Logo 淨空區與字級。
+  - 不合格時帶著中文說明重問一次，仍不合格就退回預設值。
+  - 背景曾多畫出帶假標籤的瓶子：追到提示詞的範例，改說明並在護欄攔下提到容器的場景描述。
+- **RAG**：
+  - 品牌設定檔、上傳的手冊與選定的海報都切成切塊。
+  - 先向量召回 8 筆，Reranker 重新排序後前 5 筆放進 Prompt。
+  - 改寫時另外檢索合規替代用語與法規切塊。
+  - 實測發現 int8 動態量化會因批次改變結果，改為逐筆計算：結果固定，速度也快 10–14%。
+  - 兩個模型共用一個 tokenizer，省下約 285 MB。
+- **VLM 評審與 OCR 比對**：
+  - Gemini 讀伺服器端畫出的審查用海報，判斷誇大、遮擋與畫質。
+  - 轉錄時不提供預期文案，避免模型照抄；轉錄結果再與實際畫出的文字比對錯字。
+- **擴散模型**：
+  - 商品放在版面方框，生成遮罩；SDXL 只重繪背景，最後疊回原始去背圖。
+  - 標籤文字與外形不會被模型改動，實測商品區域與原圖平均差 0.67／255。
+- **背景色系指標**：
+  - 每個像素轉成 LCh，依品牌色的色相與彩度判斷是否在色系內。
+  - 門檻以 24 張實際生成的背景離線校準。
+- **成本治理**：
+  - 每次呼叫記錄 tokens（含思考）與費用，單價依生效日期計算。
+  - 單一任務與每月各有費用上限，儀表板以實際用量算每張成本。
+
+### 資料工程與後端
+
+- **事件溯源與即時串流**：
+  - 任務事件在同一個交易中取得序號並寫入 PostgreSQL，再經 Redis 推送到 WebSocket。
+  - 斷線或重新整理後以最後的序號補送。
+  - Redis 停止時改為每秒從資料庫讀取，連線不中斷。
+- **資料來源與衍生索引分離**：
+  - 切塊以 PostgreSQL 為準，Chroma 只是索引。
+  - worker 啟動與每次檢索前比對並補齊；刪掉向量庫後約 6.5 秒自動重建，分數與重建前完全相同。
+- **文件攝取管線**：
+  - 支援 Markdown、文字檔與 PDF（文字層）：檢查大小與字數、切塊、向量化、以 id upsert。
+  - 進度以串流回報；120 秒沒有進度才逾時，大檔案不會被固定時限誤殺。
+- **工作佇列與資源管理**：
+  - SAQ worker 處理任務、去背與文件攝取。
+  - 取消會中斷進行中的 Gemini 呼叫與 ComfyUI prompt。
+  - 16 GB 筆電上，生圖與去背以 Redis 鎖互斥，避免記憶體不足。
+- **用量帳本**：`job_usage` 依台北時間的月份彙總，單價表有生效日期。
+
+### 工程方法
+
+- **一份實作、兩個執行環境**：版型、繪製、規則審查與護欄只用 TypeScript 寫一次，瀏覽器直接執行；後端透過 Node 服務（composer）呼叫同一份程式，在伺服器端畫出相同的海報。
+- **契約測資**：前後端以同一組 golden fixtures 比對事件與審查結果。
+- **測試不依賴外部服務**：Gemini 與 ComfyUI 的回應錄下來重播；真實呼叫另外標記為 `live`，手動執行。
+- **先規格、再實作**：每個階段先寫設計規格與實作計畫，實驗結果、決策與已知限制都記錄在 [docs/superpowers/](docs/superpowers/)。
+
+## 量測結果
+
+| 項目 | 結果 | 來源 |
 |---|---|---|
-| Plan 1–3 | 前端與瀏覽器內模擬（mock 模式）、Agent 透視、成效儀表板 | 完成 |
-| Plan 4 | 後端骨架與即時串流：全部 API、WebSocket、worker、Docker | 完成（外部服務為模擬版） |
-| Plan 5 | RAG：Chroma、BGE-M3 與 Reranker、PDF 手冊上傳、歷史回寫 | 完成（Agent、生圖與審查仍為模擬版） |
-| Plan 6A | 伺服器端排版與規則審查：審查用海報、從像素量測品牌主色 | 完成（Agent、生圖與 VLM 審查仍為模擬版） |
-| Plan 6B | Gemini Agent、VLM 審查、用量與成本 | 完成（生圖仍為模擬版） |
-| Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（Docker＋Gemini 驗收：3 個品牌的任務完成、每張約 17 秒、取消與 ComfyUI 未開啟都正確；WSL 記憶體 12 GB 時生圖與去背互斥正確；16 GB 的筆電需關掉其他程式。補驗：要求螢光色背景時第 1 輪不通過、改寫後通過；海報上的商品與原始去背圖相同；生圖中重新整理可以接續。見 Plan 7 規格 §12） |
-| Plan 8 | 作品集 Demo（Cloudflare Pages＋Access） | 完成（部署與觀看名單由使用者以自己的 Cloudflare 帳號設定，見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)） |
-| 之後的改進 | 多組背景風格（[設計規格](docs/superpowers/specs/2026-10-24-visual-styles-design.md)）、品牌知識庫列出與刪除上傳的手冊、去背結果裁掉四周空白、修正背景多畫出瓶子、RAG 模型準備中可以取消、CI、ComfyUI 啟動腳本 | 完成 |
+| Gemini 結構化輸出（3 品牌 × 5 模板 × 2 次） | 格式第一次就通過 30/30；不必重問就通過全部護欄 30/30 | [Gemini 規格 §12](docs/superpowers/specs/2026-10-23-plan6b-gemini-vlm-design.md) |
+| VLM 轉錄（15 張正確的海報） | 0 處差異 15/15；刻意換字或缺字的 30 張全部抓到 | 同上 |
+| VLM 判讀（正確、遮擋、誇大各 3 張） | 9/9 判斷正確；同一張審查 3 次，結果一致 9/9 | 同上 |
+| RAG int8 與 fp32 | 向量餘弦相似度平均 0.98；10 個查詢的第一名都相同 | [RAG 規格 §2](docs/superpowers/specs/2026-10-21-plan5-rag-design.md) |
+| RAG 延遲（CPU） | 查詢向量化約 0.023 秒；Rerank 8 筆約 1.4 秒 | 同上 |
+| 歷史回寫 | 下一個任務的召回與 Rerank 都把它排第一（Rerank 0.97） | 同上 |
+| 背景生成（RTX 3060 Laptop 6 GB） | 每張 14–17 秒（目標 ≤ 60 秒） | [ComfyUI 規格 §12](docs/superpowers/specs/2026-10-23-plan7-comfyui-design.md) |
+| 背景色系檢查 | 一般背景 15/15 通過；刻意偏離色系的 9 張有 7 張不通過、1 張警告 | 同上 |
+| 自動改寫 | 要求螢光色背景：第 1 輪色系外 38% 不通過，改寫後第 2 輪 2%、100 分通過 | 同上 |
+| 費用 | Prompt 構建每次約 US$0.021、VLM 審查約 US$0.003；3 個模板 × 2 張、重試一輪約 US$0.18 | Gemini 規格 §12 |
+
+已知限制與取捨（例如提示詞刻意要求的偏色，模型不一定照做；16 GB 筆電的記憶體很緊）都寫在各份規格的實驗結果。
 
 ## 架構
 
@@ -44,74 +131,16 @@ flowchart LR
   demo([作品集 Demo]) -. mock 模式的靜態輸出 .-> pages[Cloudflare Pages<br/>＋ Access 名單]
 ```
 
-```
-瀏覽器 ── 127.0.0.1:3000 ── web（nginx：前端靜態檔；/api、/ws、/files、/docs 轉給 api）
-                              │
-                            api（FastAPI）── postgres
-                              │            └ data/（上傳的商品照、去背圖、生成的背景、審查用海報）
-                              │ SAQ 佇列＋事件推送
-                            redis
-                              │
-                            worker（SAQ）── composer（Node：版型、繪製審查用海報、規則審查、Gemini 的護欄、模擬邏輯）
-                              │          ├ Gemini API（AGENT_MODE=gemini：Agent 與 VLM 審查；api 也用它拆解需求）
-                              │          ├ ComfyUI（IMAGE_MODE=comfyui：Windows 原生，host.docker.internal:8188）
-                              │          └ models/（去背與 RAG 的 ONNX 模型）
-                            chroma（向量庫，127.0.0.1:8001）
-```
+| 層 | 技術 |
+|---|---|
+| AI／模型 | Gemini（`google-genai`，結構化輸出、VLM）、BGE-M3、bge-reranker-v2-m3、BiRefNet（ONNX Runtime）、SDXL＋SDXL-Lightning（ComfyUI） |
+| 後端 | Python 3.13、FastAPI、SAQ、SQLAlchemy＋Alembic、PostgreSQL、Redis、Chroma、httpx、pytest、mypy、ruff |
+| 前端與排版 | Next.js 16（靜態輸出）、TypeScript、Tailwind CSS v4、shadcn/ui、Zustand、`@napi-rs/canvas`、Vitest、Playwright |
+| 部署與 CI | Docker Compose、nginx、GitHub Actions、Cloudflare Pages＋Zero Trust Access |
 
-- 每則任務事件都在同一個交易中取得序號（`seq`）並寫入資料庫，再經 Redis 推送到 WebSocket；斷線或重新整理後，前端以最後收到的 `seq` 接續。Redis 停止時，WebSocket 改為每秒從資料庫讀取新事件，連線不中斷。
-- **RAG**：品牌設定檔、上傳的手冊與選定的海報都切成切塊，存在 PostgreSQL；worker 以 BGE-M3 向量化後寫入 Chroma（每個品牌一個 collection）。任務先向量召回 8 筆、再以 Reranker 重新排序，前 5 筆放進 Prompt。PostgreSQL 為準，Chroma 只是索引：worker 啟動時與每次檢索前都會比對並補齊，Chroma 的資料遺失時會自動重建。
-- **合規審查**（`REVIEW_MODE=composer`，預設）：排版階段由 composer 在伺服器端畫出每張候選的審查用海報（與瀏覽器使用同一套 `scene.ts` 與 `paint.ts`），worker 存成 `data/jobs/{任務 id}/{候選 id}.png`（每張約 0.3–1 MB，不會自動清理）。審查依這張圖計算：8 項規則加 3 項 VLM，分數不加隨機抖動。`AGENT_MODE=gemini` 時 VLM 三項由 Gemini 讀這張圖判斷，並轉錄畫面上的文字比對錯字（見下方）；`AGENT_MODE=sim` 時依內容判斷（誇大用語看禁用詞、遮擋看 Logo 是否與標題重疊、品質一律通過），說明標示「模擬：AGENT_MODE=sim」。任務透視的「合規報告」可以切換「預覽／審查用海報」，兩者疊上相同的 BBox。
-- **主色色差**：從審查用海報的像素量出品牌主色，計算與 CI 主色的 ΔE2000。量測範圍是標題、售價、徽章三個區塊（扣掉商品區塊），這些元素一定以主色繪製：取出佔比 2% 以上的色塊，以最接近主色的一個計算色差；超過門檻時，說明文字改為顯示實際用錯的顏色（例如 `#E0458A`），合規報告在旁邊畫出色塊；量不到時判定不通過（「未偵測到主色（主色區塊 < 2%）」）。只檢查排版上的品牌色元素；背景由下一項檢查。
-- **背景色系**（Plan 7）：量疊上文字與商品之前的背景（商品方框以外、縮小到長邊 256 px），每個像素轉成 LCh：彩度低於 18 的中性色算色系內；與品牌色（含很暗、很淡的品牌色）色相相差 30° 以內、彩度不比品牌色高出 15 以上的算色系內；其他（包括螢光色）算色系外。色系外 ≤ 15% 通過、≤ 30% 警告、超過不通過，說明顯示色系外最多的顏色（例如「色系外 42%（主要為 #3FD27A）」），合規報告在旁邊畫出色塊。門檻以 ComfyUI 實測的背景校準（規格 §12）：生成的一般背景（3 個品牌 × 5 個模板）色系外最多 4%，刻意指定偏離色系的 9 張有 7 張不通過、1 張警告；程式產生的背景色系外最多 0.7%。模擬審查時為通過（「（模擬）」）。
-- **Gemini Agent**（`AGENT_MODE=gemini`，預設；需要 `REVIEW_MODE=composer`）：
-  - 需求拆解、Prompt 構建（文案、8 個元素的版面方框、生圖場景）與 Query Rewriting 都由 Gemini 產生，提示詞在 `backend/app/pipeline/prompts/*.md`。
-  - **護欄**：composer 的 `/spec` 檢查 Gemini 寫的文案與版面：替代用語、移除 emoji、字型沒有的字、禁用詞、長度、需求沒有的價格或優惠、版面是否合法、商品佔比、留白、Logo 淨空區與字級。生圖場景（`scene`）只能描述空著的展示檯面、背景、道具與光線，提到商品或容器（bottle、jar、tube、packaging 等）時也算問題：ComfyUI 會照著在背景多畫出帶假標籤的瓶子。有問題時帶著中文說明請 Gemini 修正一次，仍不合格就改用預設文案、版型或場景，Agent 透視以警告顯示。
-  - **VLM 審查**：Gemini 讀審查用海報，判斷誇大用語、遮擋與畫質，並轉錄畫面上的文字（不提供預期文案，避免照抄）；`ocrDiffs` 把轉錄與實際畫出的文字比對，0 處差異通過、1 處警告、2 處以上或畫面有方塊（字型沒有的字）不通過。
-  - **用量與費用**：每次呼叫寫入 `job_usage`（tokens 含思考、依 `pricing.yaml` 的單價計算費用），Agent 透視顯示每次呼叫的用量與任務的合計，儀表板的每張成本改用實際費用。單一任務與每月（台北時間）各有費用上限（`GEMINI_JOB_BUDGET_USD`、`GEMINI_MONTHLY_BUDGET_USD`）。
-  - `AGENT_MODE=sim`：Agent 與 VLM 都是模擬版，行為與 mock 模式的劇本相同（第一輪刻意失誤，Query Rewriting 後通過），不需要 key。
-- **ComfyUI 生圖**（`IMAGE_MODE=comfyui`，預設；需要 `REVIEW_MODE=composer`）：每個模板由 composer 畫出商品底圖與遮罩（商品放在版面的商品方框），ComfyUI 只重繪商品以外的背景與光影；生成圖放大、裁切成模板尺寸後存到 `data/jobs/{任務 id}/bg-…png`，排版時再把原始去背圖疊在同一個位置，標籤文字與商品外形完全不變。每個 variant 一個 prompt、依序執行（只有一張 GPU），執行錯誤時重試一次，取消會中斷 ComfyUI 正在執行的 prompt。`IMAGE_MODE=sim` 時為程序化背景（測試、live E2E 與作品集 Demo）。
-- **背景風格**：每個品牌在設定檔的 `visualStyles` 設定 1–6 組背景風格（名稱、英文提示詞、對應的語氣）。新任務表單的「背景風格」可以手選一組，預設「自動」：取第一組對應需求語氣的風格，都沒有時用第一組。同一個任務的所有模板、候選與重試都用同一組；Agent 透視的 log 顯示用了哪一組（例如「背景風格：節慶（指定）」），選定的提示詞放進每個模板的正向提示詞。
-- 右上角的連線狀態可以展開各服務的狀態，模擬版會標示「模擬」；composer 一項顯示目前的 `REVIEW_MODE` 與載入的海報字型，Gemini 一項顯示模型、本月費用與上限、key 末 4 碼（`models.get` 檢查 key 與模型，不計費），ComfyUI 一項顯示 GPU、VRAM 與版本，連不上或缺少 workflow 需要的節點與模型時說明原因。
+## 快速開始
 
-## 用 Docker 執行（live 模式）
-
-需要 Docker Desktop（映像檔取自 AWS 的官方映像鏡像，Chroma 取自 GitHub 的 `ghcr.io/chroma-core/chroma:1.5.9`，都不必登入）。
-
-```bash
-docker compose up -d --build
-```
-
-- 前端：http://127.0.0.1:3000
-- API 文件：http://127.0.0.1:3000/docs
-- 停止：`docker compose down`（資料保留在 volume；加上 `-v` 會清空資料庫與 `chroma` 向量庫，也會刪除 `models` volume，下次啟動要重新下載約 1 GB 的去背模型與約 1.2 GB 的 RAG 模型）
-- 設定：複製 `.env.example` 成 `.env` 後修改（模擬速度、首輪是否刻意失誤、去背模型、RAG 模式、審查模式等），再 `docker compose up -d`
-- 海報字型：建置 composer 時從 GitHub 的 `google/fonts`（固定 commit）下載 Noto Sans TC 與 Noto Serif TC 的可變字重 TTF（約 29 MB）和兩份 OFL 1.1 授權文字，核對 SHA-256 後放在映像檔的 `/usr/local/share/poster-fonts`（`POSTER_FONTS_DIR`）。網址與 SHA-256 和 `web/composer/fonts.lock.json` 相同，不需要掛載資料夾。建置時要能連到 raw.githubusercontent.com。
-- 審查模式：`REVIEW_MODE=composer`（預設）繪製審查用海報並依它審查；`REVIEW_MODE=sim` 不畫圖，審查結果與 mock 模式相同。api 與 worker 讀同一個值（`docker-compose.yml` 預設 `composer`，`.env` 或環境變數可以覆寫）。
-- Gemini：在 `.env` 加上 `GEMINI_API_KEY=…`（Google AI Studio 建立；`.env` 不會上傳 GitHub），再 `docker compose up -d`。沒有 key 時服務照常啟動，系統狀態顯示提示，需求拆解與新任務會被拒絕；不想使用 Gemini 時設 `AGENT_MODE=sim`。`AGENT_MODE=gemini` 搭配 `REVIEW_MODE=sim` 是設定錯誤，api 與 worker 會啟動失敗並說明原因。
-- 費用：單價表是 repo 根目錄的 `pricing.yaml`（唯讀掛載到 `/app/pricing.yaml`，有生效日期；`gemini-3.8-flash` 2027-01-01 起加倍）。單一任務的上限預設 US$1、每月 US$20，設為 0 表示不設上限；上限在每次呼叫前檢查，最多超出並行中的呼叫的費用（約 4 次呼叫）。估算：3 個模板 × 2 張、重試一輪的任務約 US$0.18。
-- ComfyUI：在 Windows 安裝 ComfyUI（見 [comfyui/README.md](comfyui/README.md)），雙擊 `comfyui/start.cmd` 啟動（只監聽 127.0.0.1:8188；portable 版不在 `%USERPROFILE%\ComfyUI\ComfyUI_windows_portable` 時以 PowerShell 執行 `comfyui\start.ps1 -PortableDir <資料夾>`，GPU 記憶體不足時加上 `-LowVram`；關掉視窗就會停止），容器以 `http://host.docker.internal:8188` 連線；沒有啟動時任務在生圖階段失敗，原因為「ComfyUI 沒有回應（網址），請先啟動 ComfyUI」，系統狀態顯示「異常」。不想使用 GPU 時設 `IMAGE_MODE=sim`（程序化背景）。`IMAGE_MODE=comfyui` 搭配 `REVIEW_MODE=sim` 是設定錯誤。生圖在本機 GPU，不計費：儀表板的每張成本只含 Gemini 的實際用量；每張的生成秒數記在任務透視的 log。
-- 生圖與去背的記憶體：ComfyUI（SDXL）在 Windows 上另外佔用記憶體（Plan 7 實驗量到約 6 GB；模型大多放在 GPU 時，Docker 驗收量到 ComfyUI 本身約 2 GB），與去背的尖峰相加會超過 16 GB，所以兩者以 Redis 鎖互斥（`MEMORY_LOCK=true`，預設）：生圖期間上傳的商品維持「去背中」，生圖結束後才開始；去背進行中時，任務在生圖前等候（log 顯示「等待商品去背完成」）。記憶體夠大時可以設 `MEMORY_LOCK=false`。`COMFYUI_FREE_AFTER_JOB=true` 時每個任務結束後請 ComfyUI 卸載模型（下一個任務要重新載入）。
-- 16 GB 筆電的實測（Plan 7 規格 §12）：WSL 預設的 8 GB 不夠在 Docker 裡去背（逾時、worker 重新啟動），`.wslconfig` 設 `memory=12GB` 後生圖與去背互斥正確（去背時 worker 尖峰約 8.9 GiB）。整套服務加上 ComfyUI 時記憶體很緊：瀏覽器等其他程式還開著時，Windows 的認可記憶體接近上限，WSL 與 ComfyUI 可能被結束；請先關掉其他吃記憶體的程式。
-- 免費方案：Google 可能用免費方案的輸入（包括商品照與海報）改善產品，並可能由人工審閱，未發表的商品請用付費方案的 key。免費方案實際不收費，但 `job_usage` 仍依付費單價記錄，上限照樣生效。
-- 免費方案的配額很小：2026-10 實測 `gemini-3.8-flash` 每個專案每天只有 20 次請求，一個任務（3 個模板 × 2 張、重試一輪）約 18 次呼叫，所以實際使用請在 Google AI Studio 啟用付費方案。配額用完時任務失敗，原因會說明約多久後恢復。
-- 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。去背結果會裁掉商品四周的透明空白，排版時商品才會填滿商品框（之前已去背的商品要在商品庫按「重新去背」才會套用）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）。兩個模型的 Docker 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，WSL2 則改 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦只用去背時請把上限調到約 10 GB（同時使用 RAG 見下面的「RAG 的記憶體」），WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。
-- RAG（`RAG_MODE=bge`，預設）：worker 第一次啟動時下載 BGE-M3、bge-reranker-v2-m3 與共用的 tokenizer（int8 ONNX，合計約 1.2 GB，存在 `models` volume），核對後先不載入：worker 啟動時的同步發現索引有差異（例如第一次啟動或 Chroma 重建）時就會載入；沒有差異時，第一次檢索才載入。載入後常駐。系統狀態的「RAG 模型」依序顯示下載中、已就緒（第一次檢索時載入）、載入中、已載入。下載或載入期間送出的任務會在「檢索」階段等候。
-- RAG 的記憶體：模型載入後 worker 約再多用 1.7 GB（Docker 實測 1.75 GB；沒有載入時約 0.1 GB，為去背用模擬版時的實測）。與去背的尖峰相加約 10 GB，Docker 的記憶體上限請比上面的建議再多留約 2 GB（例如 12 GB）。16 GB 的電腦同時使用去背與 RAG 時，Docker 上限請設約 12 GB；不夠時改用 `RAG_MODE=sim`，也就是模擬檢索（不下載模型、不寫入 Chroma）。
-- Chroma：`chroma` 服務（`127.0.0.1:8001`，容器之間為 `chroma:8000`），資料存在 `chroma` volume，worker 等它健康後才啟動。
-
-自己的資料：
-
-- **品牌**：複製 `brands/_template.yaml` 成 `brands/<品牌 id>.yaml` 填寫，改完執行 `docker compose restart api worker`（變更的切塊在 worker 啟動時或下一次檢索前重新向量化，寫入 Chroma）。格式錯誤的品牌會略過，原因顯示在系統狀態。
-  - 背景風格寫在 `visualStyles`（寫法見範本）：`id` 只用小寫英文、數字與連字號，`tones` 只能是 gentle、science、playful、minimal（可以留空 `[]`，只在手選時使用）；提示詞只描述背景與場景，不要寫 product photography 或瓶子等容器。
-  - Logo 放在 `brands/assets/`，在 `logo` 填相對路徑。請用**真正透明背景**的 PNG 或 SVG（圖裡畫的棋盤格不是透明，海報上會出現灰白格子）、橫式（比例約 3:1 到 5:1）、四周不留空白、高度 200 px 以上；Logo 框約 350–390 × 72–82 px，等比例縮放、靠左放。
-- **品牌手冊**：到「品牌知識庫」上傳 `.md`、`.markdown`、`.txt`（UTF-8）或 `.pdf`。PDF 只讀取文字層：掃描檔沒有文字，要先轉成文字（不做 OCR）；有密碼或權限保護的要先移除保護。單檔 20 MB、20 萬字以內。進度條顯示切塊、向量化（`bge` 模式為真實向量的前 6 維）與寫入；同一個檔名重新上傳會取代原本的切塊。Markdown 的 `#` 標題會成為段落名稱，一段只寫一個主題，標籤（色彩、Logo、法規、版型等）依內文的關鍵字判斷。
-  - 「已上傳的手冊」列出每份手冊的檔名與切塊數，可以刪除（品牌設定檔的規範與歷史案例不在這裡、不會被刪除）；向量庫在下一次檢索時同步刪除。
-  - 手冊切塊存在資料庫（Docker 的 volume），不在 Git 裡；`docker compose down -v` 或刪除 volume 時會一起消失。原稿請自己另外保存（例如 `brands/docs/`），需要時重新上傳。
-- **歷史回寫**：在新任務選定海報後，worker 把它寫成「歷史回寫」切塊（商品名稱、模板、審查分數、標題與副標、賣點、正向提示詞的前 120 字），之後的任務檢索得到。
-- **商品照**：放在 `assets/products/`，到「商品庫 → 本機資料夾」匯入；也可以直接上傳（存在 `data/`）。這兩個資料夾都不會上傳 GitHub。去背結果存在 `data/products/{商品 id}/`。建議商品本身至少 1500 px 高：海報上的商品會放大到商品框的大小，照片太小時標籤會模糊（四周的空白去背後會自動裁掉，不影響大小）。
-
-## 只看前端（mock 模式）
+**只看介面**（瀏覽器內模擬整條流程，不需要後端、GPU 或 API key）：
 
 ```bash
 cd web
@@ -119,84 +148,24 @@ npm ci
 npm run dev
 ```
 
-瀏覽器內模擬整條流程，不需要後端；作品集 Demo 也是這個模式。
+**完整系統**（需要 Docker Desktop；Gemini key 與 ComfyUI 可選，沒有時改用模擬模式）：
+
+```bash
+docker compose up -d --build
+```
+
+開啟 http://127.0.0.1:3000。設定、ComfyUI 安裝、記憶體建議、本機開發與測試見 [操作手冊](docs/operations.md)。
 
 ## 作品集 Demo
 
-mock 模式的靜態輸出部署到 Cloudflare Pages，以 Zero Trust 的 Access 只讓名單內的 email 觀看（寄到信箱的一次性驗證碼，免費方案最多 50 人）。部署與名單設定見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)。
+前端的 mock 模式以靜態網站部署在 Cloudflare Pages，以 Zero Trust Access 限制只有名單內的 email 可以觀看。部署方式見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)。
 
-部署前在 `web/` 檢查：
+## 文件
 
-```bash
-npm run build
-```
-
-```bash
-npm run demo:check
-```
-
-靜態輸出帶有 `_headers`（不讓搜尋引擎收錄、禁止被其他網站嵌入、關閉相機與位置等權限）與 `robots.txt`（全部 Disallow）。
-
-## 開發 live 模式
-
-先停掉 Docker 的 web、api、worker 與 composer，只留 postgres、redis 與 chroma：
-
-```bash
-docker compose stop web api worker composer
-docker compose up -d postgres redis chroma
-```
-
-不先停掉的話：Docker 的 web 與 api 佔用 3000 與 8000 埠，本機的前端與 api 起不來；Docker 的 worker 與本機的 worker 共用同一個 `jobs` 佇列，而且 Docker worker 啟動時的復原會把本機 worker 正在執行的任務標記為失敗。
-
-接著各開一個終端機：
-
-| 目錄 | 指令 | 服務 |
-|---|---|---|
-| `backend/` | `uv run uvicorn app.api.main:app --port 8000 --reload` | api |
-| `backend/` | `uv run python -m app.worker` | worker |
-| `web/` | `npm run composer` | composer（3900 埠；先執行一次 `npm run fonts`） |
-| `web/` | `NEXT_PUBLIC_API_MODE=live API_PROXY_URL=http://127.0.0.1:8000 npm run dev` | 前端（/api、/files、/ws 轉給 api） |
-
-Windows PowerShell 不能在指令前加環境變數，前端改用：
-
-```powershell
-$env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; npm run dev
-```
-
-`$env:` 只在該視窗有效；同一個視窗接著要跑 `npm run e2e` 或 `npm run build`（mock）的話，先執行 `Remove-Item Env:NEXT_PUBLIC_API_MODE, Env:API_PROXY_URL`。
-
-本機的 worker 把模型下載到 repo 根目錄的 `models/`（已在 `.gitignore`），第一次啟動時下載約 1.2 GB 的 RAG 模型。不想下載的話，api 與 worker 都改用模擬檢索（`.env` 的 `RAG_MODE=sim`，api 與 worker 都會讀到；或在兩個視窗都設定）：
-
-```powershell
-$env:RAG_MODE='sim'; uv run python -m app.worker
-```
-
-注意：`docker compose` 也讀同一個 `.env`。寫在 `.env` 的話，回到 Docker 版之前要先刪掉這一行，否則 Docker 的 api 與 worker 也會改用模擬檢索。
-
-本機的 worker 預設是 `REVIEW_MODE=composer`：每張候選都要由 composer 繪製審查用海報，所以本機的 composer 要有海報字型。第一次啟動 composer 之前，先在 `web/` 下載字型（約 29 MB，連同 OFL 授權文字存在不進 git 的 `web/composer/fonts/`；核對 SHA-256，已下載的檔案會略過，可以重複執行）：
-
-```powershell
-cd web
-npm run fonts
-```
-
-缺少字型時 composer 會印出原因並結束，不會帶著畫不出正確海報的狀態啟動。字型放在別的資料夾的話，以 `POSTER_FONTS_DIR` 指定（`npm run fonts` 與 `npm run composer` 都讀這個變數）。不需要審查用海報時，api 與 worker 都改用模擬審查（`.env` 的 `REVIEW_MODE=sim`；回到 Docker 版之前同樣要刪掉）：
-
-```powershell
-$env:REVIEW_MODE='sim'; uv run python -m app.worker
-```
-
-`REVIEW_MODE=sim` 時 Gemini 的 VLM 審查與 ComfyUI 的商品底圖都無法使用，所以也要設 `AGENT_MODE=sim` 與 `IMAGE_MODE=sim`（api 與 worker 都要）。本機執行時 ComfyUI 的位址預設為 `http://127.0.0.1:8188`；沒有啟動 ComfyUI 時設 `IMAGE_MODE=sim`。只想省下 Gemini 的費用時，只設 `AGENT_MODE=sim` 即可（Agent 與 VLM 審查用模擬版，審查用海報照常繪製）。
-
-開啟 http://127.0.0.1:3000（前端）；API 文件在 http://127.0.0.1:8000/docs。開發結束後，停掉本機的服務，再 `docker compose up -d` 回到 Docker 版。
-
-## 測試
-
-| 目錄 | 指令 | 內容 |
-|---|---|---|
-| `backend/` | `uv run pytest` | 後端（需要 `docker compose up -d postgres redis chroma`，以及在 `web/` 執行過 `npm run fonts`；使用 PostgreSQL 與 Chroma 的 `genai_test` 資料庫、Redis 第 15 號資料庫，會自行在 3902 埠啟動 composer，缺少字型時立即失敗並提示）。不讀 `.env`，開發用的 `RAG_MODE`、`REVIEW_MODE`、`AGENT_MODE`、`IMAGE_MODE` 與 `GEMINI_API_KEY` 不影響測試；不呼叫真的 Gemini API，也不連 ComfyUI（Gemini 的 client 以 respx 重播 `tests/data/gemini/` 的回應；ComfyUI 的 client 以 respx 與本機的假 WebSocket 伺服器重播 `tests/data/comfy/`；任務流程用假的 Gemini 與 ComfyUI）。`models/` 有 RAG 模型檔時，也會執行標記 `model` 的真模型測試 |
-| `backend/` | `uv run pytest -m live` | 手動執行：呼叫真的 Gemini API（需要 `GEMINI_API_KEY`，會產生少量費用），需求拆解、Prompt 構建與 VLM 審查各一次，只檢查格式與護欄；連本機的 ComfyUI，每個模板生成一張，檢查尺寸並印出秒數。沒有 key 或 ComfyUI 沒有回應時略過對應的測試 |
-| `web/` | `npm run test` | 前端與 composer 的單元測試；伺服器端繪製海報的測試需要字型（`npm run fonts`），沒有字型時略過並提示 |
-| `web/` | `npm run e2e` | mock 模式 E2E |
-| `web/` | `npm run e2e:live` | live 模式 E2E：以獨立的 compose 專案啟動整套服務（審查用 `REVIEW_MODE=composer`；Agent、RAG、去背與生圖用模擬版，`AGENT_MODE=sim` 且不帶 key、`IMAGE_MODE=sim`），測完移除，不影響平常的資料 |
-| `web/` | `npm run fixtures` | 重新產生 `contracts/fixtures/`（後端與前端一致性測試的固定測資） |
+| 文件 | 內容 |
+|---|---|
+| [操作手冊](docs/operations.md) | 安裝、設定、執行、測試與系統行為細節 |
+| [設計規格](docs/superpowers/specs/) | 每個階段的設計、實驗結果與決策（[第二階段總覽](docs/superpowers/specs/2026-10-07-phase2-backend-design.md)） |
+| [實作計畫](docs/superpowers/plans/) | 每個階段的實作步驟 |
+| [backend/README.md](backend/README.md)、[web/README.md](web/README.md) | 後端與前端各自的說明 |
+| [comfyui/README.md](comfyui/README.md) | ComfyUI 安裝、模型與授權（只使用允許商用的模型） |
