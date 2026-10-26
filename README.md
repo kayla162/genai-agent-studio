@@ -13,6 +13,17 @@
 
 > *A multimodal agent system that turns a one-line brief into brand-compliant e-commerce posters: Gemini for planning and VLM review, RAG over brand guidelines (BGE-M3 + reranker on ONNX), SDXL inpainting on a local GPU, and an event-sourced FastAPI/PostgreSQL backend with measured, test-covered behaviour.*
 
+<table>
+  <tr>
+    <td width="33%" valign="top"><img src="docs/images/poster-selune-story.jpg" alt="成品海報：示範品牌 SÉLUNE 的週年慶限時動態"></td>
+    <td valign="top"><img src="docs/images/agent-inspector.png" alt="Agent 透視：8 個流程節點的耗時、LLM 版面方框疊圖與 11 項合規檢查"></td>
+  </tr>
+  <tr>
+    <td valign="top"><b>成品海報</b>：示範品牌 SÉLUNE（虛構）的限時動態。背景由 SDXL 在本機 GPU 生成，商品為原始示範圖，文字由程式排版。</td>
+    <td valign="top"><b>Agent 透視</b>：同一個任務的 8 個流程節點與耗時、Gemini 產生的版面方框疊在海報上，以及 11 項合規檢查（8 項規則＋3 項 VLM）與引用的 RAG 規範。</td>
+  </tr>
+</table>
+
 ## 重點
 
 | 面向 | 做了什麼 |
