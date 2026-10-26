@@ -77,9 +77,10 @@ describe('buildTimeline (default demo)', () => {
     expect(round2.spec.palette).toEqual(SELUNE.palette);
   });
 
-  it('emits 38 render progress steps per round, ending with upscale', () => {
+  it('emits 10 render progress steps per round, like the real workflow, ending with upscale', () => {
     const r1 = ofType(tl, 'render.progress').filter((e) => e.round === 1);
-    expect(r1).toHaveLength(38);
+    expect(r1).toHaveLength(10);
+    expect(new Set(r1.map((e) => e.node))).toEqual(new Set(['generate', 'upscale']));
     expect(r1.at(-1)).toMatchObject({ node: 'upscale', step: 2, maxStep: 2 });
   });
 
