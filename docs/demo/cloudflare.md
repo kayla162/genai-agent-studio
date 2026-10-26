@@ -89,4 +89,4 @@ npx wrangler pages deploy out --project-name genai-agent-demo
 
 - 全部在瀏覽器內模擬：示範品牌（SÉLUNE、misty-isle）、示範商品與任務，資料存在觀看者自己的瀏覽器（IndexedDB），不會互相影響，也不會傳到任何伺服器。
 - 右下角的「Demo 控制台」可以調整模擬速度、讓第一輪刻意失敗或每輪都失敗，展示 Query Rewriting 與「需人工審核」。
-- live 模式（真的 Gemini、RAG、ComfyUI）不在線上；需要時以影片展示（[影片腳本](video-script.md)）。
+- live 模式（真的 Gemini、RAG、ComfyUI）不在線上。

@@ -123,7 +123,7 @@ npm run dev
 
 ## 作品集 Demo
 
-mock 模式的靜態輸出部署到 Cloudflare Pages，以 Zero Trust 的 Access 只讓名單內的 email 觀看（寄到信箱的一次性驗證碼，免費方案最多 50 人）。部署與名單設定見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)，展示影片的腳本見 [docs/demo/video-script.md](docs/demo/video-script.md)。
+mock 模式的靜態輸出部署到 Cloudflare Pages，以 Zero Trust 的 Access 只讓名單內的 email 觀看（寄到信箱的一次性驗證碼，免費方案最多 50 人）。部署與名單設定見 [docs/demo/cloudflare.md](docs/demo/cloudflare.md)。
 
 部署前在 `web/` 檢查：
 

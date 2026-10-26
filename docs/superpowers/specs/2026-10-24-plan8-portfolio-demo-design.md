@@ -24,7 +24,7 @@
 | 安全標頭 | `public/_headers`：`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy` 關閉相機、麥克風與位置 | 靜態網站不需要的權限一律關閉；不加 CSP（Next.js 的內嵌 script 需要 nonce 或 hash，靜態輸出無法動態產生，加錯會讓頁面空白） |
 | 範本殘留 | 刪除 `public/` 裡沒有使用的 create-next-app SVG | 不部署用不到的檔案 |
 | 架構圖 | README 加上 Mermaid 圖（GitHub 會直接畫出），保留現有的文字圖 | 作品集的讀者多半先看 GitHub |
-| 影片腳本 | `docs/demo/video-script.md`：約 3 分鐘、6 個段落，每段寫畫面、操作與旁白 | 錄影由使用者進行 |
+| 影片腳本 | `docs/demo/video-script.md`：約 3 分鐘、6 個段落，每段寫畫面、操作與旁白 | 錄影由使用者進行。2026-10-26 決定暫不拍攝，腳本移出 repo |
 
 ## 3. 內容
 
@@ -34,7 +34,6 @@
 | `web/scripts/check-demo.mjs`（`npm run demo:check`） | 檢查 `out/`：有 `index.html`、`_headers` 含上面的標頭、`robots.txt` 全部 Disallow、建置不是 live 模式（mock 的 Demo 控制台存在、沒有 `NEXT_PUBLIC_API_MODE=live` 的設定）。部署前在本機執行 |
 | `web/src/test/demo.test.ts` | Vitest：`public/_headers` 與 `robots.txt` 的內容（不需要建置） |
 | `docs/demo/cloudflare.md` | 逐步說明：建立 Pages 專案（Git 整合與替代的 wrangler）、Zero Trust 與 Access 應用程式、名單、驗證、移除觀看者、查看紀錄、費用 |
-| `docs/demo/video-script.md` | 展示影片腳本 |
 | `README.md` | 進度表、Mermaid 架構圖、「作品集 Demo」一節 |
 
 ## 4. 驗收
