@@ -29,19 +29,21 @@ export const PHASE_MS = {
   prompt: 800, compose: 300, review: 1200, rewrite: 800, save: 400,
 } as const;
 
-/** ComfyUI 各節點的步數與時間；每輪共 38 個 render.progress、3,200 ms */
-export const RENDER_STEPS: Record<RenderNode, { steps: number; ms: number }> = {
-  cutout: { steps: 4, ms: 400 },
-  generate: { steps: 28, ms: 2000 },
-  relight: { steps: 4, ms: 500 },
+type SceneNode = Extract<RenderNode, 'generate' | 'upscale'>;
+
+/**
+ * ComfyUI 各節點的步數與時間；每輪共 10 個 render.progress、3,200 ms。
+ * 與真實 workflow（product_scene_v1.json）相同：SDXL-Lightning 8 步 inpainting，之後以 Lanczos 放大。
+ * 去背在商品上傳時就完成，不在這裡；合約的 cutout、relight 不會出現。
+ */
+export const RENDER_STEPS: Record<SceneNode, { steps: number; ms: number }> = {
+  generate: { steps: 8, ms: 2900 },
   upscale: { steps: 2, ms: 300 },
 };
 
-const NODE_LABEL: Record<RenderNode, string> = {
-  cutout: '去背（BiRefNet）',
-  generate: '背景生成（SDXL + ControlNet + IP-Adapter）',
-  relight: '打光融合（IC-Light）',
-  upscale: '放大至 2K',
+const NODE_LABEL: Record<SceneNode, string> = {
+  generate: '背景生成（SDXL-Lightning 8 步，商品周圍 inpainting）',
+  upscale: '放大（Lanczos，裁切成模板尺寸）',
 };
 
 /** 向量召回順序與 Rerank 後順序刻意不同，用來展示 BGE Reranker 的效果 */
@@ -125,13 +127,13 @@ export function buildTimeline(ctx: ScenarioContext): TimedEvent[] {
     log(t + PHASE_MS.prompt, 'agent', `✓ 第 ${round} 輪 JSON Prompt：${specs.length} 個模板 × ${specs[0].layout.length} 個 BBox`, 'ok');
     t += PHASE_MS.prompt;
 
-    // 4. ComfyUI：去背 → 背景生成 → 打光融合 → 放大
+    // 4. ComfyUI：背景生成（商品周圍 inpainting）→ 放大
     emit(t, { type: 'job.status', stage: 'rendering', round });
     for (const spec of specs) {
       emit(t, { type: 'comfy.queued', round, templateId: spec.templateId, promptId: `${jobId}_r${round}_${spec.templateId}`, injection: spec.injection });
     }
     log(t, 'comfy', `ws → ComfyUI /prompt × ${specs.length}（${specs[0].injection.workflowFile}，batch=${input.variantsPerTemplate}）`);
-    for (const node of ['cutout', 'generate', 'relight', 'upscale'] as const) {
+    for (const node of ['generate', 'upscale'] as const) {
       const { steps, ms } = RENDER_STEPS[node];
       for (let s = 1; s <= steps; s++) emit(t + (s * ms) / steps, { type: 'render.progress', round, node, step: s, maxStep: steps });
       t += ms;

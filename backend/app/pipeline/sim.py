@@ -30,18 +30,16 @@ VECTOR_SCORES = [0.86, 0.84, 0.83, 0.81, 0.79]
 RERANK_ORDER: list[RagTag] = ['color', 'law', 'logo', 'layout', 'history']
 RERANK_SCORES = [0.97, 0.93, 0.88, 0.74, 0.61]
 
-#: ComfyUI 各節點的步數與時間（1× 毫秒）；每輪共 38 個 render.progress、3,200 ms
+#: ComfyUI 各節點的步數與時間（1× 毫秒）；每輪共 10 個 render.progress、3,200 ms。
+#: 與真實 workflow（product_scene_v1.json）相同：SDXL-Lightning 8 步 inpainting，之後以 Lanczos 放大。
+#: 去背在商品上傳時就完成，不在這裡；合約的 cutout、relight 不會出現。
 RENDER_STEPS: dict[RenderNode, tuple[int, int]] = {
-    'cutout': (4, 400),
-    'generate': (28, 2000),
-    'relight': (4, 500),
+    'generate': (8, 2900),
     'upscale': (2, 300),
 }
 NODE_LABEL: dict[RenderNode, str] = {
-    'cutout': '去背（BiRefNet）',
-    'generate': '背景生成（SDXL + ControlNet + IP-Adapter）',
-    'relight': '打光融合（IC-Light）',
-    'upscale': '放大至 2K',
+    'generate': '背景生成（SDXL-Lightning 8 步，商品周圍 inpainting）',
+    'upscale': '放大（Lanczos，裁切成模板尺寸）',
 }
 
 

@@ -144,11 +144,11 @@ export function defaultSelection(v: JobView): Partial<Record<TemplateId, string>
   return out;
 }
 
-/** ComfyUI 各節點在一輪生成中所佔的比例（依 1× 時間：400／2000／500／300 ms） */
+/** ComfyUI 各節點在一輪生成中所佔的比例（依 1× 時間：generate 2900／upscale 300 ms）；cutout、relight 不會出現 */
 const NODE_SPAN: Record<RenderNode, [start: number, span: number]> = {
-  cutout: [0, 0.125],
-  generate: [0.125, 0.625],
-  relight: [0.75, 0.156],
+  cutout: [0, 0],
+  generate: [0, 0.906],
+  relight: [0.906, 0],
   upscale: [0.906, 0.094],
 };
 
