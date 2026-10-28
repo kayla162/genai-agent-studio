@@ -20,6 +20,8 @@
 # next.js
 /.next/
 /out/
+# wrangler dev 的本機暫存
+/.wrangler/
 
 # production
 /build

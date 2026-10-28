@@ -1,6 +1,6 @@
 // 部署作品集 Demo 前檢查靜態輸出（npm run build 之後執行 npm run demo:check；Plan 8）：
 // - 以 mock 模式建置（NEXT_PUBLIC_API_MODE 不是 live：Demo 不連後端）
-// - out/ 有首頁，以及與 public/ 相同的 _headers（Cloudflare Pages 的標頭）與 robots.txt
+// - out/ 有首頁，以及與 public/ 相同的 _headers（Cloudflare 套用的標頭）與 robots.txt
 // 有問題時以中文列出並以結束碼 1 結束。
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

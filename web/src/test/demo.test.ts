@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-/** 作品集 Demo（Cloudflare Pages）的標頭與 robots：靜態輸出時從 public/ 複製到 out/（Plan 8） */
+/** 作品集 Demo（Cloudflare Workers）的標頭與 robots：靜態輸出時從 public/ 複製到 out/（Plan 8） */
 const PUBLIC = join(process.cwd(), 'public');
 const read = (name: string) => readFileSync(join(PUBLIC, name), 'utf8');
 

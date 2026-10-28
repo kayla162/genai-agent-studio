@@ -55,7 +55,7 @@ npm run dev
 
 ## 作品集 Demo
 
-mock 模式的靜態輸出部署到 Cloudflare Pages，以 Zero Trust 的 Access 只讓名單內的 email 觀看（寄到信箱的一次性驗證碼，免費方案最多 50 人）。部署與名單設定見 [docs/demo/cloudflare.md](demo/cloudflare.md)。
+mock 模式的靜態輸出以 Cloudflare Workers 的靜態資源公開部署（https://genai-agent-studio.kayla-swag-19.workers.dev/ ，不需登入、不呼叫任何付費 API；設定檔 `web/wrangler.jsonc`）。部署方式與如何改成只限名單觀看見 [docs/demo/cloudflare.md](demo/cloudflare.md)。
 
 部署前在 `web/` 檢查：
 
@@ -176,6 +176,6 @@ $env:REVIEW_MODE='sim'; uv run python -m app.worker
 | Plan 6A | 伺服器端排版與規則審查：審查用海報、從像素量測品牌主色 | 完成（Agent、生圖與 VLM 審查仍為模擬版） |
 | Plan 6B | Gemini Agent、VLM 審查、用量與成本 | 完成（生圖仍為模擬版） |
 | Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（Docker＋Gemini 驗收：3 個品牌的任務完成、每張約 17 秒、取消與 ComfyUI 未開啟都正確；WSL 記憶體 12 GB 時生圖與去背互斥正確；16 GB 的筆電需關掉其他程式。補驗：要求螢光色背景時第 1 輪不通過、改寫後通過；海報上的商品與原始去背圖相同；生圖中重新整理可以接續。見 Plan 7 規格 §12） |
-| Plan 8 | 作品集 Demo（Cloudflare Pages＋Access） | 完成（部署與觀看名單由使用者以自己的 Cloudflare 帳號設定，見 [docs/demo/cloudflare.md](demo/cloudflare.md)） |
+| Plan 8 | 作品集 Demo（原設計為 Cloudflare Pages＋Access，實際以 Cloudflare Workers 公開部署） | 完成（部署由使用者以自己的 Cloudflare 帳號設定，見 [docs/demo/cloudflare.md](demo/cloudflare.md)） |
 | 之後的改進 | 多組背景風格（[設計規格](superpowers/specs/2026-10-24-visual-styles-design.md)）、品牌知識庫列出與刪除上傳的手冊、去背結果裁掉四周空白、修正背景多畫出瓶子、RAG 模型準備中可以取消、CI、ComfyUI 啟動腳本 | 完成 |
 | 補強 | 去背中斷 2 次後停止重試、只處理去背中的商品；商品清單讀取期間被改動時重新讀取；容器不以 root 執行、防止 DNS rebinding、拒絕含冒號的本機照片檔名；Chroma 記錄向量化模型的指紋、PDF 抽字的頁數與時間上限、worker 結束時關閉 Chroma 連線、上傳中斷的訊息區分重新啟動與逾時；自動清理 `data/jobs/`；選定海報時 Redis 停止不再回 500、worker 啟動時補做歷史回寫、去背模型恢復後自動重新去背、RAG 模型準備不受任務取消影響、兩份大文件同時上傳的時限、拒絕 `-alt` 結尾的規範 key | 完成 |
