@@ -3,18 +3,22 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from app.modelfiles import ModelFile, ModelFileError, download_client, ensure_model, has_model
 from app.rag.encoder import Encoder, OnnxEncoder
 from app.rag.errors import RagError
 from app.rag.models import MODELS
 from app.rag.state import STATE_KEY, RagMode, RagModelState
+
+logger = logging.getLogger(__name__)
 
 #: RAG 推論專用的單一執行緒：不與去背共用（去背時檢索不必等），一次只算一筆
 INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='rag')
@@ -43,6 +47,8 @@ class RagEngine:
         self._encoder: Encoder | None = None
         # 同一時間只準備一次；準備中的其他呼叫在這裡等
         self._lock = asyncio.Lock()
+        #: 進行中的模型準備（下載與載入）；失敗後清掉，下一次呼叫重新準備
+        self._preparing: asyncio.Task[Encoder] | None = None
 
     @property
     def loaded(self) -> bool:
@@ -61,11 +67,24 @@ class RagEngine:
         """等模型準備好（第一次呼叫時才載入，之後常駐）。上一次失敗時重新嘗試；仍然失敗就丟出 RagError。"""
         if self.mode == 'sim':
             raise RagError('模擬模式（RAG_MODE=sim）不使用 RAG 模型')
+        if self._encoder is None:
+            if self._preparing is None:
+                self._preparing = asyncio.create_task(self._prepare())
+            preparing = self._preparing
+            try:
+                # 等待的一方被取消（例如任務在檢索時被取消）不會中斷準備：模型照樣下載、載入，
+                # 狀態不會停在下載中或載入中，下一個呼叫也不必重來
+                self._encoder = await asyncio.shield(preparing)
+            except BaseException:
+                if preparing.done() and (preparing.cancelled() or preparing.exception() is not None):
+                    self._preparing = None
+                raise
+        return self._encoder
+
+    async def _prepare(self) -> Encoder:
         async with self._lock:
-            if self._encoder is None:
-                await self._step(self._ensure_files)
-                self._encoder = await self._step(self._load)
-            return self._encoder
+            await self._step(self._ensure_files)
+            return await self._step(self._load)
 
     async def embed(self, text: str) -> list[float]:
         encoder = await self.encoder()
@@ -109,7 +128,11 @@ class RagEngine:
         return encoder
 
     async def _report(self, state: RagModelState, error: str | None = None) -> None:
+        """狀態只給系統狀態顯示：寫不進 Redis 時只記錄，不影響模型的準備與使用。"""
         message: dict[str, object] = {'model': self.mode, 'state': state, 'error': error}
-        await self.redis.set(STATE_KEY, json.dumps(message, ensure_ascii=False))
+        try:
+            await self.redis.set(STATE_KEY, json.dumps(message, ensure_ascii=False))
+        except (RedisError, OSError):
+            logger.warning('RAG 模型狀態無法寫入 Redis：%s', state, exc_info=True)
         if self.on_state is not None:
             await self.on_state(message)

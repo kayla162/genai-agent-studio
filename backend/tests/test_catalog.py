@@ -72,6 +72,21 @@ async def test_resyncing_replaces_config_chunks_and_hides_removed_brands(session
     assert [c.text for c in brands[0].guideline_chunks] == ['主色改為 #A0566A。']
 
 
+async def test_upserting_an_existing_chunk_replaces_its_text_and_keeps_its_place(session: AsyncSession) -> None:
+    """歷史回寫重跑（例如商品改名後補做）：以 id 取代內容，列出的位置維持第一次寫入的順序。"""
+    await catalog.sync_brands(session, demo_brands(), T0)
+
+    def history_chunk(id_: str, text: str) -> RagChunk:
+        return RagChunk(id=id_, source='history/job_a', section='歷史回寫', tag='history', text=text)
+
+    first, second = 'selune#hist-a', 'selune#hist-b'
+    await catalog.upsert_chunk(session, 'selune', history_chunk(first, '舊的內文'), 'history', T0)
+    await catalog.upsert_chunk(session, 'selune', history_chunk(second, 'B'), 'history', T1)
+    await catalog.upsert_chunk(session, 'selune', history_chunk(first, '新的內文'), 'history', T1.replace(hour=3))
+    history = [(c.id, c.text) for c, origin in await catalog.list_chunks(session, 'selune') if origin == 'history']
+    assert history == [(first, '新的內文'), (second, 'B')]
+
+
 async def test_uploaded_chunks_follow_the_config_chunks_and_replace_by_source(session: AsyncSession) -> None:
     await catalog.sync_brands(session, demo_brands(), T0)
 

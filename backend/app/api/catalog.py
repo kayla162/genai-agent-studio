@@ -287,7 +287,7 @@ async def _ingest_lines(services: ApiServices, task_id: str, brand_id: str, name
     pubsub = services.redis.pubsub()
     await pubsub.subscribe(ingest_channel(task_id))
     try:
-        await services.queues.enqueue_task('ingest', task_id=task_id, brand_id=brand_id, name=name, text=text)
+        await services.queues.enqueue_ingest(task_id=task_id, brand_id=brand_id, name=name, text=text)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + INGEST_IDLE_TIMEOUT
         while loop.time() < deadline:

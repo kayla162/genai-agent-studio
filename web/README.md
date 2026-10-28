@@ -67,7 +67,7 @@ $env:NEXT_PUBLIC_API_MODE='live'; $env:API_PROXY_URL='http://127.0.0.1:8000'; np
 ## 資料保存
 
 - **mock 模式**：商品、歷史紀錄、上傳的品牌文件與選定海報的歷史回寫切塊，以及已結束的任務（最近 40 筆，含完整事件）存在瀏覽器的 IndexedDB（資料庫 `genai-poster-agent`）；清除網站資料就會重置。mock 只能讀取 `.md`、`.txt`，PDF 要用 live 模式上傳。
-- **live 模式**：存在後端的 PostgreSQL（RAG 切塊另外寫入 Chroma 向量庫）；上傳的商品照存在 repo 根目錄的 `data/`。上傳品牌文件時以 `FormData` 傳送檔案，PDF 由後端抽出文字層（單檔 20 MB、20 萬字以內，掃描檔要先轉成文字）。WebSocket 斷線時以最後收到的序號重新連線（1 秒起，最長 10 秒）；重新整理後，新任務頁面會接續這個分頁的任務。
+- **live 模式**：存在後端的 PostgreSQL（RAG 切塊另外寫入 Chroma 向量庫）；上傳的商品照存在 repo 根目錄的 `data/`。上傳品牌文件時以 `FormData` 傳送檔案，PDF 由後端抽出文字層（單檔 20 MB、20 萬字、2,000 個切塊以內，掃描檔要先轉成文字）。WebSocket 斷線時以最後收到的序號重新連線（1 秒起，最長 10 秒）；重新整理後，新任務頁面會接續這個分頁的任務。
 - 每則事件都帶序號（`seq`）與時間戳（`ts`）。Agent 透視用來顯示事件串流與各節點耗時；儀表板依此統計耗時。
 - 自己的商品照可放在 repo 根目錄的 `assets/products/`（已在 `.gitignore`，不會上傳 GitHub），live 模式下到「商品庫」一鍵匯入，檔名即商品名稱。
 - 字型使用 `@fontsource-variable` 自帶的 Noto Sans／Serif TC，執行時不連外部網路。

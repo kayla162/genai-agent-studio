@@ -260,10 +260,10 @@ async def test_ingest_rejects_too_many_chunks_before_streaming(api: LiveApi, mon
 
     queued: list[int] = []
 
-    async def no_worker(function: str, /, **kwargs: Any) -> None:
+    async def no_worker(**kwargs: Any) -> None:
         queued.append(len(chunk_document(kwargs['brand_id'], kwargs['name'], kwargs['text'])))
 
-    monkeypatch.setattr(api.services.queues, 'enqueue_task', no_worker)
+    monkeypatch.setattr(api.services.queues, 'enqueue_ingest', no_worker)
     lines = await ingest(api, 'selune', 'faq.md', faq(2000).encode())
     assert queued == [2000]
     assert [line['error']['code'] for line in lines] == ['unavailable']
@@ -274,7 +274,7 @@ async def test_ingest_times_out_only_after_a_pause_in_progress(api: LiveApi, mon
     monkeypatch.setattr(catalog_api, 'INGEST_IDLE_TIMEOUT', 1)
     publishing: list[asyncio.Task[None]] = []
 
-    async def slow_worker(function: str, /, **kwargs: Any) -> None:
+    async def slow_worker(**kwargs: Any) -> None:
         async def publish() -> None:
             channel = ingest_channel(kwargs['task_id'])
             for i in range(6):
@@ -286,7 +286,7 @@ async def test_ingest_times_out_only_after_a_pause_in_progress(api: LiveApi, mon
 
         publishing.append(asyncio.create_task(publish()))
 
-    monkeypatch.setattr(api.services.queues, 'enqueue_task', slow_worker)
+    monkeypatch.setattr(api.services.queues, 'enqueue_ingest', slow_worker)
     loop = asyncio.get_running_loop()
     started = loop.time()
     lines = await ingest(api, 'selune', 'a.md', '# 色彩\n主色'.encode())
@@ -294,10 +294,10 @@ async def test_ingest_times_out_only_after_a_pause_in_progress(api: LiveApi, mon
     assert [m['type'] for m in lines] == ['ingest.embedded'] * 6 + ['ingest.stored']
     await asyncio.gather(*publishing)
 
-    async def no_worker(function: str, /, **kwargs: Any) -> None:
+    async def no_worker(**kwargs: Any) -> None:
         pass
 
-    monkeypatch.setattr(api.services.queues, 'enqueue_task', no_worker)
+    monkeypatch.setattr(api.services.queues, 'enqueue_ingest', no_worker)
     message = (
         '文件處理逾時：1 秒沒有任何進度。第一次使用時 worker 可能仍在下載 RAG 模型，請稍後再試；'
         '若持續發生，請確認 worker 正在執行'

@@ -18,6 +18,9 @@ TASKS = 'tasks'
 CUTOUTS = 'cutouts'
 #: tasks 佇列裡單一工作最長的執行時間（秒）
 TASK_TIMEOUT = 600
+#: 文件上傳的時限（秒）：切塊上限（app.rag.extract 的 MAX_CHUNKS）以一份在 TASK_TIMEOUT 內向量化完成估計，
+#: 但 tasks 佇列同時執行兩個工作、向量化只有一個執行緒，兩份同時上傳時各自需要約兩倍時間
+INGEST_TIMEOUT = 2 * TASK_TIMEOUT
 
 
 def ingest_channel(task_id: str) -> str:
@@ -87,8 +90,11 @@ class Queues:
             released += [job.key for job in orphans]
         return released
 
-    async def enqueue_task(self, function: str, /, **kwargs: Any) -> None:
-        await self.tasks.enqueue(function, timeout=TASK_TIMEOUT, **kwargs)
+    async def enqueue_ingest(self, *, task_id: str, brand_id: str, name: str, text: str) -> None:
+        """品牌文件上傳：切塊、向量化、寫入知識庫（時限 INGEST_TIMEOUT）。"""
+        await self.tasks.enqueue(
+            'ingest', timeout=INGEST_TIMEOUT, task_id=task_id, brand_id=brand_id, name=name, text=text
+        )
 
     async def run_task(self, function: str, /, wait: float, **kwargs: Any) -> TaskResult:
         """放入 tasks 佇列並最多等 wait 秒；沒等到時工作仍在背景繼續。失敗或被中止時丟出 TaskFailed。"""

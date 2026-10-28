@@ -33,6 +33,16 @@ async def get_history(session: AsyncSession, history_id: str) -> HistoryEntry | 
     return HistoryEntry.model_validate(row.data) if row else None
 
 
+async def unwritten_ids(session: AsyncSession) -> list[str]:
+    """還沒回寫成歷史切塊的紀錄（舊到新）。"""
+    query = (
+        select(HistoryRow.id)
+        .where(HistoryRow.data['writtenToRag'].as_boolean().is_(False))
+        .order_by(HistoryRow.selected_at, HistoryRow.id)
+    )
+    return list(await session.scalars(query))
+
+
 async def mark_written(session: AsyncSession, history_id: str) -> bool:
     """回寫成歷史切塊後標記 writtenToRag。"""
     row = await session.get(HistoryRow, history_id)

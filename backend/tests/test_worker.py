@@ -69,6 +69,7 @@ from app.worker import (
     requeue_pending_cutouts,
     warm_up_rag,
     write_back,
+    write_back_pending,
 )
 from tests.conftest import TEST_CHROMA_DATABASE, TEST_REDIS_URL
 from tests.fake_encoder import FakeEncoder, fake_engine
@@ -392,6 +393,35 @@ async def test_pending_cutouts_whose_job_was_lost_are_requeued_once(services: Se
     assert await queues.cutouts.count('queued') == 1
 
 
+async def failed_product(services: Services, name: str, error: str) -> Product:
+    product = await photo_product(services, write_upload(services, name, photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    failed = ProductCutout(model='BiRefNet-general', status='failed', url=None, error=error)
+    async with services.db.session() as s:
+        await catalog.set_cutout(s, product.id, product.photo.url, failed)
+    return await current(services, product.id)
+
+
+async def test_cutouts_that_failed_because_the_model_was_not_ready_are_requeued_once_it_is(
+    services: Services, queues: Queues
+) -> None:
+    """模型下載或載入失敗時，排隊中的商品會一個個失敗；模型之後準備好（重新啟動或重新去背），
+    這些商品自動重新排入，不必一個個按重新去背。照片本身的問題不重排。"""
+    model_failed = await failed_product(services, 'a.jpg', '去背模型下載失敗：ConnectError')
+    photo_failed = await failed_product(services, 'b.jpg', '照片無法讀取')
+    # 模型還沒準備好：不重排（重排了也只會再失敗一次）
+    assert await requeue_pending_cutouts(services, queues) == 0
+    assert (await current(services, model_failed.id)).cutout == model_failed.cutout
+    await services.cutouts.segmenter()
+    assert await requeue_pending_cutouts(services, queues) == 1
+    assert (await current(services, model_failed.id)).cutout == ProductCutout(
+        model='sim', status='pending', url=None, error=None
+    )
+    assert isinstance(model_failed.photo, FilePhoto)
+    assert await queues.cutouts.job(cutout_key(model_failed.id, model_failed.photo.url)) is not None
+    assert (await current(services, photo_failed.id)).cutout == photo_failed.cutout
+
+
 async def test_the_requeue_loop_keeps_going_after_an_error(
     services: Services, queues: Queues, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -428,6 +458,15 @@ async def test_enqueued_cutouts_have_no_queue_timeout(queues: Queues) -> None:
     await queues.enqueue_cutout('prod_x', '/files/uploads/a.jpg')
     record = await queues.cutouts.job(cutout_key('prod_x', '/files/uploads/a.jpg'))
     assert record is not None and record.timeout == 0
+
+
+async def test_uploads_have_time_for_two_documents_sharing_the_encoder(queues: Queues) -> None:
+    """tasks 佇列同時執行兩個工作，但向量化只有一個執行緒：兩份接近切塊上限的文件同時上傳時，各自需要約兩倍時間
+    （切塊上限是以一份在 600 秒內完成來估計），所以上傳的時限是 1,200 秒。"""
+    await queues.enqueue_ingest(task_id='t1', brand_id='selune', name='a.md', text='主色')
+    [job] = [job async for job in queues.tasks.iter_jobs()]
+    assert (job.function, job.timeout) == ('ingest', 1200)
+    await queues.tasks.abort(job, 'test')
 
 
 class StuckSegmenter:
@@ -716,11 +755,17 @@ async def test_rag_warm_up_checks_the_files_then_syncs_every_brand(
         assert len(await chroma.metadata('selune')) == len(await catalog.list_chunks(s, 'selune'))
 
 
-async def test_rag_warm_up_in_sim_mode_only_reports_the_state(services: Services, redis: Redis) -> None:
+async def test_rag_warm_up_in_sim_mode_reports_the_state_and_writes_back_pending_history(
+    services: Services, redis: Redis, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 連不上的向量庫：模擬模式碰到 Chroma 就會出錯（warm_up_rag 只記錄錯誤，所以檢查 log）
     services.vectors = VectorStore('http://127.0.0.1:9')
+    entry = await selected(services)
     await warm_up_rag(services)
     raw = await redis.get('rag:model')
     assert raw is not None and json.loads(raw) == {'model': 'sim', 'state': 'sim', 'error': None}
+    assert 'RAG 模型準備或品牌同步失敗' not in caplog.text
+    assert await written(services, entry.id) is True
 
 
 async def test_rag_warm_up_logs_errors_without_raising(
@@ -904,10 +949,11 @@ def stuck_embedding(services: Services, redis: Redis, monkeypatch: pytest.Monkey
 @pytest.mark.parametrize(
     ('elapsed', 'message'),
     [
-        # SAQ 的任務逾時（TASK_TIMEOUT，600 秒）
-        (600, '文件處理超過 10 分鐘而中止，請把文件分成幾份再上傳'),
+        # SAQ 的任務逾時（INGEST_TIMEOUT，1,200 秒）
+        (1200, '文件處理超過 20 分鐘而中止，請把文件分成幾份再上傳'),
         # 還沒到時限就被取消：worker 正在停止（例如重新啟動）
         (30, 'worker 重新啟動，文件處理中斷，請重新上傳'),
+        (700, 'worker 重新啟動，文件處理中斷，請重新上傳'),
     ],
 )
 async def test_a_cancelled_ingest_publishes_an_error_then_stays_cancelled(
@@ -992,6 +1038,37 @@ async def test_sim_write_back_upserts_the_history_chunk_into_postgres_only(
     # 模擬模式不連 Chroma
     assert await chroma.brands() == []
     assert await write_back(services, 'hist_nope') is False
+
+
+async def test_history_that_was_never_written_back_is_written_back_at_startup(services: Services) -> None:
+    """選定時 Redis 停止（回寫沒排進佇列）或回寫失敗：worker 啟動時補做，之後的任務檢索得到。"""
+    entry = await selected(services)
+    assert await written(services, entry.id) is False
+    assert await write_back_pending(services) == 1
+    assert await written(services, entry.id) is True
+    assert [c.id for c in await history_chunks(services)] == [f'selune#hist-{entry.id}']
+    # 已經回寫的不再重做
+    assert await write_back_pending(services) == 0
+
+
+async def test_a_failed_pending_write_back_is_logged_and_the_rest_continue(
+    services: Services, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    entry = await selected(services)
+    other = entry.model_copy(update={'id': 'hist_other', 'template_id': 'story'})
+    async with services.db.session() as s:
+        await history.add_history(s, other)
+    original = write_back
+
+    async def flaky(services: Services, history_id: str) -> bool:
+        if history_id == entry.id:
+            raise RuntimeError('向量庫（Chroma）無法連線')
+        return await original(services, history_id)
+
+    monkeypatch.setattr('app.worker.write_back', flaky)
+    assert await write_back_pending(services) == 1
+    assert (await written(services, entry.id), await written(services, other.id)) == (False, True)
+    assert f'補做歷史回寫失敗：history_id={entry.id}' in caplog.text
 
 
 async def test_write_back_leaves_out_the_name_of_a_deleted_product(services: Services) -> None:

@@ -205,8 +205,17 @@ async def set_cutout(session: AsyncSession, product_id: str, photo_url: str, cut
 
 async def pending_cutouts(session: AsyncSession) -> list[Product]:
     """還在去背中的商品（worker 啟動時重新排入）。"""
+    return await _cutouts_with_status(session, 'pending')
+
+
+async def failed_cutouts(session: AsyncSession) -> list[Product]:
+    """去背失敗的商品。"""
+    return await _cutouts_with_status(session, 'failed')
+
+
+async def _cutouts_with_status(session: AsyncSession, status: str) -> list[Product]:
     rows = await session.scalars(
-        select(ProductRow).where(ProductRow.deleted.is_(False), ProductRow.data['cutout']['status'].astext == 'pending')
+        select(ProductRow).where(ProductRow.deleted.is_(False), ProductRow.data['cutout']['status'].astext == status)
     )
     return [Product.model_validate(r.data) for r in rows]
 

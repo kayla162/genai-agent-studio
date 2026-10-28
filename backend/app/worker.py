@@ -44,7 +44,7 @@ from app.contract import (
     RagChunk,
 )
 from app.core.clock import utc_now
-from app.cutout.engine import CutoutEngine
+from app.cutout.engine import CutoutEngine, is_model_failure
 from app.cutout.processing import CutoutError
 from app.db.models import JobRow
 from app.db.session import Database
@@ -59,7 +59,7 @@ from app.pipeline.ports import Ports
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
-from app.queues import TASK_TIMEOUT, Queues, cutout_key, ingest_channel
+from app.queues import INGEST_TIMEOUT, Queues, cutout_key, ingest_channel
 from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
 from app.rag.history import history_chunk
@@ -154,12 +154,14 @@ def build_services() -> Services:
 
 
 async def warm_up_rag(services: Services) -> None:
-    """worker 啟動時在背景：下載並核對 RAG 模型檔（不載入），再依序同步所有品牌到 Chroma。
-    失敗只記錄（模型狀態已寫到 Redis），檢索與上傳時會再試；模擬模式只回報狀態。"""
+    """worker 啟動時在背景：下載並核對 RAG 模型檔（不載入），再依序同步所有品牌到 Chroma，
+    最後補做沒有回寫成功的歷史紀錄。失敗只記錄（模型狀態已寫到 Redis），檢索與上傳時會再試；
+    模擬模式只回報狀態並補做回寫（只寫入 PostgreSQL）。"""
     try:
         await services.rag.prepare_files()
         if services.rag.mode == 'bge':
             await sync_all(services.db, services.vectors, services.rag, services.locks)
+        await write_back_pending(services)
     except Exception:
         logger.exception('RAG 模型準備或品牌同步失敗')
 
@@ -229,11 +231,11 @@ def _remove_cutouts(written: Path, *, keep_written: bool) -> None:
 
 #: 上傳進度的訊息（一則 IngestEvent 或 { error }）發布到 ingest:{task_id}
 Send = Callable[[dict[str, Any]], Awaitable[None]]
-#: 上傳超過任務時限（TASK_TIMEOUT）被 SAQ 取消時的訊息
-INGEST_CANCELLED = f'文件處理超過 {TASK_TIMEOUT // 60} 分鐘而中止，請把文件分成幾份再上傳'
+#: 上傳超過時限（INGEST_TIMEOUT）被 SAQ 取消時的訊息
+INGEST_CANCELLED = f'文件處理超過 {INGEST_TIMEOUT // 60} 分鐘而中止，請把文件分成幾份再上傳'
 #: 還沒到時限就被取消（worker 停止或重新啟動）時的訊息
 INGEST_INTERRUPTED = 'worker 重新啟動，文件處理中斷，請重新上傳'
-#: 被取消時已經執行這麼久（秒）以上就當作 SAQ 的任務逾時（取消的時間點會比 TASK_TIMEOUT 稍晚）
+#: 被取消時已經執行這麼久（秒）以上就當作 SAQ 的任務逾時（取消的時間點會比 INGEST_TIMEOUT 稍晚）
 INGEST_TIMEOUT_MARGIN = 5
 
 
@@ -263,7 +265,7 @@ async def ingest(services: Services, task_id: str, brand_id: str, name: str, tex
         # 超過任務時限或 worker 停止時 SAQ 會取消這裡：先告訴前端（否則 api 要等到閒置逾時，訊息也不對），
         # 再把取消往外丟給 SAQ。發布失敗（例如 Redis 停止）也不能吞掉取消
         logger.warning('品牌文件上傳被取消：task_id=%s', task_id)
-        timed_out = monotonic() - started >= TASK_TIMEOUT - INGEST_TIMEOUT_MARGIN
+        timed_out = monotonic() - started >= INGEST_TIMEOUT - INGEST_TIMEOUT_MARGIN
         message = INGEST_CANCELLED if timed_out else INGEST_INTERRUPTED
         with contextlib.suppress(Exception):
             await send({'error': {'code': 'unavailable', 'message': message}})
@@ -335,6 +337,23 @@ async def write_back(services: Services, history_id: str) -> bool:
         return await history.mark_written(s, history_id)
 
 
+async def write_back_pending(services: Services) -> int:
+    """選定後沒有回寫成功的歷史紀錄（回寫失敗，或 Redis 停止而沒排進佇列）：worker 啟動時補做。
+    單筆失敗只記錄，繼續下一筆；回傳成功的筆數。"""
+    async with services.db.session() as s:
+        pending = await history.unwritten_ids(s)
+    done = 0
+    for history_id in pending:
+        try:
+            if await write_back(services, history_id):
+                done += 1
+        except Exception:
+            logger.exception('補做歷史回寫失敗：history_id=%s', history_id)
+    if done:
+        logger.info('補做歷史回寫：%d 筆', done)
+    return done
+
+
 async def recover(services: Services, queues: Queues) -> None:
     # 前一個 worker 被強制終止時，佇列紀錄會停在執行中：不放掉的話，系統狀態永遠算它執行中，
     # 排隊中的任務也會因為 key 相同被當成重複而不再執行。任務在資料庫裡可能已經結束，所以不依資料庫的任務逐筆處理
@@ -355,8 +374,17 @@ async def recover(services: Services, queues: Queues) -> None:
 
 async def requeue_pending_cutouts(services: Services, queues: Queues) -> int:
     """把還在去背中的商品排入 cutouts 佇列，回傳新排入的筆數。
-    排入以商品與照片當 key，排隊中或執行中的工作會被 SAQ 去重，所以隨時可以呼叫。"""
+    排入以商品與照片當 key，排隊中或執行中的工作會被 SAQ 去重，所以隨時可以呼叫。
+
+    模型已經準備好時，先把「因為模型沒準備好而失敗」的商品改回去背中：模型下載或載入失敗時排隊中的商品
+    會一個個失敗，之後模型準備好（重新啟動，或某個商品按了重新去背），這些商品不必一個個重新按。"""
     async with services.db.session() as s:
+        if services.cutouts.ready:
+            pending_again = ProductCutout(model=services.cutouts.model, status='pending', url=None, error=None)
+            for product in await catalog.failed_cutouts(s):
+                error = product.cutout.error if product.cutout else None
+                if isinstance(product.photo, FilePhoto) and is_model_failure(error):
+                    await catalog.set_cutout(s, product.id, product.photo.url, pending_again)
         pending = await catalog.pending_cutouts(s)
     requeued = 0
     for product in pending:
