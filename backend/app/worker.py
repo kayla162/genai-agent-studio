@@ -448,6 +448,7 @@ async def main() -> None:
         requeueing.cancel()
         await queues.disconnect()
         await services.composer.aclose()
+        await services.vectors.aclose()
         if services.gemini is not None:
             await services.gemini.aclose()
         await services.db.dispose()
