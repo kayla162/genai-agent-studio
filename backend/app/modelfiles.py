@@ -9,6 +9,13 @@ import httpx
 
 #: 下載與核對時每次讀取的位元組數
 CHUNK = 1 << 20
+#: 下載模型的逾時（秒）：連線與兩次讀取之間的間隔
+DOWNLOAD_TIMEOUT = 60
+
+
+def download_client() -> httpx.AsyncClient:
+    """下載模型用的 HTTP client（去背與 RAG 的引擎每次準備模型時建立一個）。"""
+    return httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT)
 
 
 @dataclass(frozen=True)
