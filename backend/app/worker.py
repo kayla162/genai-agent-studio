@@ -59,7 +59,7 @@ from app.pipeline.ports import Ports
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
-from app.queues import TASK_TIMEOUT, Queues, cutout_key, ingest_channel
+from app.queues import INGEST_TIMEOUT, Queues, cutout_key, ingest_channel
 from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
 from app.rag.history import history_chunk
@@ -231,11 +231,11 @@ def _remove_cutouts(written: Path, *, keep_written: bool) -> None:
 
 #: 上傳進度的訊息（一則 IngestEvent 或 { error }）發布到 ingest:{task_id}
 Send = Callable[[dict[str, Any]], Awaitable[None]]
-#: 上傳超過任務時限（TASK_TIMEOUT）被 SAQ 取消時的訊息
-INGEST_CANCELLED = f'文件處理超過 {TASK_TIMEOUT // 60} 分鐘而中止，請把文件分成幾份再上傳'
+#: 上傳超過時限（INGEST_TIMEOUT）被 SAQ 取消時的訊息
+INGEST_CANCELLED = f'文件處理超過 {INGEST_TIMEOUT // 60} 分鐘而中止，請把文件分成幾份再上傳'
 #: 還沒到時限就被取消（worker 停止或重新啟動）時的訊息
 INGEST_INTERRUPTED = 'worker 重新啟動，文件處理中斷，請重新上傳'
-#: 被取消時已經執行這麼久（秒）以上就當作 SAQ 的任務逾時（取消的時間點會比 TASK_TIMEOUT 稍晚）
+#: 被取消時已經執行這麼久（秒）以上就當作 SAQ 的任務逾時（取消的時間點會比 INGEST_TIMEOUT 稍晚）
 INGEST_TIMEOUT_MARGIN = 5
 
 
@@ -265,7 +265,7 @@ async def ingest(services: Services, task_id: str, brand_id: str, name: str, tex
         # 超過任務時限或 worker 停止時 SAQ 會取消這裡：先告訴前端（否則 api 要等到閒置逾時，訊息也不對），
         # 再把取消往外丟給 SAQ。發布失敗（例如 Redis 停止）也不能吞掉取消
         logger.warning('品牌文件上傳被取消：task_id=%s', task_id)
-        timed_out = monotonic() - started >= TASK_TIMEOUT - INGEST_TIMEOUT_MARGIN
+        timed_out = monotonic() - started >= INGEST_TIMEOUT - INGEST_TIMEOUT_MARGIN
         message = INGEST_CANCELLED if timed_out else INGEST_INTERRUPTED
         with contextlib.suppress(Exception):
             await send({'error': {'code': 'unavailable', 'message': message}})

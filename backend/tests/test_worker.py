@@ -460,6 +460,15 @@ async def test_enqueued_cutouts_have_no_queue_timeout(queues: Queues) -> None:
     assert record is not None and record.timeout == 0
 
 
+async def test_uploads_have_time_for_two_documents_sharing_the_encoder(queues: Queues) -> None:
+    """tasks 佇列同時執行兩個工作，但向量化只有一個執行緒：兩份接近切塊上限的文件同時上傳時，各自需要約兩倍時間
+    （切塊上限是以一份在 600 秒內完成來估計），所以上傳的時限是 1,200 秒。"""
+    await queues.enqueue_ingest(task_id='t1', brand_id='selune', name='a.md', text='主色')
+    [job] = [job async for job in queues.tasks.iter_jobs()]
+    assert (job.function, job.timeout) == ('ingest', 1200)
+    await queues.tasks.abort(job, 'test')
+
+
 class StuckSegmenter:
     """推論卡住：直到 release（或最多 1 秒）才返回。"""
 
@@ -940,10 +949,11 @@ def stuck_embedding(services: Services, redis: Redis, monkeypatch: pytest.Monkey
 @pytest.mark.parametrize(
     ('elapsed', 'message'),
     [
-        # SAQ 的任務逾時（TASK_TIMEOUT，600 秒）
-        (600, '文件處理超過 10 分鐘而中止，請把文件分成幾份再上傳'),
+        # SAQ 的任務逾時（INGEST_TIMEOUT，1,200 秒）
+        (1200, '文件處理超過 20 分鐘而中止，請把文件分成幾份再上傳'),
         # 還沒到時限就被取消：worker 正在停止（例如重新啟動）
         (30, 'worker 重新啟動，文件處理中斷，請重新上傳'),
+        (700, 'worker 重新啟動，文件處理中斷，請重新上傳'),
     ],
 )
 async def test_a_cancelled_ingest_publishes_an_error_then_stays_cancelled(
