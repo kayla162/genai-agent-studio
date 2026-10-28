@@ -44,7 +44,7 @@ from app.contract import (
     RagChunk,
 )
 from app.core.clock import utc_now
-from app.cutout.engine import CutoutEngine
+from app.cutout.engine import CutoutEngine, is_model_failure
 from app.cutout.processing import CutoutError
 from app.db.models import JobRow
 from app.db.session import Database
@@ -374,8 +374,17 @@ async def recover(services: Services, queues: Queues) -> None:
 
 async def requeue_pending_cutouts(services: Services, queues: Queues) -> int:
     """把還在去背中的商品排入 cutouts 佇列，回傳新排入的筆數。
-    排入以商品與照片當 key，排隊中或執行中的工作會被 SAQ 去重，所以隨時可以呼叫。"""
+    排入以商品與照片當 key，排隊中或執行中的工作會被 SAQ 去重，所以隨時可以呼叫。
+
+    模型已經準備好時，先把「因為模型沒準備好而失敗」的商品改回去背中：模型下載或載入失敗時排隊中的商品
+    會一個個失敗，之後模型準備好（重新啟動，或某個商品按了重新去背），這些商品不必一個個重新按。"""
     async with services.db.session() as s:
+        if services.cutouts.ready:
+            pending_again = ProductCutout(model=services.cutouts.model, status='pending', url=None, error=None)
+            for product in await catalog.failed_cutouts(s):
+                error = product.cutout.error if product.cutout else None
+                if isinstance(product.photo, FilePhoto) and is_model_failure(error):
+                    await catalog.set_cutout(s, product.id, product.photo.url, pending_again)
         pending = await catalog.pending_cutouts(s)
     requeued = 0
     for product in pending:

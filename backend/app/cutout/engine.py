@@ -15,6 +15,14 @@ from app.cutout.segmenter import OnnxSegmenter, Segmenter, SimSegmenter
 from app.cutout.state import STATE_KEY, ModelState
 from app.modelfiles import ModelFile, download_client, has_model
 
+#: 模型準備失敗（下載、核對、載入）的訊息開頭；這類失敗在模型準備好之後自動重新去背
+MODEL_ERROR_PREFIX = '去背模型'
+
+
+def is_model_failure(error: str | None) -> bool:
+    """去背失敗的原因是模型沒準備好（不是照片本身的問題）。"""
+    return error is not None and error.startswith(MODEL_ERROR_PREFIX)
+
 
 class CutoutEngine:
     def __init__(
@@ -47,10 +55,15 @@ class CutoutEngine:
                     await self._report('failed', str(error))
                     raise
                 except Exception as error:
-                    message = f'去背模型準備失敗：{error}'
+                    message = f'{MODEL_ERROR_PREFIX}準備失敗：{error}'
                     await self._report('failed', message)
                     raise CutoutError(message) from error
             return self._segmenter
+
+    @property
+    def ready(self) -> bool:
+        """模型已準備好（之後的去背不必等下載或載入）。"""
+        return self._segmenter is not None
 
     async def warm_up(self) -> None:
         """worker 啟動時在背景準備模型；失敗只記錄狀態，下一次去背時再試。"""

@@ -393,6 +393,35 @@ async def test_pending_cutouts_whose_job_was_lost_are_requeued_once(services: Se
     assert await queues.cutouts.count('queued') == 1
 
 
+async def failed_product(services: Services, name: str, error: str) -> Product:
+    product = await photo_product(services, write_upload(services, name, photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    failed = ProductCutout(model='BiRefNet-general', status='failed', url=None, error=error)
+    async with services.db.session() as s:
+        await catalog.set_cutout(s, product.id, product.photo.url, failed)
+    return await current(services, product.id)
+
+
+async def test_cutouts_that_failed_because_the_model_was_not_ready_are_requeued_once_it_is(
+    services: Services, queues: Queues
+) -> None:
+    """模型下載或載入失敗時，排隊中的商品會一個個失敗；模型之後準備好（重新啟動或重新去背），
+    這些商品自動重新排入，不必一個個按重新去背。照片本身的問題不重排。"""
+    model_failed = await failed_product(services, 'a.jpg', '去背模型下載失敗：ConnectError')
+    photo_failed = await failed_product(services, 'b.jpg', '照片無法讀取')
+    # 模型還沒準備好：不重排（重排了也只會再失敗一次）
+    assert await requeue_pending_cutouts(services, queues) == 0
+    assert (await current(services, model_failed.id)).cutout == model_failed.cutout
+    await services.cutouts.segmenter()
+    assert await requeue_pending_cutouts(services, queues) == 1
+    assert (await current(services, model_failed.id)).cutout == ProductCutout(
+        model='sim', status='pending', url=None, error=None
+    )
+    assert isinstance(model_failed.photo, FilePhoto)
+    assert await queues.cutouts.job(cutout_key(model_failed.id, model_failed.photo.url)) is not None
+    assert (await current(services, photo_failed.id)).cutout == photo_failed.cutout
+
+
 async def test_the_requeue_loop_keeps_going_after_an_error(
     services: Services, queues: Queues, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
