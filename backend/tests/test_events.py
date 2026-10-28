@@ -195,8 +195,10 @@ async def test_stream_polls_the_database_every_second_when_redis_is_down(
 
     with caplog.at_level('WARNING', logger='app.events'):
         task = asyncio.create_task(consume())
-        await asyncio.sleep(0.2)
         # 已經在資料庫的事件立刻補送；之後的事件不經過 Redis，最多一個間隔後從資料庫讀到
+        async with asyncio.timeout(3):
+            while not received:
+                await asyncio.sleep(0.02)
         assert [m['seq'] for m in received] == [1]
         await store.append('job_e', status('queued'))
         await store.append('job_e', log('working'))

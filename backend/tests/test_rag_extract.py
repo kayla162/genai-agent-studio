@@ -76,7 +76,8 @@ def test_pdf_pages_are_joined_by_a_blank_line_with_radicals_mapped_to_ideographs
     assert '高度之淨空區。\n\n§5 廣告用語\n保養品廣告不得宣稱醫療效能。' in text
     assert text.endswith('改用「改善外觀」「專業配方」')
     # 部首看起來一樣，但切塊的標籤判斷認不得
-    assert (guess_tag('主⾊佔畫⾯ 60% 以上'), guess_tag('主色佔畫面 60% 以上')) == ('general', 'color')
+    # U+2F8A、U+2FAF 是康熙部首（看起來是「色」「面」）；以跳脫字元寫，編輯器與 diff 才看得出不是一般的漢字
+    assert (guess_tag('主\u2f8a佔畫\u2faf 60% 以上'), guess_tag('主色佔畫面 60% 以上')) == ('general', 'color')
     # 每一頁是一段（PDF 沒有 Markdown 標題，section 是檔名）
     chunks = chunk_document('selune', 'ci-sample.pdf', text)
     assert [c.section for c in chunks] == ['ci-sample', 'ci-sample']

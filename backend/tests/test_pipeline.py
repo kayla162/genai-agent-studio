@@ -342,6 +342,36 @@ async def test_only_the_top_five_reranked_chunks_go_into_the_prompt(store: Event
     assert [r.rag_refs for r in agent.requests] == [[f'selune#c{i}' for i in range(7, 2, -1)]] * 2
 
 
+class RequeryAgent(FakeAgent):
+    """不通過時要求重新檢索合規用語。"""
+
+    async def plan_rewrite(
+        self, brand: Brand, spec: PromptSpec, checks: list[ReviewCheck], run: RunContext, *, retries_left: int
+    ) -> Rewrite:
+        return Rewrite(fixes=[FIX], query='合規替代用語')
+
+
+class RequeryHits(EightHits):
+    """重新檢索命中：原本 Rerank 第 7 名（c1，沒放進 Prompt）、已在 Prompt 的 c5，以及新的合規替代用語。"""
+
+    async def requery(self, brand: Brand, query: str) -> list[RagHit]:
+        def hit(chunk_id: str) -> RagHit:
+            return RagHit(chunk_id=chunk_id, source='ci.md', section='§9', tag='law', text=chunk_id, vector_score=0.8)
+
+        return [hit('selune#c1'), hit('selune#c5'), hit('selune#law-alt')]
+
+
+async def test_requery_hits_outside_the_top_five_join_the_prompt_once(store: EventStore, db: Database) -> None:
+    """重新檢索命中原本 Rerank 第 6–8 名的切塊（召回了但沒放進 Prompt）：這一次要放進 Prompt；已在 Prompt 的不重複。"""
+    agent = RequeryAgent()
+    reviewer = FakeReviewer({2: {'ig-post', 'story'}})
+    await run_job(JOB, db, store, ports(agent, reviewer, retriever=RequeryHits()), speed=0)
+    top_five = [f'selune#c{i}' for i in range(7, 2, -1)]
+    second = [r for r in agent.requests if r.round == 2]
+    assert [r.rag_refs for r in second] == [[*top_five, 'selune#c1', 'selune#law-alt']] * 2
+    assert [h.chunk_id for h in second[0].hits] == [*top_five, 'selune#c1', 'selune#law-alt']
+
+
 async def failure(db: Database) -> tuple[str, str]:
     """任務失敗的原因，以及失敗時的階段（最後一個 job.status 之前的那個）。"""
     events = await messages(db)
