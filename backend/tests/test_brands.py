@@ -128,6 +128,19 @@ def test_guideline_keys_cannot_take_the_generated_prefixes(tmp_path: Path) -> No
     ]
 
 
+def test_guideline_keys_cannot_end_with_alt_except_law_alt(tmp_path: Path) -> None:
+    """-alt 結尾的切塊在檢索與 Prompt 都當成合規替代用語（只在改寫時使用）；只有 law-alt 可以這樣命名。"""
+    template = (BRANDS_DIR / '_template.yaml').read_text(encoding='utf-8')
+    write(tmp_path / 'my-brand.yaml', template.replace('{key: layout,', '{key: layout-alt,'))
+    loaded, errors = load_brands(tmp_path)
+    assert loaded == []
+    assert [e.message for e in errors] == [
+        'guidelines：Value error, key 不可以 -alt 結尾（只有 law-alt 是合規替代用語對照）：layout-alt'
+    ]
+    write(tmp_path / 'my-brand.yaml', template.replace('{key: layout,', '{key: law-alt,'))
+    assert load_brands(tmp_path)[1] == []
+
+
 def test_the_source_hash_follows_the_converted_content(tmp_path: Path) -> None:
     """轉換規則改變（例如 Plan 5 加上歷史案例切塊）時，既有資料庫的品牌也會重新寫入切塊。"""
     template = (BRANDS_DIR / '_template.yaml').read_text(encoding='utf-8')

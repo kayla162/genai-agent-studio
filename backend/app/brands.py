@@ -129,6 +129,10 @@ class BrandConfig(Model):
             raise ValueError(
                 f'key 不可以 doc-、hist-、case- 開頭（保留給上傳的手冊、歷史回寫與歷史案例）：{"、".join(reserved)}'
             )
+        # 檢索與 Prompt 把 -alt 結尾的切塊當成合規替代用語（只在 Query Rewriting 使用）
+        alt = [k for k in keys if k.endswith('-alt') and k != 'law-alt']
+        if alt:
+            raise ValueError(f'key 不可以 -alt 結尾（只有 law-alt 是合規替代用語對照）：{"、".join(alt)}')
         return guidelines
 
 
