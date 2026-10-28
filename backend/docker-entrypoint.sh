@@ -9,6 +9,8 @@ if [ "$(id -u)" = 0 ]; then
             chown -R app:app "$dir" 2>/dev/null || true
         fi
     done
+    # setpriv 不改環境變數：HOME 還是 /root 的話，asyncpg 讀 ~/.postgresql/ 會被拒絕
+    export HOME=/home/app
     exec setpriv --reuid=app --regid=app --init-groups -- "$@"
 fi
 exec "$@"
