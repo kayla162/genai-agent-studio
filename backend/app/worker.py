@@ -154,12 +154,14 @@ def build_services() -> Services:
 
 
 async def warm_up_rag(services: Services) -> None:
-    """worker 啟動時在背景：下載並核對 RAG 模型檔（不載入），再依序同步所有品牌到 Chroma。
-    失敗只記錄（模型狀態已寫到 Redis），檢索與上傳時會再試；模擬模式只回報狀態。"""
+    """worker 啟動時在背景：下載並核對 RAG 模型檔（不載入），再依序同步所有品牌到 Chroma，
+    最後補做沒有回寫成功的歷史紀錄。失敗只記錄（模型狀態已寫到 Redis），檢索與上傳時會再試；
+    模擬模式只回報狀態並補做回寫（只寫入 PostgreSQL）。"""
     try:
         await services.rag.prepare_files()
         if services.rag.mode == 'bge':
             await sync_all(services.db, services.vectors, services.rag, services.locks)
+        await write_back_pending(services)
     except Exception:
         logger.exception('RAG 模型準備或品牌同步失敗')
 
@@ -333,6 +335,23 @@ async def write_back(services: Services, history_id: str) -> bool:
             await services.vectors.upsert(entry.brand_id, [record])
     async with services.db.session() as s:
         return await history.mark_written(s, history_id)
+
+
+async def write_back_pending(services: Services) -> int:
+    """選定後沒有回寫成功的歷史紀錄（回寫失敗，或 Redis 停止而沒排進佇列）：worker 啟動時補做。
+    單筆失敗只記錄，繼續下一筆；回傳成功的筆數。"""
+    async with services.db.session() as s:
+        pending = await history.unwritten_ids(s)
+    done = 0
+    for history_id in pending:
+        try:
+            if await write_back(services, history_id):
+                done += 1
+        except Exception:
+            logger.exception('補做歷史回寫失敗：history_id=%s', history_id)
+    if done:
+        logger.info('補做歷史回寫：%d 筆', done)
+    return done
 
 
 async def recover(services: Services, queues: Queues) -> None:

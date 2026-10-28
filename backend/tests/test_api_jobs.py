@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from pydantic import SecretStr
+from redis.exceptions import ConnectionError as RedisConnectionError
 from saq.job import Status
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedError
@@ -261,6 +262,29 @@ async def test_select_answers_written_to_rag_false_when_the_write_back_fails(
         copy = next(r for r in rendered if r['id'] == render_id)['spec']['copy']
         res = await api.http.post(f'/api/jobs/{job_id}/select', json={'renderId': render_id, 'copy': copy})
     # 歷史紀錄已經建立，所以不回 500；重送也不會重複建立
+    assert res.status_code == 201
+    entry = res.json()
+    assert entry['writtenToRag'] is False
+    assert (await api.http.get('/api/history', params={'brandId': 'selune'})).json() == [entry]
+    assert f'歷史回寫失敗：history_id={entry["id"]}' in caplog.text
+
+
+async def test_select_answers_written_to_rag_false_when_redis_is_down_at_enqueue(
+    api: LiveApi, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """選定時 Redis 剛好停止（回寫排不進佇列）：歷史紀錄已經建立，不回 500，前端也不會以為失敗而重送。"""
+    async with api.worker():
+        job_id = (await api.http.post('/api/jobs', json=job_input())).json()['jobId']
+        messages = await stream(api, job_id)
+    render_id = (await api.http.get(f'/api/jobs/{job_id}')).json()['summary']['bestRenderIds']['story']
+    rendered = [r for m in messages if m['type'] == 'render.completed' for r in m['renders']]
+    copy = next(r for r in rendered if r['id'] == render_id)['spec']['copy']
+
+    async def redis_down(function: str, /, wait: float, **kwargs: Any) -> None:
+        raise RedisConnectionError('Error 10061 connecting to 127.0.0.1:6379')
+
+    monkeypatch.setattr(api.services.queues, 'run_task', redis_down)
+    res = await api.http.post(f'/api/jobs/{job_id}/select', json={'renderId': render_id, 'copy': copy})
     assert res.status_code == 201
     entry = res.json()
     assert entry['writtenToRag'] is False

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, WebSocket
 from pydantic import Field
+from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
 
 from app.adapters.gemini import NOT_CONFIGURED, GeminiError
@@ -262,7 +263,8 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
         await history.add_history(s, entry)
     try:
         done = await services.queues.run_task('write_back', wait=WRITE_BACK_WAIT, history_id=entry.id)
-    except TaskFailed as error:
+    except (TaskFailed, RedisError, OSError) as error:
+        # 回寫失敗，或 Redis 停止而排不進佇列：歷史紀錄已經建立，回傳 writtenToRag: false（worker 啟動時補做回寫）
         logger.warning('歷史回寫失敗：history_id=%s：%s', entry.id, error)
         return entry
     if done.completed and done.result:

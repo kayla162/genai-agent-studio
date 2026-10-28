@@ -69,6 +69,7 @@ from app.worker import (
     requeue_pending_cutouts,
     warm_up_rag,
     write_back,
+    write_back_pending,
 )
 from tests.conftest import TEST_CHROMA_DATABASE, TEST_REDIS_URL
 from tests.fake_encoder import FakeEncoder, fake_engine
@@ -716,11 +717,17 @@ async def test_rag_warm_up_checks_the_files_then_syncs_every_brand(
         assert len(await chroma.metadata('selune')) == len(await catalog.list_chunks(s, 'selune'))
 
 
-async def test_rag_warm_up_in_sim_mode_only_reports_the_state(services: Services, redis: Redis) -> None:
+async def test_rag_warm_up_in_sim_mode_reports_the_state_and_writes_back_pending_history(
+    services: Services, redis: Redis, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 連不上的向量庫：模擬模式碰到 Chroma 就會出錯（warm_up_rag 只記錄錯誤，所以檢查 log）
     services.vectors = VectorStore('http://127.0.0.1:9')
+    entry = await selected(services)
     await warm_up_rag(services)
     raw = await redis.get('rag:model')
     assert raw is not None and json.loads(raw) == {'model': 'sim', 'state': 'sim', 'error': None}
+    assert 'RAG 模型準備或品牌同步失敗' not in caplog.text
+    assert await written(services, entry.id) is True
 
 
 async def test_rag_warm_up_logs_errors_without_raising(
@@ -992,6 +999,37 @@ async def test_sim_write_back_upserts_the_history_chunk_into_postgres_only(
     # 模擬模式不連 Chroma
     assert await chroma.brands() == []
     assert await write_back(services, 'hist_nope') is False
+
+
+async def test_history_that_was_never_written_back_is_written_back_at_startup(services: Services) -> None:
+    """選定時 Redis 停止（回寫沒排進佇列）或回寫失敗：worker 啟動時補做，之後的任務檢索得到。"""
+    entry = await selected(services)
+    assert await written(services, entry.id) is False
+    assert await write_back_pending(services) == 1
+    assert await written(services, entry.id) is True
+    assert [c.id for c in await history_chunks(services)] == [f'selune#hist-{entry.id}']
+    # 已經回寫的不再重做
+    assert await write_back_pending(services) == 0
+
+
+async def test_a_failed_pending_write_back_is_logged_and_the_rest_continue(
+    services: Services, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    entry = await selected(services)
+    other = entry.model_copy(update={'id': 'hist_other', 'template_id': 'story'})
+    async with services.db.session() as s:
+        await history.add_history(s, other)
+    original = write_back
+
+    async def flaky(services: Services, history_id: str) -> bool:
+        if history_id == entry.id:
+            raise RuntimeError('向量庫（Chroma）無法連線')
+        return await original(services, history_id)
+
+    monkeypatch.setattr('app.worker.write_back', flaky)
+    assert await write_back_pending(services) == 1
+    assert (await written(services, entry.id), await written(services, other.id)) == (False, True)
+    assert f'補做歷史回寫失敗：history_id={entry.id}' in caplog.text
 
 
 async def test_write_back_leaves_out_the_name_of_a_deleted_product(services: Services) -> None:
