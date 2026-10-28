@@ -32,6 +32,7 @@ from app.pipeline.comfy import ComfyImageEngine, load_workflow
 from app.pipeline.ports import SpecRequest
 from app.settings import REPO_ROOT, Settings
 from app.templates import get_template
+from app.visual_style import choose_visual_style
 
 BRANDS = ('selune', 'misty-isle', 'my-brand-01')
 TEMPLATES: tuple[TemplateId, ...] = ('ecom-main', 'scene', 'ig-post', 'story', 'banner')
@@ -174,7 +175,8 @@ class Experiment:
         hits = hits_of(brand)
         request = SpecRequest(
             job_id, 1, brand, product, brief, get_template(template_id), 'comfyui', 20261024,
-            [h.chunk_id for h in hits], [], text=TEXT, hits=hits,
+            [h.chunk_id for h in hits], [],
+            choose_visual_style(brand, brief.tone, None).style, text=TEXT, hits=hits,
         )  # fmt: skip
         spec = await self.composer.sim_prompt(request, flawed=False)
         if self.args.cfg is None:
