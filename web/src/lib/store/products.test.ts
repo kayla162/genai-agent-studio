@@ -125,6 +125,24 @@ describe('products store', () => {
     expect(list).toHaveBeenCalledTimes(3);
   });
 
+  it('reads the list again when a product was removed while a load was in flight', async () => {
+    const late = lateRead();
+    const list = vi.spyOn(getApiClient(), 'listProducts')
+      .mockResolvedValueOnce([product(DONE, 'prod_a'), product(DONE, 'prod_b')])
+      .mockReturnValueOnce(late.read)
+      .mockResolvedValue([product(DONE, 'prod_b')]);
+    vi.spyOn(getApiClient(), 'deleteProduct').mockResolvedValue(undefined);
+    await useProductsStore.getState().load('selune');
+    // 例如儲存商品後重新讀取；讀取還在路上時刪除商品 a，之後才收到刪除之前的清單
+    const loading = useProductsStore.getState().load('selune');
+    await useProductsStore.getState().remove('prod_a');
+    late.arrive([product(DONE, 'prod_a'), product(DONE, 'prod_b')]);
+    await loading;
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(useProductsStore.getState().products.map((p) => p.id)).toEqual(['prod_b']);
+    expect(useProductsStore.getState().loading).toBe(false);
+  });
+
   it('starts polling after asking for a new cutout', async () => {
     vi.spyOn(getApiClient(), 'listProducts').mockResolvedValueOnce([product(DONE)]).mockResolvedValue([product(DONE)]);
     vi.spyOn(getApiClient(), 'requestCutout').mockResolvedValue(product(PENDING));
