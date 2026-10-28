@@ -51,6 +51,7 @@ from app.db.session import Database
 from app.errors import AppError, Invalid, NotFound
 from app.events import EventStore
 from app.files import photo_path, product_folder
+from app.job_files import clean_job_files_periodically
 from app.pipeline.comfy import comfy_ports
 from app.pipeline.gemini import gemini_ports
 from app.pipeline.memory import HeavyMemoryLock
@@ -446,6 +447,8 @@ async def main() -> None:
     warming = asyncio.create_task(services.cutouts.warm_up())
     rag_warming = asyncio.create_task(warm_up_rag(services))
     requeueing = asyncio.create_task(requeue_cutouts_periodically(services, queues))
+    # data/jobs/ 的舊檔案：啟動時清理一次，之後每天一次
+    cleaning = asyncio.create_task(clean_job_files_periodically(services.db, services.settings))
     workers = build_workers(services, queues)
     stop_on_signals(workers)
     try:
@@ -454,6 +457,7 @@ async def main() -> None:
         warming.cancel()
         rag_warming.cancel()
         requeueing.cancel()
+        cleaning.cancel()
         await queues.disconnect()
         await services.composer.aclose()
         await services.vectors.aclose()

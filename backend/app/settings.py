@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     brands_dir: Path = REPO_ROOT / 'brands'
     #: 商品照、去背圖、生成圖、審查用海報
     data_dir: Path = REPO_ROOT / 'data'
+    #: 結束超過這麼多天的任務，清理 data/jobs/ 裡的審查用海報與背景（歷史紀錄用到的背景保留）；0 為不清理
+    job_files_retention_days: int = Field(default=30, ge=0)
     #: 使用者自己的商品照（唯讀）
     local_photos_dir: Path = REPO_ROOT / 'assets' / 'products'
     composer_url: str = 'http://127.0.0.1:3900'
