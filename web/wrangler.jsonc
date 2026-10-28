@@ -1,0 +1,15 @@
+// 作品集 Demo 部署到 Cloudflare Workers（只有靜態資源，沒有 Worker 程式）：
+// 在 web/ 執行 npm run build 產生 mock 模式的 out/，再 npx wrangler deploy。步驟見 docs/demo/cloudflare.md。
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // 與 Cloudflare 上的 Worker 名稱相同（網址 genai-agent-studio.<帳號>.workers.dev）
+  "name": "genai-agent-studio",
+  "compatibility_date": "2026-10-28",
+  "assets": {
+    "directory": "./out",
+    // /studio 對應 out/studio.html（next build 的靜態輸出）
+    "html_handling": "auto-trailing-slash",
+    // 找不到的網址顯示 out/404.html
+    "not_found_handling": "404-page"
+  }
+}
