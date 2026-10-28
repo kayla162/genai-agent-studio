@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -44,7 +45,25 @@ def test_index_text_and_hash() -> None:
         'section': '§2.1 色彩系統',
         'origin': 'config',
         'textHash': '86ccbb049fa2565a',
+        # 向量化模型（bge-m3 int8）的 SHA-256 前 12 碼
+        'embedder': 'e5b42096865c',
     }
+
+
+async def test_sync_re_embeds_chunks_indexed_by_another_embedding_model(
+    brands: AsyncSession, db: Database, redis: Redis, chroma: VectorStore
+) -> None:
+    """換了向量化模型（或版本）時，舊模型算的向量不能和新的混用：metadata 的模型不同就重新向量化。"""
+    locks = BrandLocks()
+    await sync_brand(db, chroma, fake_engine(redis, FakeEncoder()), locks, 'selune')
+    chunks = await catalog.list_chunks(brands, 'selune')
+    color = next(c for c, _ in chunks if c.id == 'selune#color')
+    old = VectorRecord(color.id, FakeEncoder.vector('舊'), color.text, chunk_metadata('selune', color, 'config'))
+    await chroma.upsert('selune', [replace(old, metadata={**old.metadata, 'embedder': '000000000000'})])
+    encoder = FakeEncoder()
+    assert await sync_brand(db, chroma, fake_engine(redis, encoder), locks, 'selune') == SyncResult(1, 0)
+    assert encoder.embedded == [index_text(color)]
+    assert (await chroma.metadata('selune'))[color.id]['embedder'] == 'e5b42096865c'
 
 
 async def test_sync_adds_every_chunk_with_its_text_and_metadata(
