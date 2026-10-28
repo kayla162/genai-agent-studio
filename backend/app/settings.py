@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     #: 使用者自己的商品照（唯讀）
     local_photos_dir: Path = REPO_ROOT / 'assets' / 'products'
     composer_url: str = 'http://127.0.0.1:3900'
+    #: api 接受的主機名稱（請求的 Host，不含埠）：防止 DNS rebinding（惡意網頁把自己的網域指到 127.0.0.1，
+    #: 再從瀏覽器呼叫 api）。以其他名稱開啟前端時加在這裡（JSON 陣列），web/nginx.conf 的 server_name 也要一起加
+    allowed_hosts: list[str] = ['127.0.0.1', 'localhost']
     #: 任務 id 使用的本地時間（與前端 mock 的 makeJobId 一樣顯示使用者所在地的日期時間）
     timezone: str = 'Asia/Taipei'
 

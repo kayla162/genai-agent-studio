@@ -37,7 +37,7 @@ services:
   worker:
     <<: *e2e-backend
   web:
-    ports: !override ['127.0.0.1:3200:80']
+    ports: !override ['127.0.0.1:3200:8080']
 
 volumes:
   e2e-data:

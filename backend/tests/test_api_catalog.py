@@ -17,6 +17,8 @@ import pytest
 from PIL import Image
 from pypdf import PdfWriter
 from saq.job import Status
+from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
 
 from app.adapters.composer import ComposerClient, ComposerHealth
 from app.api import catalog as catalog_api
@@ -672,3 +674,22 @@ def test_files_stay_inside_their_folders(tmp_path: Path) -> None:
         'uploads/missing.png',
     ]:
         assert resolve_file(settings, path) is None, path
+
+
+async def test_requests_with_an_unknown_host_are_refused(api: LiveApi) -> None:
+    """DNS rebinding：惡意網頁把自己的網域指到 127.0.0.1 後，瀏覽器送出的 Host 是那個網域，一律拒絕。"""
+    assert (await api.http.get('/api/health')).status_code == 200
+    assert (await api.http.get('/api/health', headers={'Host': 'localhost:3000'})).status_code == 200
+    for host in ('rebind.example', 'rebind.example:3000', '127.0.0.1.rebind.example'):
+        res = await api.http.get('/api/brands', headers={'Host': host})
+        assert res.status_code == 400
+        assert res.json() == {'error': {'code': 'invalid_host', 'message': f'不接受的主機名稱：{host.split(":")[0]}'}}
+
+
+async def test_websockets_with_an_unknown_host_are_refused(api: LiveApi) -> None:
+    port = int(api.ws_url.rsplit(':', 1)[1])
+    # 網址的主機名稱成為 Host 標頭，實際連到 127.0.0.1
+    with pytest.raises(InvalidStatus) as refused:
+        async with connect(f'ws://rebind.example:{port}/ws/jobs/job_nope', host='127.0.0.1', port=port):
+            pass
+    assert refused.value.response.status_code == 403

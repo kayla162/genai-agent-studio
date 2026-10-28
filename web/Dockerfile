@@ -12,8 +12,13 @@ FROM source AS build
 RUN NEXT_PUBLIC_API_MODE=live npm run build
 
 FROM public.ecr.aws/docker/library/nginx:1.29-alpine AS web
+# 以 nginx 使用者執行（官方映像檔的主程序是 root）：pid 檔改放 /tmp、拿掉只有 root 才用得到的 user 指令、
+# 快取資料夾交給 nginx；聽 8080（非 root 不能聽 1024 以下的埠）
+RUN sed -i -e 's,^pid .*,pid /tmp/nginx.pid;,' -e '/^user /d' /etc/nginx/nginx.conf     && chown -R nginx:nginx /var/cache/nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/web/out /usr/share/nginx/html
+USER nginx
+EXPOSE 8080
 
 # 海報字型與授權文字：網址與 SHA-256 必須和 composer/fonts.lock.json 相同（composer/dockerfile.test.ts 會檢查）。
 # 下載內容與 checksum 不符時建置失敗；只有建置 composer 時才會下載。
@@ -41,4 +46,6 @@ COPY --chmod=0644 --from=fonts \
 ENV POSTER_FONTS_DIR=/usr/local/share/poster-fonts
 ENV HOST=0.0.0.0 PORT=3900
 EXPOSE 3900
+# 以 Node 映像檔內建的 node 使用者執行（不寫入任何檔案）
+USER node
 CMD ["node", "--import", "tsx", "composer/server.ts"]
