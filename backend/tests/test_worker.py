@@ -57,6 +57,7 @@ from app.rag.sync import SyncResult, chunk_metadata, index_text, sync_brand
 from app.repo import catalog, history, jobs
 from app.settings import ReviewMode, Settings
 from app.worker import (
+    INFERENCE_EXECUTOR,
     RESTART_REASON,
     Services,
     build_services,
@@ -522,6 +523,76 @@ async def test_cutout_keeps_only_the_new_file_after_a_success(services: Services
     cut = (await current(services, product.id)).cutout
     assert cut is not None and cut.url is not None and cut.status == 'done'
     assert cutout_files(services, product.id) == [cut.url.rsplit('/', 1)[1]]
+
+
+class InterruptedSegmenter:
+    """每次推論都等到 release 才返回，讓測試在推論中途中斷 cutout（模擬 worker 被結束）。"""
+
+    name = 'interrupted'
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def cut(self, photo: bytes) -> bytes:
+        self.started.set()
+        self.release.wait(1)
+        return photo
+
+
+async def interrupt_cutout(services: Services, product: Product, segmenter: InterruptedSegmenter) -> None:
+    """在推論中途取消 cutout：被取消的 cutout 不會執行之後的程式，與 worker 被強制結束時一樣。"""
+    assert isinstance(product.photo, FilePhoto)
+    segmenter.started.clear()
+    segmenter.release.clear()
+    task = asyncio.create_task(cutout(services, product.id, product.photo.url))
+    assert await asyncio.to_thread(segmenter.started.wait, 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    segmenter.release.set()
+    # 等推論的執行緒結束，下一次推論才不會排在它後面
+    await asyncio.get_running_loop().run_in_executor(INFERENCE_EXECUTOR, lambda: None)
+
+
+async def test_cutout_gives_up_after_two_interrupted_attempts(services: Services) -> None:
+    """記憶體不足時 worker 在推論中被結束，重新啟動後又排入同一張照片：中斷 2 次後判定失敗，不再無限重試。
+    重新去背時從頭計算。"""
+    product = await photo_product(services, write_upload(services, 'oom.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    segmenter = InterruptedSegmenter()
+    services.cutouts = engine_returning(services, segmenter)
+    for _ in range(2):
+        await interrupt_cutout(services, product, segmenter)
+    assert (await current(services, product.id)).cutout == PENDING
+    segmenter.started.clear()
+    await cutout(services, product.id, product.photo.url)
+    assert not segmenter.started.is_set()
+    assert (await current(services, product.id)).cutout == ProductCutout(
+        model='sim',
+        status='failed',
+        url=None,
+        error='去背中斷了 2 次（worker 可能因記憶體不足被結束），已停止自動重試；請調高 Docker 的記憶體上限後重新去背',
+    )
+    async with services.db.session() as s:
+        await catalog.set_cutout(s, product.id, product.photo.url, PENDING)
+    segmenter.release.set()
+    await cutout(services, product.id, product.photo.url)
+    cut = (await current(services, product.id)).cutout
+    assert cut is not None and (cut.model, cut.status) == ('interrupted', 'done')
+
+
+async def test_cutout_skips_a_product_that_is_no_longer_pending(services: Services) -> None:
+    """補排讀到去背中的商品後，原本的工作剛好完成：同一張照片會再排入一次。
+    已經有結果的商品不再推論，結果也不會被這次多餘的推論蓋掉。"""
+    product = await photo_product(services, write_upload(services, 'a.jpg', photo_bytes()))
+    assert isinstance(product.photo, FilePhoto)
+    done = ProductCutout(model='sim', status='done', url=f'/files/products/{product.id}/cutout-done.png', error=None)
+    async with services.db.session() as s:
+        await catalog.set_cutout(s, product.id, product.photo.url, done)
+    services.cutouts = engine_returning(services, FailingSegmenter())
+    await cutout(services, product.id, product.photo.url)
+    assert (await current(services, product.id)).cutout == done
 
 
 @pytest.mark.parametrize('bad_id', ['..', 'a b', 'x' * 65])

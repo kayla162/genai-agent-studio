@@ -57,7 +57,7 @@ from app.pipeline.ports import Ports
 from app.pipeline.review import ComposerPosters, ComposerReviewer
 from app.pipeline.runner import failure_reason, run_job
 from app.pipeline.sim import sim_ports
-from app.queues import TASK_TIMEOUT, Queues, ingest_channel
+from app.queues import TASK_TIMEOUT, Queues, cutout_key, ingest_channel
 from app.rag.chunking import EMBED_DIMS, chunk_document, embed_preview, vector_preview
 from app.rag.engine import RagEngine
 from app.rag.history import history_chunk
@@ -76,6 +76,11 @@ CUTOUT_INFERENCE_TIMEOUT = 300
 #: 定時把「去背中卻不在佇列裡」的商品重新排入的間隔（秒）：寫入資料庫或佇列時出錯會留下這樣的商品，
 #: 卡片上的按鈕在去背中是停用的，不補排的話會一直顯示去背中
 CUTOUT_REQUEUE_INTERVAL = 120
+#: 推論中途被中斷幾次後判定失敗：記憶體不足時 worker 在推論中被結束，重新啟動後的補排又會排入同一張照片，
+#: 不設上限的話會一直重複
+CUTOUT_INTERRUPTION_LIMIT = 2
+#: 中斷次數保留的時間（秒）：中斷後商品被刪除或換了照片時，計數不會一直留在 Redis
+CUTOUT_ATTEMPTS_TTL = 24 * 3600
 #: 去背推論專用的單一執行緒。逾時的推論會繼續在它的執行緒裡跑完（執行緒無法中途取消），
 #: 單一執行緒確保下一張一定等它結束才開始，不會有兩個推論同時執行（每個約 8 GB 記憶體，Docker 實測尖峰約 7.6 GiB）。
 INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='cutout')
@@ -158,12 +163,19 @@ async def warm_up_rag(services: Services) -> None:
 
 
 async def cutout(services: Services, product_id: str, photo_url: str) -> None:
-    """去背：讀照片 → 等模型（不限時間）→ 推論（專用執行緒，有逾時）→ 寫入 PNG → 確認商品沒變才寫入結果。"""
+    """去背：讀照片 → 等模型（不限時間）→ 推論（專用執行緒，有逾時）→ 寫入 PNG → 確認商品沒變才寫入結果。
+
+    每次推論前在 Redis 記一次嘗試，寫入結果後清掉；worker 在推論中被結束時計數會留下來，
+    累積超過 CUTOUT_INTERRUPTION_LIMIT 次就不再推論，直接判定失敗。"""
     async with services.db.session() as s:
         product = await catalog.get_product(s, product_id)
     # 商品已刪除，或照片已經換掉（較新的任務會處理新照片）
     if product is None or not isinstance(product.photo, FilePhoto) or product.photo.url != photo_url:
         return
+    # 已經有結果：補排讀到去背中的商品時，原本的工作剛好完成，同一張照片會多排入一次
+    if product.cutout is None or product.cutout.status != 'pending':
+        return
+    attempts_key = f'{cutout_key(product_id, photo_url)}:attempts'
     written: Path | None = None
     try:
         folder = product_folder(services.settings, product_id)
@@ -175,6 +187,13 @@ async def cutout(services: Services, product_id: str, photo_url: str) -> None:
         # 載入模型與推論是記憶體的尖峰：與 ComfyUI 生圖互斥（16 GB 的筆電兩者同時執行會不夠）
         async with services.memory.hold(waiting) if services.memory else contextlib.nullcontext():
             segmenter = await services.cutouts.segmenter()
+            attempts = await services.redis.incr(attempts_key)
+            await services.redis.expire(attempts_key, CUTOUT_ATTEMPTS_TTL)
+            if attempts > CUTOUT_INTERRUPTION_LIMIT:
+                raise CutoutError(
+                    f'去背中斷了 {CUTOUT_INTERRUPTION_LIMIT} 次（worker 可能因記憶體不足被結束），'
+                    '已停止自動重試；請調高 Docker 的記憶體上限後重新去背'
+                )
             try:
                 async with asyncio.timeout(CUTOUT_INFERENCE_TIMEOUT):
                     png = await asyncio.get_running_loop().run_in_executor(INFERENCE_EXECUTOR, segmenter.cut, photo)
@@ -195,6 +214,8 @@ async def cutout(services: Services, product_id: str, photo_url: str) -> None:
         saved = await catalog.set_cutout(s, product_id, photo_url, result)
     if written is not None:
         await asyncio.to_thread(_remove_cutouts, written, keep_written=result.status == 'done' and saved is not None)
+    # 這次有結果，不算中斷；重新去背時從頭計算
+    await services.redis.delete(attempts_key)
 
 
 def _remove_cutouts(written: Path, *, keep_written: bool) -> None:
