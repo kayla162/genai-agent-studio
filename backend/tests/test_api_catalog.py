@@ -3,9 +3,11 @@
 import asyncio
 import io
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -616,6 +618,32 @@ async def test_list_and_import_local_photos(api: LiveApi) -> None:
     for name in ('notes.txt', '.hidden.png', 'missing.png'):
         missing = await api.http.post(f'/api/local-photos/{name}/import', json={'brandId': 'misty-isle'})
         assert missing.status_code == 404
+
+
+def _other_drive(drive: str) -> str | None:
+    """Windows 上另一個可以寫入的磁碟機（例如 D:），沒有時為 None。"""
+    if os.name != 'nt':
+        return None
+    for letter in 'CDEFGH':
+        other = f'{letter}:'
+        if other.lower() != drive.lower() and os.access(f'{other}\\', os.W_OK):
+            return other
+    return None
+
+
+def test_local_photos_refuse_drive_prefixed_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows 上「D:secret.png」是 D 槽目前資料夾裡的檔案（本機資料夾在別的磁碟機時），不在本機資料夾裡。"""
+    other = _other_drive(tmp_path.drive)
+    if other is None:
+        pytest.skip('需要 Windows 與另一個可寫入的磁碟機')
+    settings = Settings(_env_file=None, image_mode='sim', agent_mode='sim', local_photos_dir=tmp_path / 'local')
+    (tmp_path / 'local').mkdir()
+    with tempfile.TemporaryDirectory(dir=f'{other}\\') as outside:
+        (Path(outside) / 'secret.png').write_bytes(PNG)
+        # chdir 到另一個磁碟機時也設定了那個磁碟機的「目前資料夾」
+        monkeypatch.chdir(outside)
+        assert catalog_api._local_photo(settings, f'{other}secret.png') is None
+        monkeypatch.undo()
 
 
 def test_files_stay_inside_their_folders(tmp_path: Path) -> None:
