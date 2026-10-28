@@ -61,6 +61,7 @@ from app.pipeline.review import ComposerPosters
 from app.settings import REPO_ROOT, Settings
 from app.templates import CHANNEL_TEMPLATES, get_template
 from app.usage import MemoryLedger, Pricing, UsageScope, usd
+from app.visual_style import choose_visual_style
 
 BRANDS = ('selune', 'misty-isle', 'my-brand-01')
 VLM_CHECKS = ('vlm_exaggeration', 'vlm_occlusion', 'vlm_quality')
@@ -238,7 +239,8 @@ class Experiment:
         hits = hits_of(brand)
         return SpecRequest(
             'job_experiment', 1, brand, product, brief, get_template(template_id), 'comfyui', 123456789,
-            [h.chunk_id for h in hits], [], text=TEXT, hits=hits,
+            [h.chunk_id for h in hits], [],
+            choose_visual_style(brand, brief.tone, None).style, text=TEXT, hits=hits,
         )  # fmt: skip
 
     async def default_spec(self, brand: Brand, product: Product, template_id: TemplateId) -> PromptSpec:

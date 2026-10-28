@@ -57,6 +57,7 @@ export const useProductsStore = create<ProductsState>()((set, get) => {
       if (poll) clearTimeout(poll);
       poll = null;
       generation += 1;
+      const sent = generation;
       set({ brandId, loading: true });
       let products: Product[];
       try {
@@ -71,6 +72,8 @@ export const useProductsStore = create<ProductsState>()((set, get) => {
       }
       // 載入期間切換了品牌就丟棄舊結果
       if (get().brandId !== brandId) return;
+      // 讀取期間清單被改過（刪除、重新去背）：結果是改動之前的，重新讀一次（改動已經寫入後端）
+      if (generation !== sent) return get().load(brandId);
       set({ products, loading: false });
       schedulePoll(brandId);
     },

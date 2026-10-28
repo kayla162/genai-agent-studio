@@ -459,8 +459,10 @@ def _local_name(file: str) -> str:
 
 
 def _local_photo(settings: Settings, file: str) -> Path | None:
-    """拒絕子目錄、隱藏檔與非圖片檔。"""
-    if not file or '/' in file or '\\' in file or file.startswith('.') or Path(file).suffix.lower() not in LOCAL_TYPES:
+    """拒絕子目錄、隱藏檔與非圖片檔，以及含冒號的檔名（Windows 上「D:x.png」是 D 槽目前資料夾裡的檔案）。"""
+    if not file or any(c in file for c in '/\\:') or file.startswith('.'):
+        return None
+    if Path(file).suffix.lower() not in LOCAL_TYPES:
         return None
     path = settings.local_photos_dir / file
     return path if path.is_file() else None

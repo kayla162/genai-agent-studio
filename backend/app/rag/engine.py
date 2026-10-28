@@ -10,14 +10,12 @@ from pathlib import Path
 import httpx
 from redis.asyncio import Redis
 
-from app.modelfiles import ModelFile, ModelFileError, ensure_model, has_model
+from app.modelfiles import ModelFile, ModelFileError, download_client, ensure_model, has_model
 from app.rag.encoder import Encoder, OnnxEncoder
 from app.rag.errors import RagError
 from app.rag.models import MODELS
 from app.rag.state import STATE_KEY, RagMode, RagModelState
 
-#: 下載模型的逾時（秒）：連線與兩次讀取之間的間隔
-DOWNLOAD_TIMEOUT = 60
 #: RAG 推論專用的單一執行緒：不與去背共用（去背時檢索不必等），一次只算一筆
 INFERENCE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='rag')
 
@@ -31,7 +29,7 @@ class RagEngine:
         *,
         models: Sequence[ModelFile] = MODELS,
         load: Callable[[Path], Encoder] = OnnxEncoder,
-        http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT),
+        http: Callable[[], httpx.AsyncClient] = download_client,
         on_state: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> None:
         self.mode = mode

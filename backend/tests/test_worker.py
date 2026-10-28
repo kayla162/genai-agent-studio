@@ -901,11 +901,22 @@ def stuck_embedding(services: Services, redis: Redis, monkeypatch: pytest.Monkey
     return embedding
 
 
+@pytest.mark.parametrize(
+    ('elapsed', 'message'),
+    [
+        # SAQ 的任務逾時（TASK_TIMEOUT，600 秒）
+        (600, '文件處理超過 10 分鐘而中止，請把文件分成幾份再上傳'),
+        # 還沒到時限就被取消：worker 正在停止（例如重新啟動）
+        (30, 'worker 重新啟動，文件處理中斷，請重新上傳'),
+    ],
+)
 async def test_a_cancelled_ingest_publishes_an_error_then_stays_cancelled(
-    services: Services, redis: Redis, monkeypatch: pytest.MonkeyPatch
+    services: Services, redis: Redis, monkeypatch: pytest.MonkeyPatch, elapsed: float, message: str
 ) -> None:
-    """SAQ 的任務逾時（TASK_TIMEOUT）會取消 ingest：先發布錯誤（api 不必等閒置逾時），再讓 SAQ 照樣看到取消。"""
+    """ingest 被取消時先發布錯誤（api 不必等閒置逾時），再讓 SAQ 照樣看到取消；訊息依已經執行多久區分原因。"""
     embedding = stuck_embedding(services, redis, monkeypatch)
+    clock = iter([1000.0, 1000.0 + elapsed])
+    monkeypatch.setattr('app.worker.monotonic', lambda: next(clock))
     pubsub = services.redis.pubsub()
     await pubsub.subscribe(ingest_channel('t1'))
     task = asyncio.create_task(ingest(services, 't1', 'misty-isle', 'ci_update.md', DOC))
@@ -915,7 +926,6 @@ async def test_a_cancelled_ingest_publishes_an_error_then_stays_cancelled(
         await task
     messages = await read_ingest(pubsub)
     assert [m.get('type') for m in messages] == ['ingest.chunked', None]
-    message = '文件處理超過 10 分鐘而中止，請把文件分成幾份再上傳'
     assert messages[-1] == {'error': {'code': 'unavailable', 'message': message}}
 
 

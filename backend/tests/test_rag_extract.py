@@ -110,3 +110,16 @@ def test_broken_pdfs_are_refused() -> None:
         extract_text('broken.pdf', b'%PDF-1.4\nnot really a pdf')
     with pytest.raises(Invalid, match='^PDF 無法讀取：'):
         extract_text('empty.pdf', b'')
+
+
+def test_pdfs_with_too_many_pages_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('app.rag.extract.MAX_PDF_PAGES', 1)
+    with pytest.raises(Invalid, match='^PDF 超過 1 頁（2 頁），請分成幾份上傳$'):
+        extract_text('ci-sample.pdf', SAMPLE.read_bytes())
+
+
+def test_pdf_extraction_is_stopped_when_it_takes_too_long(monkeypatch: pytest.MonkeyPatch) -> None:
+    """格式異常的 PDF 可能讓 pypdf 跑很久：在子行程抽字，逾時就結束它，api 的執行緒不會一直被佔住。"""
+    monkeypatch.setattr('app.rag.extract.PDF_TIMEOUT', 0.001)
+    with pytest.raises(Invalid, match='^PDF 處理超過 0.001 秒，請分成幾份上傳$'):
+        extract_text('ci-sample.pdf', SAMPLE.read_bytes())

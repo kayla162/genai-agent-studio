@@ -32,6 +32,7 @@ from app.pipeline.review import ComposerPosters
 from app.settings import REPO_ROOT, Settings
 from app.templates import get_template
 from app.usage import MemoryLedger, Pricing
+from app.visual_style import choose_visual_style
 
 DATA = Path(__file__).resolve().parents[1] / 'tests' / 'data' / 'gemini'
 TEXT = '週年慶 10/15–11/15 主打買一送一，要溫柔療癒的感覺'
@@ -103,7 +104,8 @@ async def main(env_file: Path, composer_url: str) -> None:
             ]
             request = SpecRequest(
                 'job_record', 1, brand, product, brief, get_template('ig-post'), 'comfyui', 123456789,
-                [h.chunk_id for h in hits], [], text=TEXT, hits=hits,
+                [h.chunk_id for h in hits], [],
+            choose_visual_style(brand, brief.tone, None).style, text=TEXT, hits=hits,
             )  # fmt: skip
             spec = await agent.build_spec(request, run)
             save('spec-ok.json')

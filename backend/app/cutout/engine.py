@@ -13,10 +13,7 @@ from app.cutout.models import MODELS, ensure_model
 from app.cutout.processing import CutoutError
 from app.cutout.segmenter import OnnxSegmenter, Segmenter, SimSegmenter
 from app.cutout.state import STATE_KEY, ModelState
-from app.modelfiles import ModelFile, has_model
-
-#: 下載模型的逾時（秒）：連線與兩次讀取之間的間隔
-DOWNLOAD_TIMEOUT = 60
+from app.modelfiles import ModelFile, download_client, has_model
 
 
 class CutoutEngine:
@@ -27,7 +24,7 @@ class CutoutEngine:
         redis: Redis,
         *,
         models: Mapping[str, ModelFile] = MODELS,
-        http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT),
+        http: Callable[[], httpx.AsyncClient] = download_client,
         on_state: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> None:
         self.model = model

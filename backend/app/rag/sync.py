@@ -1,6 +1,6 @@
 """PostgreSQL → Chroma 的同步：brand_chunks 為準，Chroma 只是索引，資料遺失時會自動重建。
 
-比對 Chroma 中每個切塊的 metadata：缺少或不同的重新向量化後 upsert，PostgreSQL 已沒有的刪除。
+比對 Chroma 中每個切塊的 metadata（含向量化模型的指紋）：缺少或不同的重新向量化後 upsert，PostgreSQL 已沒有的刪除。
 沒有差異時只查一次資料庫與一次 Chroma，不會載入模型。
 """
 
@@ -13,6 +13,7 @@ from itertools import batched
 from app.contract import RagChunk, RagHit
 from app.db.session import Database
 from app.rag.engine import RagEngine
+from app.rag.models import EMBEDDER
 from app.rag.store import VectorRecord, VectorStore
 from app.repo import catalog
 
@@ -32,8 +33,13 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+#: 向量化模型的指紋（模型檔 SHA-256 的前 12 碼）：換了模型或版本時，舊的向量全部重新計算
+EMBEDDER_FINGERPRINT = EMBEDDER.sha256[:12]
+
+
 def chunk_metadata(brand_id: str, chunk: RagChunk, origin: str) -> dict[str, str]:
-    """寫進 Chroma 的 metadata。同步時比對整份 metadata：內文、章節、tag、source 任何一項改變都會重新寫入。"""
+    """寫進 Chroma 的 metadata。同步時比對整份 metadata：
+    內文、章節、tag、source、向量化模型任何一項改變都會重新寫入。"""
     return {
         'brandId': brand_id,
         'tag': chunk.tag,
@@ -41,6 +47,7 @@ def chunk_metadata(brand_id: str, chunk: RagChunk, origin: str) -> dict[str, str
         'section': chunk.section,
         'origin': origin,
         'textHash': text_hash(index_text(chunk)),
+        'embedder': EMBEDDER_FINGERPRINT,
     }
 
 

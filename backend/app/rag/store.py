@@ -84,29 +84,35 @@ class VectorStore:
 
     async def metadata(self, brand_id: str) -> dict[str, dict[str, str]]:
         """每個切塊的 metadata（id → metadata）：同步時與 PostgreSQL 比對，不讀向量。"""
-        result = await self._run(brand_id, lambda c: c.get(include=['metadatas']))
-        return {id_: _strings(m) for id_, m in zip(result['ids'], result['metadatas'] or [], strict=True)}
+
+        async def run(c: AsyncCollection) -> dict[str, dict[str, str]]:
+            result = await c.get(include=['metadatas'])
+            return {id_: _strings(m) for id_, m in zip(result['ids'], result['metadatas'] or [], strict=True)}
+
+        return await self._run(brand_id, run)
 
     async def query(
         self, brand_id: str, embedding: Sequence[float], k: int, where: Where | None = None
     ) -> list[VectorHit]:
         """與 embedding 最相近的 k 個切塊，依相似度由高到低。"""
         query: list[PyEmbedding] = [list(embedding)]
-        result = await self._run(
-            brand_id,
-            lambda c: c.query(
+
+        # 解讀結果也在 _call 裡：回應的格式不對時同樣轉成 RagError
+        async def run(c: AsyncCollection) -> list[VectorHit]:
+            result = await c.query(
                 query_embeddings=query,
                 n_results=k,
                 where=where,
                 include=['metadatas', 'documents', 'distances'],
-            ),
-        )
-        ids, documents = result['ids'][0], (result['documents'] or [[]])[0]
-        metadatas, distances = (result['metadatas'] or [[]])[0], (result['distances'] or [[]])[0]
-        return [
-            VectorHit(id_, doc, _strings(m), 1 - d)
-            for id_, doc, m, d in zip(ids, documents, metadatas, distances, strict=True)
-        ]
+            )
+            ids, documents = result['ids'][0], (result['documents'] or [[]])[0]
+            metadatas, distances = (result['metadatas'] or [[]])[0], (result['distances'] or [[]])[0]
+            return [
+                VectorHit(id_, doc, _strings(m), 1 - d)
+                for id_, doc, m, d in zip(ids, documents, metadatas, distances, strict=True)
+            ]
+
+        return await self._run(brand_id, run)
 
     async def drop(self, brand_id: str) -> None:
         """刪除品牌的 collection；本來就沒有時不做任何事。"""
@@ -124,6 +130,15 @@ class VectorStore:
             return [c.name for c in await client.list_collections()]
 
         return sorted(n.removesuffix(SUFFIX) for n in await self._call(names) if n.endswith(SUFFIX))
+
+    async def aclose(self) -> None:
+        """關閉與 Chroma 的 HTTP 連線（worker 結束時）；之後再呼叫會重新連線。"""
+        async with self._connecting:
+            client, self._client = self._client, None
+        # chromadb 的 AsyncClientAPI 沒有公開的關閉方法：由它底下的 AsyncFastAPI 關掉持有的 httpx client
+        cleanup = getattr(getattr(client, '_server', None), '_cleanup', None)
+        if cleanup is not None:
+            await cleanup()
 
     async def _run[T](self, brand_id: str, call: Callable[[AsyncCollection], Awaitable[T]]) -> T:
         """在品牌的 collection 上執行（沒有時建立）。不保留 collection 物件：collection 被刪除後舊的物件就不能用。"""

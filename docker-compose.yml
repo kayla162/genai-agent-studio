@@ -139,7 +139,8 @@ services:
     build:
       context: ./web
       target: web
-    ports: ['127.0.0.1:3000:80']
+    # nginx 以非 root 執行，聽容器內的 8080
+    ports: ['127.0.0.1:3000:8080']
     depends_on:
       api: { condition: service_healthy }
     restart: unless-stopped

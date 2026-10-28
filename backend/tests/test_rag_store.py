@@ -1,6 +1,9 @@
 """VectorStore：連 127.0.0.1:8001 的 Chroma（database genai_test），每個測試結束後刪除建立的 collection。"""
 
+from typing import Any
+
 import pytest
+from chromadb.api.async_fastapi import AsyncFastAPI
 
 from app.rag.errors import RagError
 from app.rag.store import VectorRecord, VectorStore, collection_name
@@ -71,3 +74,38 @@ async def test_chroma_errors_become_chinese_rag_errors(chroma: VectorStore) -> N
         await chroma.query('acme', [1.0, 0.0, 0.0], 1)
     with pytest.raises(RagError, match=r'向量庫（Chroma）無法連線（http://127\.0\.0\.1:9）'):
         await VectorStore('http://127.0.0.1:9').brands()
+
+
+async def test_aclose_releases_the_connections_and_the_next_call_reconnects(chroma: VectorStore) -> None:
+    store = VectorStore(chroma.url, database=chroma.database)
+    await store.aclose()  # 還沒連線時不做任何事
+    await store.upsert('acme', [record('acme#a', [1.0, 0.0])])
+    connections = list(AsyncFastAPI._clients.values())
+    assert connections
+    await store.aclose()
+    assert all(c.is_closed for c in connections)
+    assert [h.id for h in await store.query('acme', [1.0, 0.0], 1)] == ['acme#a']
+    await store.aclose()
+
+
+class MalformedCollection:
+    """回傳的 ids 與 documents 數量不一致（Chroma 回應異常）。"""
+
+    async def query(self, **kwargs: Any) -> dict[str, Any]:
+        return {'ids': [['a', 'b']], 'documents': [['x']], 'metadatas': [[{}, {}]], 'distances': [[0.1, 0.2]]}
+
+
+class MalformedClient:
+    async def get_or_create_collection(self, *args: Any, **kwargs: Any) -> MalformedCollection:
+        return MalformedCollection()
+
+
+async def test_malformed_query_results_become_rag_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = VectorStore('http://127.0.0.1:9')
+
+    async def connect() -> MalformedClient:
+        return MalformedClient()
+
+    monkeypatch.setattr(store, '_connect', connect)
+    with pytest.raises(RagError, match='向量庫（Chroma）操作失敗'):
+        await store.query('acme', [1.0, 0.0], 2)

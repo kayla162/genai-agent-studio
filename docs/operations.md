@@ -26,14 +26,18 @@ docker compose up -d --build
 - 商品照去背：worker 以 BiRefNet（ONNX Runtime）執行，新增商品時自動去背，每張約 13 秒（Docker 實測）。去背結果會裁掉商品四周的透明空白，排版時商品才會填滿商品框（之前已去背的商品要在商品庫按「重新去背」才會套用）。第一次啟動時下載模型（約 1 GB，存在 `models` volume），點開右上角的系統狀態，可看到模型是下載中、載入中或已載入。去背時 worker 約使用 8 GB 記憶體（Docker 實測尖峰約 7.6 GiB；平常約 2 GB）。兩個模型的 Docker 記憶體上限都要設到約 10 GB 以上（Docker Desktop 的 Settings → Resources，WSL2 則改 `.wslconfig`）。`CUTOUT_MODEL=birefnet-general-lite` 較快、下載量較小（約 224 MB），但尖峰只低約 0.75 GB（本機實測 5.75 GB 對 6.50 GB），改用它解決不了記憶體不足；16 GB 的電腦只用去背時請把上限調到約 10 GB（同時使用 RAG 見下面的「RAG 的記憶體」），WSL2 預設是一半的記憶體（16 GB 的電腦是 8 GB），不夠用。記憶體不夠時 worker 會在去背途中被結束，重新啟動後再試同一張照片；中斷 2 次後商品卡顯示去背失敗，不再自動重試，調高記憶體上限後按「重新去背」。
 - RAG（`RAG_MODE=bge`，預設）：worker 第一次啟動時下載 BGE-M3、bge-reranker-v2-m3 與共用的 tokenizer（int8 ONNX，合計約 1.2 GB，存在 `models` volume），核對後先不載入：worker 啟動時的同步發現索引有差異（例如第一次啟動或 Chroma 重建）時就會載入；沒有差異時，第一次檢索才載入。載入後常駐。系統狀態的「RAG 模型」依序顯示下載中、已就緒（第一次檢索時載入）、載入中、已載入。下載或載入期間送出的任務會在「檢索」階段等候。
 - RAG 的記憶體：模型載入後 worker 約再多用 1.7 GB（Docker 實測 1.75 GB；沒有載入時約 0.1 GB，為去背用模擬版時的實測）。與去背的尖峰相加約 10 GB，Docker 的記憶體上限請比上面的建議再多留約 2 GB（例如 12 GB）。16 GB 的電腦同時使用去背與 RAG 時，Docker 上限請設約 12 GB；不夠時改用 `RAG_MODE=sim`，也就是模擬檢索（不下載模型、不寫入 Chroma）。
-- Chroma：`chroma` 服務（`127.0.0.1:8001`，容器之間為 `chroma:8000`），資料存在 `chroma` volume，worker 等它健康後才啟動。
+- Chroma：`chroma` 服務（`127.0.0.1:8001`，容器之間為 `chroma:8000`），資料存在 `chroma` volume，worker 等它健康後才啟動。Chroma 的 metadata 記錄向量化模型的指紋（模型檔 SHA-256 的前 12 碼），換了模型或版本時，下一次同步會重新向量化所有切塊。
+- 舊任務的檔案：worker 啟動時與之後每天一次，清理結束超過 `JOB_FILES_RETENTION_DAYS` 天（預設 30）的任務在 `data/jobs/` 的審查用海報與生成的背景；歷史紀錄用到的背景會保留，歷史紀錄與品牌案例照常顯示。清理後，舊任務的任務透視看不到審查用海報。設為 0 時不清理。
+- 安全性：
+  - 容器不以 root 執行：api 與 worker 以 `app` 使用者執行（進入點先把 `data/` 與 `models` volume 交給 `app`，舊版以 root 建立的 volume 照常使用），composer 以 `node`、web 的 nginx 以 `nginx` 使用者執行（容器內聽 8080）。
+  - 防止 DNS rebinding（惡意網頁把自己的網域解析到 127.0.0.1，再從瀏覽器呼叫 api）：nginx 只接受 `127.0.0.1` 與 `localhost`，其他主機名稱直接斷線；api 也只接受 `ALLOWED_HOSTS`（預設同上），HTTP 回 400、WebSocket 拒絕連線。要用其他名稱（例如區網的 IP）開啟前端時，`web/nginx.conf` 的 `server_name` 與 `.env` 的 `ALLOWED_HOSTS` 都要加上，再 `docker compose up -d --build web api`。
 
 自己的資料：
 
 - **品牌**：複製 `brands/_template.yaml` 成 `brands/<品牌 id>.yaml` 填寫，改完執行 `docker compose restart api worker`（變更的切塊在 worker 啟動時或下一次檢索前重新向量化，寫入 Chroma）。格式錯誤的品牌會略過，原因顯示在系統狀態。
   - 背景風格寫在 `visualStyles`（寫法見範本）：`id` 只用小寫英文、數字與連字號，`tones` 只能是 gentle、science、playful、minimal（可以留空 `[]`，只在手選時使用）；提示詞只描述背景與場景，不要寫 product photography 或瓶子等容器。
   - Logo 放在 `brands/assets/`，在 `logo` 填相對路徑。請用**真正透明背景**的 PNG 或 SVG（圖裡畫的棋盤格不是透明，海報上會出現灰白格子）、橫式（比例約 3:1 到 5:1）、四周不留空白、高度 200 px 以上；Logo 框約 350–390 × 72–82 px，等比例縮放、靠左放。
-- **品牌手冊**：到「品牌知識庫」上傳 `.md`、`.markdown`、`.txt`（UTF-8）或 `.pdf`。PDF 只讀取文字層：掃描檔沒有文字，要先轉成文字（不做 OCR）；有密碼或權限保護的要先移除保護。單檔 20 MB、20 萬字以內。進度條顯示切塊、向量化（`bge` 模式為真實向量的前 6 維）與寫入；同一個檔名重新上傳會取代原本的切塊。Markdown 的 `#` 標題會成為段落名稱，一段只寫一個主題，標籤（色彩、Logo、法規、版型等）依內文的關鍵字判斷。
+- **品牌手冊**：到「品牌知識庫」上傳 `.md`、`.markdown`、`.txt`（UTF-8）或 `.pdf`。PDF 只讀取文字層：掃描檔沒有文字，要先轉成文字（不做 OCR）；有密碼或權限保護的要先移除保護。單檔 20 MB、20 萬字以內；PDF 另外限制 1,000 頁，並在獨立的子行程抽字，超過 60 秒就中止（Linux 上記憶體上限 2 GB），格式異常的檔案不會拖住 api。進度條顯示切塊、向量化（`bge` 模式為真實向量的前 6 維）與寫入；同一個檔名重新上傳會取代原本的切塊。Markdown 的 `#` 標題會成為段落名稱，一段只寫一個主題，標籤（色彩、Logo、法規、版型等）依內文的關鍵字判斷。
   - 「已上傳的手冊」列出每份手冊的檔名與切塊數，可以刪除（品牌設定檔的規範與歷史案例不在這裡、不會被刪除）；向量庫在下一次檢索時同步刪除。
   - 手冊切塊存在資料庫（Docker 的 volume），不在 Git 裡；`docker compose down -v` 或刪除 volume 時會一起消失。原稿請自己另外保存（例如 `brands/docs/`），需要時重新上傳。
 - **歷史回寫**：在新任務選定海報後，worker 把它寫成「歷史回寫」切塊（商品名稱、模板、審查分數、標題與副標、賣點、正向提示詞的前 120 字），之後的任務檢索得到。
@@ -149,7 +153,7 @@ $env:REVIEW_MODE='sim'; uv run python -m app.worker
 
 - 每則任務事件都在同一個交易中取得序號（`seq`）並寫入資料庫，再經 Redis 推送到 WebSocket；斷線或重新整理後，前端以最後收到的 `seq` 接續。Redis 停止時，WebSocket 改為每秒從資料庫讀取新事件，連線不中斷。
 - **RAG**：品牌設定檔、上傳的手冊與選定的海報都切成切塊，存在 PostgreSQL；worker 以 BGE-M3 向量化後寫入 Chroma（每個品牌一個 collection）。任務先向量召回 8 筆、再以 Reranker 重新排序，前 5 筆放進 Prompt。PostgreSQL 為準，Chroma 只是索引：worker 啟動時與每次檢索前都會比對並補齊，Chroma 的資料遺失時會自動重建。
-- **合規審查**（`REVIEW_MODE=composer`，預設）：排版階段由 composer 在伺服器端畫出每張候選的審查用海報（與瀏覽器使用同一套 `scene.ts` 與 `paint.ts`），worker 存成 `data/jobs/{任務 id}/{候選 id}.png`（每張約 0.3–1 MB，不會自動清理）。審查依這張圖計算：8 項規則加 3 項 VLM，分數不加隨機抖動。`AGENT_MODE=gemini` 時 VLM 三項由 Gemini 讀這張圖判斷，並轉錄畫面上的文字比對錯字（見下方）；`AGENT_MODE=sim` 時依內容判斷（誇大用語看禁用詞、遮擋看 Logo 是否與標題重疊、品質一律通過），說明標示「模擬：AGENT_MODE=sim」。任務透視的「合規報告」可以切換「預覽／審查用海報」，兩者疊上相同的 BBox。
+- **合規審查**（`REVIEW_MODE=composer`，預設）：排版階段由 composer 在伺服器端畫出每張候選的審查用海報（與瀏覽器使用同一套 `scene.ts` 與 `paint.ts`），worker 存成 `data/jobs/{任務 id}/{候選 id}.png`（每張約 0.3–1 MB，結束超過 30 天的任務會自動清理，見上方「舊任務的檔案」）。審查依這張圖計算：8 項規則加 3 項 VLM，分數不加隨機抖動。`AGENT_MODE=gemini` 時 VLM 三項由 Gemini 讀這張圖判斷，並轉錄畫面上的文字比對錯字（見下方）；`AGENT_MODE=sim` 時依內容判斷（誇大用語看禁用詞、遮擋看 Logo 是否與標題重疊、品質一律通過），說明標示「模擬：AGENT_MODE=sim」。任務透視的「合規報告」可以切換「預覽／審查用海報」，兩者疊上相同的 BBox。
 - **主色色差**：從審查用海報的像素量出品牌主色，計算與 CI 主色的 ΔE2000。量測範圍是標題、售價、徽章三個區塊（扣掉商品區塊），這些元素一定以主色繪製：取出佔比 2% 以上的色塊，以最接近主色的一個計算色差；超過門檻時，說明文字改為顯示實際用錯的顏色（例如 `#E0458A`），合規報告在旁邊畫出色塊；量不到時判定不通過（「未偵測到主色（主色區塊 < 2%）」）。只檢查排版上的品牌色元素；背景由下一項檢查。
 - **背景色系**（Plan 7）：量疊上文字與商品之前的背景（商品方框以外、縮小到長邊 256 px），每個像素轉成 LCh：彩度低於 18 的中性色算色系內；與品牌色（含很暗、很淡的品牌色）色相相差 30° 以內、彩度不比品牌色高出 15 以上的算色系內；其他（包括螢光色）算色系外。色系外 ≤ 15% 通過、≤ 30% 警告、超過不通過，說明顯示色系外最多的顏色（例如「色系外 42%（主要為 #3FD27A）」），合規報告在旁邊畫出色塊。門檻以 ComfyUI 實測的背景校準（規格 §12）：生成的一般背景（3 個品牌 × 5 個模板）色系外最多 4%，刻意指定偏離色系的 9 張有 7 張不通過、1 張警告；程式產生的背景色系外最多 0.7%。模擬審查時為通過（「（模擬）」）。
 - **Gemini Agent**（`AGENT_MODE=gemini`，預設；需要 `REVIEW_MODE=composer`）：
@@ -174,3 +178,4 @@ $env:REVIEW_MODE='sim'; uv run python -m app.worker
 | Plan 7 | ComfyUI 生圖、背景色系檢查、生圖與去背互斥 | 完成（Docker＋Gemini 驗收：3 個品牌的任務完成、每張約 17 秒、取消與 ComfyUI 未開啟都正確；WSL 記憶體 12 GB 時生圖與去背互斥正確；16 GB 的筆電需關掉其他程式。補驗：要求螢光色背景時第 1 輪不通過、改寫後通過；海報上的商品與原始去背圖相同；生圖中重新整理可以接續。見 Plan 7 規格 §12） |
 | Plan 8 | 作品集 Demo（Cloudflare Pages＋Access） | 完成（部署與觀看名單由使用者以自己的 Cloudflare 帳號設定，見 [docs/demo/cloudflare.md](demo/cloudflare.md)） |
 | 之後的改進 | 多組背景風格（[設計規格](superpowers/specs/2026-10-24-visual-styles-design.md)）、品牌知識庫列出與刪除上傳的手冊、去背結果裁掉四周空白、修正背景多畫出瓶子、RAG 模型準備中可以取消、CI、ComfyUI 啟動腳本 | 完成 |
+| 補強 | 去背中斷 2 次後停止重試、只處理去背中的商品；商品清單讀取期間被改動時重新讀取；容器不以 root 執行、防止 DNS rebinding、拒絕含冒號的本機照片檔名；Chroma 記錄向量化模型的指紋、PDF 抽字的頁數與時間上限、worker 結束時關閉 Chroma 連線、上傳中斷的訊息區分重新啟動與逾時；自動清理 `data/jobs/` | 完成 |

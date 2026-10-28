@@ -94,11 +94,11 @@ jobs:
       - run: |
           for i in $(seq 1 60); do curl -fs http://127.0.0.1:8001/api/v2/heartbeat && exit 0; sleep 2; done
           echo 'Chroma 沒有回應' >&2; exit 1
-      - run: uv run ruff check app tests
+      - run: uv run ruff check app tests scripts
         working-directory: backend
-      - run: uv run ruff format --check app tests
+      - run: uv run ruff format --check app tests scripts
         working-directory: backend
-      - run: uv run mypy app tests
+      - run: uv run mypy app tests scripts
         working-directory: backend
       - run: uv run pytest -q
         working-directory: backend

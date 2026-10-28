@@ -16,5 +16,11 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 ENV PATH="/app/backend/.venv/bin:$PATH"
 
+# 以 app 使用者執行（不是 root）。進入點先把 data/ 與 models/ 交給 app 再降權限，
+# 舊版以 root 建立的 volume 也能沿用；新建的 volume 沿用這裡的擁有者
+RUN useradd --create-home --uid 1000 app     && mkdir -p /app/data /app/models     && chown app:app /app/data /app/models
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]
+
 EXPOSE 8000
 CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

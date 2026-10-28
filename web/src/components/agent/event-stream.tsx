@@ -41,7 +41,7 @@ export function EventStream({ messages }: { messages: JobMessage[] }) {
       <CardHeader>
         <CardTitle>WebSocket 事件串流</CardTitle>
         <CardDescription>
-          共 {messages.length} 則；每則都帶序號（seq）與時間戳（ts），第二階段重新連線時用來補齊漏掉的事件。
+          共 {messages.length} 則；每則都帶序號（seq）與時間戳（ts），live 模式斷線重新連線時，以序號補齊漏掉的事件。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
