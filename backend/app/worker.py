@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from itertools import batched
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -229,18 +230,23 @@ def _remove_cutouts(written: Path, *, keep_written: bool) -> None:
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 #: 上傳超過任務時限（TASK_TIMEOUT）被 SAQ 取消時的訊息
 INGEST_CANCELLED = f'文件處理超過 {TASK_TIMEOUT // 60} 分鐘而中止，請把文件分成幾份再上傳'
+#: 還沒到時限就被取消（worker 停止或重新啟動）時的訊息
+INGEST_INTERRUPTED = 'worker 重新啟動，文件處理中斷，請重新上傳'
+#: 被取消時已經執行這麼久（秒）以上就當作 SAQ 的任務逾時（取消的時間點會比 TASK_TIMEOUT 稍晚）
+INGEST_TIMEOUT_MARGIN = 5
 
 
 async def ingest(services: Services, task_id: str, brand_id: str, name: str, text: str) -> None:
     """品牌手冊：切塊 → 向量化 → 寫入知識庫；每一步發布到 Redis 頻道 ingest:{task_id}，api 以 NDJSON 串流轉給前端。
 
     錯誤碼：品牌不存在 not_found、沒有可用文字 invalid、模型準備失敗或 Chroma 無法連線 unavailable、
-    超過任務時限被取消 unavailable（發布後仍把取消丟給 SAQ）、其他 internal。
+    超過任務時限或 worker 停止而被取消 unavailable（發布後仍把取消丟給 SAQ）、其他 internal。
     """
 
     async def send(message: dict[str, Any]) -> None:
         await services.redis.publish(ingest_channel(task_id), json.dumps(message, ensure_ascii=False))
 
+    started = monotonic()
     try:
         async with services.db.session() as s:
             if await catalog.get_brand(s, brand_id) is None:
@@ -253,11 +259,13 @@ async def ingest(services: Services, task_id: str, brand_id: str, name: str, tex
         stored = IngestStoredEvent(type='ingest.stored', collection=collection_name(brand_id), count=len(chunks))
         await send(stored.to_json())
     except asyncio.CancelledError:
-        # 超過任務時限時 SAQ 會取消這裡：先告訴前端（否則 api 要等到閒置逾時，訊息也不對），
+        # 超過任務時限或 worker 停止時 SAQ 會取消這裡：先告訴前端（否則 api 要等到閒置逾時，訊息也不對），
         # 再把取消往外丟給 SAQ。發布失敗（例如 Redis 停止）也不能吞掉取消
         logger.warning('品牌文件上傳被取消：task_id=%s', task_id)
+        timed_out = monotonic() - started >= TASK_TIMEOUT - INGEST_TIMEOUT_MARGIN
+        message = INGEST_CANCELLED if timed_out else INGEST_INTERRUPTED
         with contextlib.suppress(Exception):
-            await send({'error': {'code': 'unavailable', 'message': INGEST_CANCELLED}})
+            await send({'error': {'code': 'unavailable', 'message': message}})
         raise
     except Exception as error:  # noqa: BLE001 - 錯誤一律轉給前端
         logger.exception('品牌文件上傳失敗：task_id=%s', task_id)
