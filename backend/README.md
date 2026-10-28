@@ -66,7 +66,7 @@ $env:REVIEW_MODE='sim'; $env:AGENT_MODE='sim'; uv run python -m app.worker
 - 文件：http://127.0.0.1:8000/docs
 - 錯誤一律回傳 `{ error: { code, message } }`，message 為繁體中文，前端直接顯示。
 - `WS /ws/jobs/{id}?after={seq}`：先補送 `seq` 大於 `after` 的事件，再轉送即時事件；任務結束且事件送完後以 1000 關閉，任務不存在時以 4404 關閉。Redis 停止或訂閱失敗時不中斷，改為每秒從資料庫讀取新事件，直到任務結束。
-- `POST /api/brands/{id}/documents`：multipart，欄位 `file`（`.md`、`.markdown`、`.txt` 為 UTF-8；`.pdf` 以 pypdf 抽出文字層）。api 先檢查副檔名、大小（20 MB）、編碼、PDF 是否加密或沒有文字、文字長度（20 萬字），有錯直接回 400，不開始串流；之後以 NDJSON 串流回報切塊、向量化與寫入的進度。120 秒沒有任何進度時回報逾時（大份手冊只要持續有進度就不算逾時）。
+- `POST /api/brands/{id}/documents`：multipart，欄位 `file`（`.md`、`.markdown`、`.txt` 為 UTF-8；`.pdf` 以 pypdf 抽出文字層）。api 先檢查副檔名、大小（20 MB）、編碼、PDF 是否加密或沒有文字、文字長度（20 萬字）、切塊數（2,000 塊）與 PDF 頁數（1,000 頁），有錯直接回 400，不開始串流；之後以 NDJSON 串流回報切塊、向量化與寫入的進度。120 秒沒有任何進度時回報逾時（大份手冊只要持續有進度就不算逾時）。
 - `POST /api/jobs/{id}/select`：寫入歷史紀錄後，由 worker 回寫成歷史切塊，最多等 10 秒；逾時、失敗或被中止時 `writtenToRag` 為 false（不回 500，歷史紀錄已經建立）。
 - `POST /api/briefs/parse`：`AGENT_MODE=gemini` 時由 Gemini 拆解，最多等 90 秒；逾時、沒有 key 或 Gemini 失敗回 503（`unavailable`），超過每月費用上限回 429（`budget_exceeded`），訊息皆為中文。
 - `POST /api/jobs`：`AGENT_MODE=gemini` 時，沒有 key 或單價表有問題回 503，本月已達費用上限回 429，不建立任務。
