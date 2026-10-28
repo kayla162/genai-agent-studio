@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 from redis.asyncio import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.modelfiles import ModelFile
 from app.rag.encoder import Encoder, OnnxEncoder
@@ -235,3 +236,48 @@ def test_registry_lists_the_benchmarked_models() -> None:
         ('bge-reranker-v2-m3', 'bge-reranker-v2-m3-int8.onnx', 570727094, '912fc1215c2d'),
     ]
     assert all('/resolve/' in m.url and m.url.startswith('https://huggingface.co/') for m in MODELS)
+
+
+async def test_a_cancelled_caller_does_not_stop_the_preparation(redis: Redis, tmp_path: Path) -> None:
+    """任務在檢索時被取消（等模型載入中）：載入照樣完成，狀態不會停在載入中，下一個呼叫不必重新載入。"""
+    started, release = threading.Event(), threading.Event()
+    loads: list[Path] = []
+
+    def load(models_dir: Path) -> Encoder:
+        loads.append(models_dir)
+        started.set()
+        release.wait(2)
+        return StubEncoder()
+
+    engine = stub_engine(redis, tmp_path, load)
+    waiting = asyncio.create_task(engine.embed('serum'))
+    assert await asyncio.to_thread(started.wait, 2)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    release.set()
+    assert await engine.embed('serum') == [5.0]
+    assert loads == [tmp_path]
+    assert (await state(redis))['state'] == 'ready'
+
+
+async def test_a_redis_failure_while_reporting_the_state_keeps_the_loaded_model(
+    redis: Redis, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """狀態只是給系統狀態顯示：寫不進 Redis 時記錄下來就好，已載入的模型照常使用。"""
+    loads: list[Path] = []
+
+    def load(models_dir: Path) -> Encoder:
+        loads.append(models_dir)
+        return StubEncoder()
+
+    engine = stub_engine(redis, tmp_path, load)
+
+    async def down(*args: object, **kwargs: object) -> None:
+        raise RedisConnectionError('Redis 已停止')
+
+    monkeypatch.setattr(engine.redis, 'set', down)
+    assert await engine.embed('serum') == [5.0]
+    assert engine.loaded
+    assert await engine.embed('mask') == [4.0]
+    assert loads == [tmp_path]
