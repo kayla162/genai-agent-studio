@@ -71,6 +71,26 @@ def test_batch_submit_calls_the_automation_api() -> None:
     assert flow['settings']['errorWorkflow'] == 'poster-error'
 
 
+def test_batch_submit_sends_an_idempotency_key_per_row_content() -> None:
+    # 排程重疊或回寫試算表失敗後重跑時，同一列（內容沒變）不會再建一個要花錢的任務；
+    # 鍵含上一個 jobId，所以跑完之後清空 status 會建新任務
+    flow = load('poster-batch-submit')
+    node = next(n for n in flow['nodes'] if n['name'] == '建立任務')
+    headers = {h['name']: h['value'] for h in node['parameters']['headerParameters']['parameters']}
+    key = headers['Idempotency-Key']
+    for needle in (
+        "'sheet:'",
+        '$env.GOOGLE_SHEET_ID',
+        '$json.row_number',
+        '$json.brand',
+        '$json.product',
+        '$json.brief',
+        '$json.jobId',
+        ".hash('sha256')",
+    ):
+        assert needle in key
+
+
 @pytest.mark.parametrize('path', sorted(WORKFLOWS.glob('*.json')), ids=lambda p: p.stem)
 def test_no_credentials_or_secrets_are_committed(path: Path) -> None:
     text = path.read_text(encoding='utf-8')

@@ -8,6 +8,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import select
 
+from app.api.jobs import parse_text
 from app.contract import JobInput, ParsedBrief
 from app.core.clock import utc_now
 from app.db.models import AutomationRequestRow, HistoryRow, JobRow
@@ -220,6 +221,42 @@ async def test_idempotency_key_replays_the_first_response(running: LiveApi) -> N
         await automation.http.post(f'/api/automation/jobs/{job_id}/approve', json={}, headers=headers)
     async with automation.services.db.session() as s:
         assert len(list(await s.scalars(select(HistoryRow).where(HistoryRow.job_id == job_id)))) == 1
+
+
+async def test_create_job_with_the_same_idempotency_key_creates_one_job(
+    automation: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parses: list[str] = []
+
+    async def counting_parse(*args: Any, **kwargs: Any) -> ParsedBrief:
+        parses.append('parse')
+        return await parse_text(*args, **kwargs)
+
+    monkeypatch.setattr('app.api.automation.parse_text', counting_parse)
+    headers = {**AUTH, 'Idempotency-Key': 'sheet:abc:row:2:1a2b3c'}
+    body = {**BRIEF, 'clientRef': 'sheet:abc:row:2'}
+    first = await automation.http.post('/api/automation/jobs', json=body, headers=headers)
+    again = await automation.http.post('/api/automation/jobs', json=body, headers=headers)
+    assert (first.status_code, again.status_code) == (201, 201)
+    assert first.json() == again.json()
+    assert parses == ['parse']
+    async with automation.services.db.session() as s:
+        assert len((await s.scalars(select(JobRow))).all()) == 1
+        row = await s.get(AutomationRequestRow, ('sheet:abc:row:2:1a2b3c', 'create'))
+        assert row is not None
+        assert row.job_id == first.json()['jobId']
+    other = await automation.http.post('/api/automation/jobs', json=body, headers={**AUTH, 'Idempotency-Key': 'k2'})
+    assert other.json()['jobId'] != first.json()['jobId']
+
+
+async def test_failed_create_releases_the_idempotency_key(automation: LiveApi) -> None:
+    headers = {**AUTH, 'Idempotency-Key': 'k-create'}
+    res = await automation.http.post('/api/automation/jobs', json={**BRIEF, 'productId': 'nope'}, headers=headers)
+    assert res.status_code == 400
+    async with automation.services.db.session() as s:
+        assert await s.get(AutomationRequestRow, ('k-create', 'create')) is None
+    res = await automation.http.post('/api/automation/jobs', json=BRIEF, headers=headers)
+    assert res.status_code == 201
 
 
 async def test_failed_requests_release_the_idempotency_key(automation: LiveApi) -> None:
