@@ -80,3 +80,28 @@ def test_no_credentials_or_secrets_are_committed(path: Path) -> None:
             assert credential.get('id') in (None, ''), f'{node["name"]} 帶著憑證 id'
     assert 'discord.com/api/webhooks/' not in text
     assert 'Bearer ' + 't' * 8 not in text
+
+
+def test_workflow_payload_fields_exist_in_the_webhook_payload() -> None:
+    """工作流引用的 payload 欄位都要是後端實際送出的欄位（取代 contracts 測資）。"""
+    import re
+
+    from app.webhooks.payload import build_job_finished
+
+    text = (WORKFLOWS / 'poster-job-finished.json').read_text(encoding='utf-8')
+    used = set(re.findall(r'\.payload\.([A-Za-z_]\w*)', text))
+    assert used, '找不到任何 payload 欄位'
+    data = build_job_finished(
+        webhook_id='wh_1',
+        job_id='job_1',
+        stage='done',
+        round=1,
+        job_input={'brandId': 'b', 'productId': 'p', 'brief': 'x'},
+        client_ref=None,
+        parent_job_id=None,
+        best_render_ids={},
+        events=[],
+        studio_base_url='http://h',
+        finished_at='t',
+    )
+    assert used <= set(data), f'後端沒有這些欄位：{sorted(used - set(data))}'

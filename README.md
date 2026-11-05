@@ -87,7 +87,7 @@ flowchart LR
 
 - **試算表批次產圖**：n8n 讀 Google Sheet 的每一列，以 token 呼叫 `/api/automation/jobs`；任務結束後回填分數與連結。
 - **Discord 審核**：結束通知附上審查用海報與合規分數，審核者在 n8n 表單核准（寫入歷史並回寫 RAG）或退回並附意見（意見進入 RAG 查詢、Prompt 構建與價格護欄）。
-- **不漏送的 webhook**：通知與任務的結束事件在同一個 PostgreSQL 交易內寫入 outbox；worker 以 `FOR UPDATE SKIP LOCKED` 發送、HMAC-SHA256 簽章、依退避表重試 8 次，接收端依 id 去重；核准與退回支援 Idempotency-Key。
+- **不漏送的 webhook**：通知與任務的結束事件在同一個 PostgreSQL 交易內寫入 outbox；worker 以 `FOR UPDATE SKIP LOCKED` 發送、HMAC-SHA256 簽章、依退避表最多發送 8 次，接收端依 id 去重；核准與退回支援 Idempotency-Key。
 
 ### 工程方法
 

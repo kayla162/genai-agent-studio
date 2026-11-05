@@ -7,6 +7,7 @@ import re
 import secrets
 import shutil
 from collections.abc import AsyncIterator, Awaitable
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote
@@ -235,23 +236,36 @@ async def get_status(services: Services) -> SystemStatus:
     return SystemStatus(components=[*probed, gemini, comfyui, cutout, webhook])
 
 
+#: 超過這個時間的放棄（dead）通知不再讓狀態變紅：之後可以用 n8n/README.md 的 SQL 重新發送
+WEBHOOK_DEAD_WINDOW = timedelta(hours=24)
+
+
 async def _webhook(services: ApiServices) -> str | tuple[ComponentState, str]:
-    """有放棄發送（dead）的通知時為 error，附上最後一次的錯誤；其餘顯示待發送與已送出的筆數。"""
+    """24 小時內有放棄發送（dead）的通知時為 error，附上最後一次的錯誤；更早的 dead 只在說明裡提到。"""
     if not services.settings.job_webhook_url:
         return 'off', '沒有設定 JOB_WEBHOOK_URL'
+    since = utc_now() - WEBHOOK_DEAD_WINDOW
+    recent = WebhookOutboxRow.created_at >= since
     async with services.db.session() as s:
         rows = await s.execute(select(WebhookOutboxRow.status, func.count()).group_by(WebhookOutboxRow.status))
         counts: dict[str, int] = {status: n for status, n in rows}
         pending, delivered, dead = (counts.get(k, 0) for k in ('pending', 'delivered', 'dead'))
-        if dead:
+        dead_recent = await s.scalar(
+            select(func.count()).select_from(WebhookOutboxRow).where(WebhookOutboxRow.status == 'dead', recent)
+        )
+        dead_recent = dead_recent or 0
+        if dead_recent:
             last = await s.scalar(
                 select(WebhookOutboxRow.last_error)
-                .where(WebhookOutboxRow.status == 'dead')
+                .where(WebhookOutboxRow.status == 'dead', recent)
                 .order_by(WebhookOutboxRow.created_at.desc(), WebhookOutboxRow.id.desc())
                 .limit(1)
             )
-            return 'error', f'{dead} 則通知發送失敗（最後一次：{last}）・待發送 {pending} 則'
-    return f'待發送 {pending} 則・已送出 {delivered} 則'
+            return 'error', f'{dead_recent} 則通知發送失敗（最後一次：{last}）・待發送 {pending} 則'
+    detail = f'待發送 {pending} 則・已送出 {delivered} 則'
+    if dead:
+        detail += f'・{dead} 則逾期的失敗通知'
+    return detail
 
 
 async def _rag_model(services: ApiServices) -> tuple[ComponentState, str]:

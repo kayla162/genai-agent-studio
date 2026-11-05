@@ -35,8 +35,8 @@ x-backend: &backend
     COMFYUI_URL: ${COMFYUI_URL:-http://host.docker.internal:8188}
     # ComfyUI 的 workflow 與參數對照表（repo 的 comfyui/workflows，唯讀掛載）
     COMFYUI_WORKFLOWS_DIR: /app/comfyui/workflows
-    # 容器之間以 http://api:8000 呼叫（n8n 不經過 nginx）：Host 為 api 也要接受
-    ALLOWED_HOSTS: '["127.0.0.1", "localhost", "api"]'
+    # 容器之間以 http://api:8000 呼叫（n8n 不經過 nginx）：Host 為 api 也要接受（.env 自訂 ALLOWED_HOSTS 時要保留 "api"）
+    ALLOWED_HOSTS: '${ALLOWED_HOSTS:-["127.0.0.1", "localhost", "api"]}'
   # Docker Desktop 內建 host.docker.internal；Linux 的 Docker 要加上這一行
   extra_hosts: ['host.docker.internal:host-gateway']
   volumes:

@@ -604,7 +604,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ feedback: String($json['修改意見'] || '').trim() || '請重新生成' }) }}",
+        "jsonBody": "={{ JSON.stringify({ feedback: String($json['修改意見'] || '').trim().slice(0, 500) || '請重新生成' }) }}",
         "options": {
           "response": {
             "response": {
@@ -628,7 +628,7 @@
         "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ content: '任務 ' + $('驗證簽章').first().json.payload.jobId + '：' + ($json.error ? '⚠️ ' + $json.error.message : $json.render ? '✅ 已選定 ' + $json.render.id : '🔁 已退回，新任務 ' + $json.jobId) }) }}",
+        "jsonBody": "={{ JSON.stringify({ content: '任務 ' + $('驗證簽章').first().json.payload.jobId + '：' + ($json.error ? '⚠️ ' + $json.error.message + '，請到 Studio 處理：' + $('驗證簽章').first().json.payload.studioUrl : $json.render ? '✅ 已選定 ' + $json.render.id : '🔁 已退回，新任務 ' + $json.jobId) }) }}",
         "options": {}
       },
       "id": "d8586ced-d550-5925-abf4-0e4c975ee158",

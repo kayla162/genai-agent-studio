@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +134,15 @@ async def test_webhook_status_off_ok_and_error(api: LiveApi) -> None:
         status = await webhook_status(api)
         assert status['status'] == 'error'
         assert status['detail'] == '1 則通知發送失敗（最後一次：HTTP 401：bad signature）・待發送 1 則'
+        # 超過 24 小時的 dead 不再讓狀態變紅，只在說明裡提到
+        async with api.services.db.session() as s:
+            row = await s.get(WebhookOutboxRow, 'wh_x')
+            assert row is not None
+            row.created_at = now - timedelta(hours=25)
+            await s.commit()
+        status = await webhook_status(api)
+        assert status['status'] == 'ok'
+        assert status['detail'] == '待發送 1 則・已送出 1 則・1 則逾期的失敗通知'
     finally:
         api.services.settings.job_webhook_url = ''
 

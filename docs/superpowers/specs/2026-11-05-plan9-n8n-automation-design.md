@@ -301,6 +301,11 @@ n8n 容器另外使用 `N8N_ENCRYPTION_KEY`、`DB_POSTGRESDB_*`，以及把 `AUT
 | §4.5 `studioUrl` | `{STUDIO_BASE_URL}/agent?job={jobId}` | 前端既有的任務透視路徑 |
 | §4.7 `pending` 超過 10 筆為 warning | `ComponentStatus` 沒有 warning：有 dead 為 error，其餘為 ok，說明文字附上筆數 | 沿用合約 |
 | §7 `WEBHOOK_URL`、`WEBHOOK_SECRET` | `JOB_WEBHOOK_URL`、`JOB_WEBHOOK_SECRET` | n8n 自己用 `WEBHOOK_URL` 設定對外網址，同名容易設錯 |
+| §4.7 有 dead 為 error（不限時間） | 只有 24 小時內建立的 dead 為 error；更早的 dead 不影響狀態，說明文字附上「逾期的失敗通知」筆數 | dead 沒有自動恢復，永遠紅燈沒有意義；重新發送的 SQL 寫在 n8n/README.md |
+| §4.3 退回只帶這一次的意見 | 新任務的 `reviewer_feedback` 是整條退回鏈的意見以「；」串接（原任務的意見＋這次的） | 第二次退回時，前一次的意見不能消失 |
+| §5 審核表單的「候選圖」下拉選單 | 文字欄位，留白＝最高分 | n8n 的 Wait 表單不能依資料動態產生選項 |
+| §9 `contracts/fixtures/webhook-job-finished.json` | 不做 | 計畫的全域限制不改 `contracts/fixtures/`；payload 由 `tests/test_webhook_payload.py` 鎖住，並以 `tests/test_n8n_workflows.py` 的欄位對照測試檢查工作流引用的欄位 |
+| §9 live E2E 加進 `docker-compose.e2e.yml` | 以不進 repo 的 override 與假接收端執行，結果記錄在 §14 | 不為一次性的驗證增加維護中的設定 |
 | §4.4 outbox 存目標網址 | 不存，發送時讀目前的 `JOB_WEBHOOK_URL` | 換網址後，還沒送出的通知改送新網址 |
 | §8 每次啟動都匯入工作流 | 只在 n8n volume 第一次啟動時匯入（標記檔 `.imported`）；之後以文件中的指令手動更新 | 每次匯入會蓋掉使用者在介面上的修改與啟用狀態 |
 

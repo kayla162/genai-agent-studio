@@ -50,7 +50,7 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
    docker compose --profile automation up -d --build
    ```
 
-   沒有加 `--profile automation` 時不會啟動 n8n，其餘服務的行為不變。`n8n-db` 會在既有的 PostgreSQL 內建立資料庫 `n8n`（已經存在就略過）。
+   沒有加 `--profile automation` 時不會啟動 n8n。若 `.env` 設了 `JOB_WEBHOOK_URL` 卻沒有執行 n8n，通知會依退避表重試、最後變成 `dead`；不使用 n8n 時請把 `JOB_WEBHOOK_URL` 留空。`n8n-db` 會在既有的 PostgreSQL 內建立資料庫 `n8n`（已經存在就略過）。
 
 3. 第一次開啟 <http://127.0.0.1:5678> 時建立擁有者帳號（帳號只存在本機的 n8n 資料庫）。
 
@@ -114,7 +114,24 @@ docker compose cp n8n:/tmp/wf/. n8n/workflows/
 每個節點 `credentials` 裡的 `id` 改成空字串（保留 `name`）；兩條主要工作流的 `settings.errorWorkflow` 為 `poster-error`。
 `backend/tests/test_n8n_workflows.py` 會檢查這幾點，以及檔案裡沒有 Discord webhook 網址。
 
-## 7. 已知限制
+## 7. 重新發送失敗的通知
+
+通知放棄發送（`dead`）後不會自動重試。24 小時內的 `dead` 會讓系統狀態的 Webhook 顯示 error，更早的只在說明文字提到筆數。問題排除後（例如 n8n 已啟動、工作流已發布、憑證已選好），把它們重新排入發送：
+
+```bash
+docker compose exec postgres psql -U genai -d genai -c "UPDATE webhook_outbox SET status='pending', attempts=0, next_attempt_at=now(), last_error=NULL WHERE status='dead';"
+```
+
+在 `poster-job-finished` 發布、憑證選好之前送出的通知，n8n 會回 404 或 400，後端視為永久失敗，立刻變成 `dead`；請在完成設定後執行上面的指令補送。
+
+## 8. 注意事項
+
+- Studio 建立的任務結束時也會發 Discord 審核訊息；在 Studio 選定海報後又在 Discord 核准，歷史紀錄會多一筆。
+- 試算表回填依列號比對，任務進行中不要在試算表插入或刪除列。
+- `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` 讓能編輯工作流的人讀到容器的環境變數（本機單人使用可以接受）。
+- n8n 與應用程式共用資料庫帳號 `genai`。
+
+## 9. 已知限制
 
 - 審核表單的網址是 `http://127.0.0.1:5678/...`，只有本機（或改用區網位址時同一個區網）的人打得開；沒有對外公開（Cloudflare Tunnel 不在這一版）。
 - `REVIEW_MODE=sim` 時沒有審查用海報，Discord 訊息不附圖。

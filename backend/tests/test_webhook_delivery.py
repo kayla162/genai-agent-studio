@@ -92,7 +92,7 @@ async def test_deliver_due_sends_signed_body_and_records_results(seeded: Databas
     codes = {'wh_ok': 204, 'wh_4xx': 401, 'wh_5xx': 502, 'wh_429': 429}
     route = respx.post(URL).mock(side_effect=lambda r: httpx.Response(codes[r.headers['X-Webhook-Id']], text='nope'))
     async with httpx.AsyncClient() as http:
-        assert await deliver_due(seeded, SETTINGS, http, NOW) == 1
+        assert await deliver_due(seeded, SETTINGS, http, lambda: NOW) == 1
     assert route.call_count == 4
     sent = next(c.request for c in route.calls if c.request.headers['X-Webhook-Id'] == 'wh_ok')
     body = encode({'event': 'job.finished', 'webhookId': 'wh_ok'})
@@ -114,7 +114,7 @@ async def test_connection_errors_are_retried(seeded: Database) -> None:
     await add(seeded, outbox_row('wh_x'))
     respx.post(URL).mock(side_effect=httpx.ConnectError('connection refused'))
     async with httpx.AsyncClient() as http:
-        assert await deliver_due(seeded, SETTINGS, http, NOW) == 0
+        assert await deliver_due(seeded, SETTINGS, http, lambda: NOW) == 0
     row = await get(seeded, 'wh_x')
     assert (row.status, row.attempts) == ('pending', 1)
     assert row.last_error is not None and row.last_error.startswith('連線失敗')
@@ -130,7 +130,7 @@ async def test_concurrent_deliveries_do_not_send_the_same_row_twice(seeded: Data
 
     route = respx.post(URL).mock(side_effect=slow)
     async with httpx.AsyncClient() as http:
-        counts = await asyncio.gather(*(deliver_due(seeded, SETTINGS, http, NOW) for _ in range(3)))
+        counts = await asyncio.gather(*(deliver_due(seeded, SETTINGS, http, lambda: NOW) for _ in range(3)))
     assert sum(counts) == 5
     assert route.call_count == 5
 
@@ -138,7 +138,10 @@ async def test_concurrent_deliveries_do_not_send_the_same_row_twice(seeded: Data
 async def test_nothing_happens_without_a_webhook_url(seeded: Database) -> None:
     await add(seeded, outbox_row('wh_off'))
     async with httpx.AsyncClient() as http:
-        assert await deliver_due(seeded, Settings(_env_file=None, image_mode='sim', agent_mode='sim'), http, NOW) == 0
+        assert (
+            await deliver_due(seeded, Settings(_env_file=None, image_mode='sim', agent_mode='sim'), http, lambda: NOW)
+            == 0
+        )
     async with seeded.session() as s:
         assert [r.attempts for r in await s.scalars(select(WebhookOutboxRow))] == [0]
 
@@ -154,7 +157,7 @@ async def test_one_failing_row_does_not_undo_the_others(seeded: Database) -> Non
 
     respx.post(URL).mock(side_effect=handler)
     async with httpx.AsyncClient() as http:
-        assert await deliver_due(seeded, SETTINGS, http, NOW) == 1
+        assert await deliver_due(seeded, SETTINGS, http, lambda: NOW) == 1
     assert (await get(seeded, 'wh_good')).status == 'delivered'
     bad = await get(seeded, 'wh_bad')
     assert (bad.status, bad.attempts) == ('pending', 1)
@@ -166,6 +169,20 @@ async def test_nul_characters_are_stripped_from_the_stored_error(seeded: Databas
     await add(seeded, outbox_row('wh_nul'))
     respx.post(URL).mock(return_value=httpx.Response(500, text='bad\x00body'))
     async with httpx.AsyncClient() as http:
-        assert await deliver_due(seeded, SETTINGS, http, NOW) == 0
+        assert await deliver_due(seeded, SETTINGS, http, lambda: NOW) == 0
     row = await get(seeded, 'wh_nul')
     assert (row.status, row.attempts, row.last_error) == ('pending', 1, 'HTTP 500：badbody')
+
+
+@respx.mock
+async def test_each_row_is_signed_with_the_clock_read_for_that_row(seeded: Database) -> None:
+    await add(
+        seeded, outbox_row('wh_1', due=NOW - timedelta(seconds=2)), outbox_row('wh_2', due=NOW - timedelta(seconds=1))
+    )
+    times = iter([NOW, NOW + timedelta(seconds=200), NOW + timedelta(seconds=400)])
+    route = respx.post(URL).mock(return_value=httpx.Response(204))
+    async with httpx.AsyncClient() as http:
+        assert await deliver_due(seeded, SETTINGS, http, lambda: next(times)) == 2
+    stamps = {c.request.headers['X-Webhook-Id']: int(c.request.headers['X-Webhook-Timestamp']) for c in route.calls}
+    assert stamps == {'wh_1': int(NOW.timestamp()), 'wh_2': int((NOW + timedelta(seconds=200)).timestamp())}
+    assert (await get(seeded, 'wh_2')).delivered_at == NOW + timedelta(seconds=200)

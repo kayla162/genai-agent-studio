@@ -84,6 +84,33 @@ async def test_create_job_reports_invalid_input(automation: LiveApi) -> None:
     assert res.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ('extra', 'message'),
+    [
+        ({'variantsPerTemplate': 9}, '每個模板的候選張數需為 1–8'),
+        ({'variantsPerTemplate': 0}, '每個模板的候選張數需為 1–8'),
+        ({'templateIds': []}, '至少要選一個通路模板'),
+        ({'templateIds': ['story', 'story']}, '通路模板不可重複'),
+    ],
+)
+async def test_create_job_validates_the_selection_before_the_paid_parse(
+    automation: LiveApi, monkeypatch: pytest.MonkeyPatch, extra: dict[str, Any], message: str
+) -> None:
+    calls: list[str] = []
+
+    async def counting_parse(*args: Any, **kwargs: Any) -> ParsedBrief:
+        calls.append('parse')
+        raise AssertionError('不該呼叫需求拆解')
+
+    monkeypatch.setattr('app.api.automation.parse_text', counting_parse)
+    res = await automation.http.post('/api/automation/jobs', json={**BRIEF, **extra}, headers=AUTH)
+    assert res.status_code == 400
+    assert res.json() == {'error': {'code': 'invalid', 'message': message}}
+    assert calls == []
+    async with automation.services.db.session() as s:
+        assert (await s.scalars(select(JobRow))).all() == []
+
+
 @pytest.fixture
 async def running(automation: LiveApi) -> AsyncIterator[LiveApi]:
     """整個測試期間 worker 都在執行：任務跑得完，選定後的歷史回寫也不必等到逾時。"""
@@ -143,6 +170,16 @@ async def test_revise_creates_a_child_job(running: LiveApi) -> None:
         'sheet:abc:row:5',
     )
     assert child.input == parent.input
+
+
+async def test_revise_carries_the_feedback_along_the_chain(running: LiveApi) -> None:
+    automation = running
+    job_id = await finished_job(automation)
+    res = await automation.http.post(f'/api/automation/jobs/{job_id}/revise', json={'feedback': 'A'}, headers=AUTH)
+    first = res.json()['jobId']
+    await stream(automation, first)
+    res = await automation.http.post(f'/api/automation/jobs/{first}/revise', json={'feedback': 'B'}, headers=AUTH)
+    assert (await job_row(automation, res.json()['jobId'])).reviewer_feedback == 'A；B'
 
 
 async def test_revise_needs_a_finished_job(automation: LiveApi) -> None:

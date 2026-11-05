@@ -14,7 +14,7 @@ from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.api.catalog import api_options
-from app.api.jobs import JobCreated, JobMeta, parse_text, record_selection, submit_job
+from app.api.jobs import JobCreated, JobMeta, check_selection, parse_text, record_selection, submit_job
 from app.api.services import Services
 from app.contract import FINISHED_STAGES, HistoryEntry, JobInput, Model, TemplateId
 from app.core.clock import utc_now
@@ -60,6 +60,11 @@ async def create_job(body: AutomationJobRequest, services: Services) -> JobCreat
         raise Invalid(f'找不到品牌：{body.brand_id}')
     if product is None:
         raise Invalid(f'找不到商品：{body.product_id}')
+    # 先做不花錢的檢查：沒給的欄位以設定補齊（之後由 submit_job 檢查）
+    check_selection(
+        body.template_ids if body.template_ids is not None else ['x'],
+        body.variants_per_template if body.variants_per_template is not None else 1,
+    )
     parsed = await parse_text(services, brand, body.brief, product)
     settings = services.settings
     options = api_options(settings)
@@ -183,7 +188,11 @@ async def revise(
             if await jobs.ancestor_count(s, job_id, MAX_REVISIONS) >= MAX_REVISIONS:
                 raise Conflict(f'已退回 {MAX_REVISIONS} 次，請到 Studio 手動處理')
             job_input = JobInput.model_validate(row.input)
-            meta = JobMeta(client_ref=row.client_ref, parent_job_id=job_id, reviewer_feedback=body.feedback)
+            meta = JobMeta(
+                client_ref=row.client_ref,
+                parent_job_id=job_id,
+                reviewer_feedback='；'.join(filter(None, [row.reviewer_feedback, body.feedback])),
+            )
         return JobCreated(job_id=await submit_job(services, job_input, meta))
 
     return await idempotent(services, idempotency_key, 'revise', job_id, JobCreated, run)

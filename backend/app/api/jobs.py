@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import secrets
+from collections.abc import Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Annotated
@@ -92,6 +93,16 @@ async def parse_text(services: ApiServices, brand: Brand, text: str, product: Pr
         raise Unavailable(f'Gemini 沒有在 {BRIEF_TIMEOUT} 秒內完成需求拆解，請稍後再試') from error
 
 
+def check_selection(template_ids: Sequence[str], variants_per_template: int) -> None:
+    """模板與候選張數的檢查：自動化建任務在呼叫（要花錢的）需求拆解前也先檢查。"""
+    if not template_ids:
+        raise Invalid('至少要選一個通路模板')
+    if len(set(template_ids)) != len(template_ids):
+        raise Invalid('通路模板不可重複')
+    if not 1 <= variants_per_template <= 8:
+        raise Invalid('每個模板的候選張數需為 1–8')
+
+
 async def _validate(services: ApiServices, job_input: JobInput) -> None:
     """與 mock 的 createJob 相同的檢查，再加上模型與引擎必須是目前可用的選項。"""
     async with services.db.session() as s:
@@ -101,12 +112,7 @@ async def _validate(services: ApiServices, job_input: JobInput) -> None:
         raise Invalid(f'找不到品牌：{job_input.brand_id}')
     if product is None:
         raise Invalid(f'找不到商品：{job_input.product_id}')
-    if not job_input.template_ids:
-        raise Invalid('至少要選一個通路模板')
-    if len(set(job_input.template_ids)) != len(job_input.template_ids):
-        raise Invalid('通路模板不可重複')
-    if not 1 <= job_input.variants_per_template <= 8:
-        raise Invalid('每個模板的候選張數需為 1–8')
+    check_selection(job_input.template_ids, job_input.variants_per_template)
     if job_input.max_retries < 0:
         raise Invalid('最大重試次數需為 0 以上的整數')
     if product.brand_id != brand.id:

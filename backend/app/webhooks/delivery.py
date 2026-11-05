@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -78,11 +79,15 @@ def apply_outcome(row: WebhookOutboxRow, outcome: Outcome, now: datetime) -> Non
         row.last_error = outcome.error
 
 
-async def deliver_due(db: Database, settings: Settings, http: httpx.AsyncClient, now: datetime) -> int:
+async def deliver_due(
+    db: Database, settings: Settings, http: httpx.AsyncClient, clock: Callable[[], datetime] = utc_now
+) -> int:
+    """每一筆各自讀一次時鐘：慢的批次裡較晚處理的筆不會用過舊的時間戳簽章（接收端只接受 300 秒內）。"""
     if not settings.job_webhook_url:
         return 0
     delivered = 0
     for _ in range(BATCH):
+        now = clock()
         async with db.session() as s:
             row = await s.scalar(
                 select(WebhookOutboxRow)
@@ -108,7 +113,7 @@ async def deliver_periodically(db: Database, settings: Settings, interval: float
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as http:
         while True:
             try:
-                await deliver_due(db, settings, http, utc_now())
+                await deliver_due(db, settings, http)
             except Exception:
                 logger.exception('發送 webhook 失敗')
             await asyncio.sleep(interval)
