@@ -41,9 +41,27 @@ def _message(row: JobEventRow) -> dict[str, Any]:
     return {**row.payload, 'seq': row.seq, 'ts': iso(row.ts)}
 
 
-async def create_job(session: AsyncSession, job_id: str, job_input: JobInput, now: datetime) -> None:
+async def create_job(
+    session: AsyncSession,
+    job_id: str,
+    job_input: JobInput,
+    now: datetime,
+    *,
+    client_ref: str | None = None,
+    parent_job_id: str | None = None,
+    reviewer_feedback: str | None = None,
+) -> None:
     session.add(
-        JobRow(id=job_id, brand_id=job_input.brand_id, input=job_input.to_json(), created_at=now, stage='queued')
+        JobRow(
+            id=job_id,
+            brand_id=job_input.brand_id,
+            input=job_input.to_json(),
+            created_at=now,
+            stage='queued',
+            client_ref=client_ref,
+            parent_job_id=parent_job_id,
+            reviewer_feedback=reviewer_feedback,
+        )
     )
     await session.commit()
 

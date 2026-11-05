@@ -49,7 +49,7 @@ from app.cutout.processing import CutoutError
 from app.db.models import JobRow
 from app.db.session import Database
 from app.errors import AppError, Invalid, NotFound
-from app.events import EventStore
+from app.events import EventStore, webhook_target
 from app.files import photo_path, product_folder
 from app.job_files import clean_job_files_periodically
 from app.pipeline.comfy import comfy_ports
@@ -147,7 +147,7 @@ def build_services() -> Services:
     if settings.image_mode == 'comfyui':
         ports = comfy_ports(ports, composer, settings, memory)
     cutouts = CutoutEngine(settings.cutout_model, settings.models_dir, redis)
-    store = EventStore(db, redis)
+    store = EventStore(db, redis, webhook_target(settings))
     return Services(
         db, redis, store, composer, ports, settings.sim_speed, settings, cutouts, rag, vectors, locks, gemini, memory
     )

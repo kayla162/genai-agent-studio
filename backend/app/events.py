@@ -10,19 +10,27 @@
 import asyncio
 import json
 import logging
+import secrets
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
 from redis.exceptions import RedisError
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contract import FINISHED_STAGES, JobEvent, JobStage, message_json
 from app.core.clock import iso, utc_now
-from app.db.models import JobEventRow, JobRow
+from app.db.models import JobEventRow, JobRow, WebhookOutboxRow
 from app.db.session import Database
 from app.errors import NotFound
+from app.settings import Settings
+from app.webhooks.payload import EVENT as WEBHOOK_EVENT
+from app.webhooks.payload import build_job_finished
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,21 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL = 1.0
 #: 連不上 Redis 時的錯誤（redis-py 的錯誤與底層的 socket 錯誤）
 REDIS_DOWN = (RedisError, OSError)
+
+
+@dataclass(frozen=True)
+class WebhookTarget:
+    """任務結束時要寫 outbox（JOB_WEBHOOK_URL 有設定）。網址與金鑰在發送時才讀，不存進 outbox。"""
+
+    studio_base_url: str
+
+
+def webhook_target(settings: Settings) -> WebhookTarget | None:
+    return WebhookTarget(settings.studio_base_url) if settings.job_webhook_url else None
+
+
+def new_webhook_id() -> str:
+    return f'wh_{secrets.token_hex(6)}'
 
 
 def channel(job_id: str) -> str:
@@ -56,9 +79,10 @@ def _message(row: JobEventRow) -> dict[str, Any]:
 
 
 class EventStore:
-    def __init__(self, db: Database, redis: Redis) -> None:
+    def __init__(self, db: Database, redis: Redis, webhook: WebhookTarget | None = None) -> None:
         self.db = db
         self.redis = redis
+        self.webhook = webhook
 
     async def append(self, job_id: str, event: JobEvent, *, expect_stage: JobStage | None = None) -> int | None:
         """寫入事件並回傳 seq。expect_stage 與目前階段不同時不寫入、回傳 None（例如排隊中的任務已被取消）。"""
@@ -73,12 +97,50 @@ class EventStore:
             seq = row.last_seq
             _apply(row, event)
             s.add(JobEventRow(job_id=job_id, seq=seq, ts=ts, type=event.type, payload=event.to_json()))
+            if self.webhook is not None and event.type == 'job.status' and event.stage in FINISHED_STAGES:
+                await self._add_outbox(s, row, iso(ts), ts)
             await s.commit()
         try:
             await self.publish(job_id, message_json(event, seq, iso(ts)))
         except Exception as error:  # noqa: BLE001 - 事件已寫入資料庫；發布失敗不能影響任務，訂閱端會從資料庫補齊
             logger.warning('事件已寫入資料庫，但發布到 Redis 失敗（任務 %s，seq %d）：%r', job_id, seq, error)
         return seq
+
+    async def _add_outbox(self, s: AsyncSession, row: JobRow, finished_at: str, ts: datetime) -> None:
+        """與結束事件同一個交易：任務結束與「待通知」一起成立。同一個任務已經有通知時不再新增（不讓事件寫入失敗）。"""
+        assert self.webhook is not None
+        await s.flush()
+        events = list(
+            await s.scalars(select(JobEventRow.payload).where(JobEventRow.job_id == row.id).order_by(JobEventRow.seq))
+        )
+        webhook_id = new_webhook_id()
+        payload = build_job_finished(
+            webhook_id=webhook_id,
+            job_id=row.id,
+            stage=row.stage,
+            round=row.round,
+            job_input=row.input,
+            client_ref=row.client_ref,
+            parent_job_id=row.parent_job_id,
+            best_render_ids=row.best_render_ids,
+            events=events,
+            studio_base_url=self.webhook.studio_base_url,
+            finished_at=finished_at,
+        )
+        await s.execute(
+            pg_insert(WebhookOutboxRow)
+            .values(
+                id=webhook_id,
+                job_id=row.id,
+                event=WEBHOOK_EVENT,
+                payload=payload,
+                status='pending',
+                attempts=0,
+                next_attempt_at=ts,
+                created_at=ts,
+            )
+            .on_conflict_do_nothing(index_elements=['job_id', 'event'])
+        )
 
     async def publish(self, job_id: str, message: dict[str, Any]) -> None:
         await self.redis.publish(channel(job_id), json.dumps(message, ensure_ascii=False))

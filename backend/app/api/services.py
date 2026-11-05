@@ -16,7 +16,7 @@ from app.adapters.gemini import GeminiClient
 from app.brands import BrandLoadError, load_brands
 from app.core.clock import utc_now
 from app.db.session import Database
-from app.events import EventStore
+from app.events import EventStore, webhook_target
 from app.pipeline.gemini import GeminiAgent
 from app.pipeline.ports import Agent
 from app.pipeline.sim import SimAgent
@@ -77,7 +77,16 @@ async def start_services(settings: Settings) -> ApiServices:
         )
     comfy = ComfyClient(settings) if settings.image_mode == 'comfyui' else None
     services = ApiServices(
-        settings, db, redis, EventStore(db, redis), queues, composer, agent, gemini=gemini, ledger=ledger, comfy=comfy
+        settings,
+        db,
+        redis,
+        EventStore(db, redis, webhook_target(settings)),
+        queues,
+        composer,
+        agent,
+        gemini=gemini,
+        ledger=ledger,
+        comfy=comfy,
     )
     await services.sync_brands()
     return services
