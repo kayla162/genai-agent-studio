@@ -63,6 +63,7 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
   在 n8n 新增「Google Sheets OAuth2 API」憑證，填入用戶端 ID 與密鑰後按 Sign in with Google。
   接著在四個 Google Sheets 節點選擇這個憑證：`poster-batch-submit` 的「讀取待處理的列」、「標記排隊中」、「標記錯誤」，
   以及 `poster-job-finished` 的「回填試算表」。
+  也可以先建立憑證並命名為 `Google Sheets account`（工作流裡的憑證名稱），再依 §6 重新匯入：匯入時 n8n 依名稱與類型自動選上同名的憑證。
 - **Discord**：不需要在 n8n 建立憑證，只要 `.env` 的 `DISCORD_WEBHOOK_URL`（Discord 頻道設定 → 整合 → Webhook → 複製網址）。
   修改 `.env` 後執行 `docker compose --profile automation up -d n8n` 讓 n8n 讀到新的值。
 
@@ -83,8 +84,8 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
 
 ## 5. 啟用
 
-在介面開啟 `poster-batch-submit` 與 `poster-job-finished`，按右上角的 **Publish**（n8n 2 以發布取代舊版的 Active 開關）。
-`poster-error` 不需要發布，被另外兩條當作錯誤工作流呼叫。
+在介面開啟三條工作流，各按一次右上角的 **Publish**（n8n 2 以發布取代舊版的 Active 開關）。
+`poster-error` 也要發布：n8n 2.46.6 不會執行沒有發布的錯誤工作流（log 顯示 `Workflow "poster-error" is not active and cannot be executed`）。
 
 審核流程：Discord 訊息附上審查用海報與「審核表單」連結。表單的「決定」選核准或退回；「候選圖」填訊息裡列出的 `renderId`
 （空白為最高分）；「修改意見」在退回時使用（空白為「請重新生成」）。同一張表單送出兩次時，後端以 `Idempotency-Key` 回傳第一次的結果。

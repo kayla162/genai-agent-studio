@@ -1,7 +1,7 @@
 # Plan 9：n8n 自動化整合 設計規格
 
 - 日期：2026-11-05
-- 狀態：設計決定已由使用者確認（§3），文件待審閱
+- 狀態：已實作（2026-11-05）；Docker 驗收結果見 §14，需要 Google 與 Discord 帳號的項目待使用者驗證
 - 相關：
   - `2026-10-07-phase2-backend-design.md`（事件溯源、`EventStore.append`、SAQ 佇列）
   - `2026-10-23-plan6b-gemini-vlm-design.md`（需求拆解、費用上限 `ledger.check`）
@@ -309,3 +309,54 @@ n8n 容器另外使用 `N8N_ENCRYPTION_KEY`、`DB_POSTGRESDB_*`，以及把 `AUT
 - 審核表單是 `localhost:5678`，只有本機或同一個區網的人點得開（不開 Tunnel 的取捨）。
 - v1 只有一個 webhook URL；換 URL 時，已經 `dead` 的通知不會自動改送新的 URL。
 - 退回沿用原任務的 `parsed_brief`；若修改意見與原需求衝突（例如改價格），以修改意見為準。護欄「需求沒提到的價格不得出現」把 `reviewer_feedback` 視為需求的一部分，所以意見裡寫的價格可以出現。
+
+## 14. 實驗結果
+
+### §10 的驗收（2026-11-05；Windows 10、Docker Desktop 29.7.2＋WSL 2，Docker 可用記憶體 31.22 GiB；n8n 2.46.6）
+
+**環境**：不動開發用的 `genai-agent` 專案、`.env` 與 volume，另開獨立的 compose 專案：
+
+```bash
+docker compose -p genai-agent-n8n-e2e -f docker-compose.yml -f docker-compose.e2e.yml -f <override> --profile automation up -d --build --wait
+```
+
+- `docker-compose.e2e.yml` 提供 `AGENT_MODE=sim`、`IMAGE_MODE=sim`、`REVIEW_MODE=composer`、`RAG_MODE=sim` 與獨立的 volume，所以不呼叫 Gemini，也不需要 GPU。
+- override（不進 repo）把 api 開在 `127.0.0.1:8100`、postgres 開在 `127.0.0.1:5434`，n8n 維持 `127.0.0.1:5678`。它在 api、worker 與 n8n 設定 `AUTOMATION_TOKEN`、`JOB_WEBHOOK_URL`、`JOB_WEBHOOK_SECRET` 與 `N8N_ENCRYPTION_KEY`，都是隨機產生的值。
+- 沒有 Google 與 Discord 帳號時的替代做法：
+  - Google Sheets：以 `n8n import:credentials` 匯入一個假的「Google Sheets account」憑證（沒有 token）。
+  - Discord：`DISCORD_WEBHOOK_URL` 指向本機的假接收端。它記下每個請求（JSON，或 multipart 的 `payload_json` 與圖檔），回 204。
+- 驗收結束後以 `down -v` 移除整個專案與 volume。
+
+| 項目 | 結果 |
+|---|---|
+| (1) 自動匯入 | **通過**。第一次啟動的 log 為 `Importing 3 workflows... Successfully imported 3 workflows.`，`n8n list:workflow` 列出 `poster-batch-submit`、`poster-error` 與 `poster-job-finished`。還沒發布時，webhook 回 404 `The requested webhook "POST poster-job-finished" is not registered.`。以 `n8n publish:workflow` 發布並重新啟動 n8n 之後，三條工作流都是 active |
+| (2) 試算表 3 列 → `queued` → 回填 | **待使用者驗證**（需要 Google 帳號），步驟見下方。<br>已觀察到的部分：<br>・`poster-batch-submit` 依排程每 5 分鐘執行（03:50:46、03:55:46、04:00:46 UTC）。<br>・用假憑證時，「讀取待處理的列」失敗（`Unable to sign without access token`）。<br>・`clientRef: sheet:fakeSheetId:row:2` 的任務結束時，「回填試算表」輸出 `{"error":"Unable to sign without access token"}`，之後照常送出 Discord 審核訊息（`onError: continueRegularOutput` 生效） |
+| (3) Discord 附圖、表單核准 → 歷史紀錄與 `writtenToRag` | 以假的 Discord 與 n8n 表單的 HTTP 端點**通過**；真的 Discord 與在瀏覽器操作表單**待使用者驗證**。<br>・每個 `done` 任務的通知都是 multipart：`payload_json` 加上 `files[0]`（PNG 審查用海報，約 614–627 KB）。<br>・訊息包含品牌、商品、需求、最高分（100 分）、renderId、未通過的檢查、Studio 網址（`http://127.0.0.1:3200/agent?job=…`）與審核表單網址（`http://127.0.0.1:5678/form-waiting/<執行 id>?signature=…`）。<br>・n8n 的執行停在 `waiting`。<br>・以表單核准後，Discord 收到 `任務 …：✅ 已選定 …_r2_story_v0`；`/api/history` 出現該筆，`writtenToRag: true`（`RAG_MODE=sim`）。<br>・live 測試以 `Idempotency-Key` 送兩次 approve，回傳同一個歷史紀錄 id，`/api/history` 只有一筆 |
+| (4) 退回 → 新任務、Agent 透視的 log | **通過**。<br>・live 測試：revise 回 201。新任務的通知 `delivered`，payload 的 `parentJobId` 是原任務，Agent 透視的事件有「審核者退回（…）：標題改成限時三天」。<br>・表單退回並附意見「主標改成「限時三天」，背景再亮一點」：Discord 收到 `🔁 已退回，新任務 job_…_333d`。<br>・新任務的 `parent_job_id` 與 `client_ref`（`sheet:fakeSheetId:row:2`）都沿用原任務。<br>・新任務的 log 是 `審核者退回（job_20261105_1148_db57）：主標改成「限時三天」，背景再亮一點`，新任務也送出了下一則審核訊息 |
+| (5) n8n 停止期間完成任務 → 補送且只處理一次 | **通過**。<br>・`docker compose stop n8n` 之後建立任務，outbox 在 03:51:05 寫入。<br>・第 1 次發送失敗：`連線失敗：ConnectError('[Errno -5] No address associated with hostname')`，下一次排在 10 秒後。<br>・第 2 次發送失敗，下一次排在 60 秒後（03:52:15）。<br>・03:51:27 `start n8n`，03:51:36 就緒。<br>・03:52:17 第 3 次送達（`delivered`，`attempts=3`）。<br>・n8n 的執行紀錄中，只有 1 筆含這個 webhook id，假的 Discord 也只收到 1 則。<br>・停止期間，`/api/status` 的 Webhook 顯示「待發送 1 則・已送出 5 則」。<br>・以正確簽章重送同一份 payload，n8n 回 200 `ok`；該次執行在「重複？」結束（`duplicate: true`），沒有再發 Discord |
+| (6) 竄改簽章 → 401、後端標記 `dead` | **通過**。<br>・curl 以錯誤 secret 簽章、timestamp 為現在：`401 bad signature`。<br>・沒有簽章標頭：`401 stale timestamp`。<br>・把 worker 的 `JOB_WEBHOOK_SECRET` 換成另一個隨機值後建立任務：outbox 第 1 次發送就變成 `dead`（`attempts=1`，`last_error` 為 `HTTP 401：bad signature`）。<br>・`/api/status` 的 Webhook 變成 `error`：「1 則通知發送失敗（最後一次：HTTP 401：bad signature）・待發送 0 則」。<br>・之後把 worker 換回正確的 secret（核對過 SHA-256） |
+| (7) 預設 profile 不變 | **通過**。<br>・`docker compose config --services`（不加 profile）只有 redis、composer、postgres、api、chroma、worker、web 7 個服務，沒有 `n8n` 與 `n8n-db`；也不需要任何自動化變數（未建立 `.env` 時一樣）。<br>・同一個獨立專案不加 profile 啟動時，7 個容器合計約 380 MiB：worker 121、api 112、composer 57、postgres 55、web 15、chroma 13、redis 7 MiB。<br>・加上 profile 後多出 n8n（下一列）；`n8n-db` 建好資料庫就結束（Exited 0），不佔記憶體 |
+| n8n 記憶體 | 閒置（重新啟動後約 1 分鐘）**402 MiB**。<br>連續建立 6 個任務、處理 6 則 webhook 與 Discord 上傳時，2 秒取樣一次，最高 **433 MiB**；結束後回到 415–424 MiB。<br>比 §8 估計的 200–300 MB 多約 100–150 MB：2.x 內建 JS task runner 的子行程也算在容器裡。CPU 閒置時低於 2% |
+
+**live 測試**（`backend/tests/test_automation_live.py`，`AUTOMATION_LIVE_API=http://127.0.0.1:8100`、`DATABASE_URL` 指向 5434）：
+`1 passed in 36.70s`。兩個任務各自從 outbox 寫入到 `delivered` 約 1.3–1.6 秒。
+
+**實作時發現並處理的問題**
+
+- **錯誤工作流也要發布。** n8n 2.46.6 在沒有發布的錯誤工作流時，log 為 `Calling Error Workflow for "poster-batch-submit". Workflow "poster-error" is not active and cannot be executed`，所以錯誤沒有發到 Discord。發布 `poster-error` 之後，下一次排程失敗時，Discord 收到「⚠️ n8n 工作流「poster-batch-submit（試算表批次產圖）」失敗：讀取待處理的列：Unable to sign without access token」。`n8n/README.md` §5 已改成三條都要發布。
+- **憑證可以依名稱自動選上。** 先建立名為 `Google Sheets account` 的 Google Sheets 憑證，再執行 `n8n import:workflow`，匯出結果顯示 4 個 Google Sheets 節點都選上了這個憑證。`n8n/README.md` §3 已加上這個做法。
+- n8n 啟動時的 log：
+  - Python task runner 找不到 Python 3。工作流只用 JS，不影響執行。
+  - `WEBHOOK_URL` 建議改名為 `N8N_WEBHOOK_URL`、內建 task runner 模式之後會移除。兩項目前都還能用，列為之後的調整。
+- 已經送出的表單網址再送一次時，n8n 沒有在 5 秒內回應，用戶端逾時。後端不受影響，表單只會被處理一次。
+
+**待使用者驗證（需要 Google 與 Discord 帳號）**
+
+1. 照 `n8n/README.md` §2、§3 在 `.env` 設定 `AUTOMATION_TOKEN`、`JOB_WEBHOOK_URL`、`JOB_WEBHOOK_SECRET`、`N8N_ENCRYPTION_KEY`、`DISCORD_WEBHOOK_URL`、`GOOGLE_SHEET_ID`。
+2. 執行 `docker compose --profile automation up -d --build`，建立 n8n 擁有者帳號與 Google Sheets 憑證，並在 4 個 Google Sheets 節點選好憑證。
+3. 發布三條工作流。
+4. 在試算表的 `需求` 工作表填 3 列，例如 `selune`／`prod_selune_serum`／一句話需求，其餘欄位留白。
+5. 確認 5 分鐘內 3 列都變成 `queued` 並填上 `jobId`；任務結束後，`status` 變成 `done` 或 `needs_review`，`score`、`posterUrl` 都有值。（驗收 2）
+6. 確認 Discord 頻道收到附海報的訊息。打開「審核表單」選「核准」：Discord 回覆「✅ 已選定 …」，Studio 的歷史紀錄出現該圖，`/api/history` 的 `writtenToRag` 為 `true`。（驗收 3）
+7. 另一則選「退回」並填意見：確認新任務的 Agent 透視有「審核者退回（上一個任務 id）：意見」，試算表該列在新任務結束後更新。（驗收 4）
+8. 截圖：n8n 工作流畫面與 Discord 審核訊息，供 README 使用。

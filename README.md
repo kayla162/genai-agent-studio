@@ -83,6 +83,12 @@ flowchart LR
 - **失敗後自動恢復**：去背中斷 2 次就判定失敗、模型恢復後自動重新去背；歷史回寫失敗時 worker 啟動補做；舊任務的檔案定期清理（保留歷史紀錄用到的）。
 - **安全**：容器不以 root 執行；nginx 與 API 都檢查 Host，防止 DNS rebinding；本機檔案路徑與上傳檔都有驗證；API key 只在後端，作品集 Demo 不含任何 key。
 
+### 自動化整合（n8n）
+
+- **試算表批次產圖**：n8n 讀 Google Sheet 的每一列，以 token 呼叫 `/api/automation/jobs`；任務結束後回填分數與連結。
+- **Discord 審核**：結束通知附上審查用海報與合規分數，審核者在 n8n 表單核准（寫入歷史並回寫 RAG）或退回並附意見（意見進入 RAG 查詢、Prompt 構建與價格護欄）。
+- **不漏送的 webhook**：通知與任務的結束事件在同一個 PostgreSQL 交易內寫入 outbox；worker 以 `FOR UPDATE SKIP LOCKED` 發送、HMAC-SHA256 簽章、依退避表重試 8 次，接收端依 id 去重；核准與退回支援 Idempotency-Key。
+
 ### 工程方法
 
 - **一份實作、兩個執行環境**：版型、繪製、規則審查與護欄只用 TypeScript 寫一次，瀏覽器直接執行；後端透過 Node 服務（composer）呼叫同一份程式，在伺服器端畫出相同的海報。
@@ -124,6 +130,8 @@ flowchart LR
   worker --> gemini{{Gemini API<br/>Agent 與 VLM}}
   worker --> comfy{{ComfyUI<br/>Windows・GPU・SDXL}}
   api --> gemini
+  n8n[n8n<br/>試算表批次、Discord 審核] -- token --> api
+  worker -- webhook --> n8n
   demo([作品集 Demo]) -. mock 模式的靜態輸出 .-> cf[Cloudflare<br/>靜態網站]
 ```
 
@@ -132,7 +140,7 @@ flowchart LR
 | AI／模型 | Gemini（`google-genai`，結構化輸出、VLM）、BGE-M3、bge-reranker-v2-m3、BiRefNet（ONNX Runtime）、SDXL＋SDXL-Lightning（ComfyUI） |
 | 後端 | Python 3.13、FastAPI、SAQ、SQLAlchemy＋Alembic、PostgreSQL、Redis、Chroma、httpx、pytest、mypy、ruff |
 | 前端與排版 | Next.js 16（靜態輸出）、TypeScript、Tailwind CSS v4、shadcn/ui、Zustand、`@napi-rs/canvas`、Vitest、Playwright |
-| 部署與 CI | Docker Compose、nginx、GitHub Actions、Cloudflare |
+| 部署與 CI | Docker Compose、nginx、GitHub Actions、Cloudflare；自動化：n8n |
 
 ## 快速開始
 
@@ -151,6 +159,8 @@ docker compose up -d --build
 ```
 
 開啟 http://127.0.0.1:3000。設定、ComfyUI 安裝、記憶體建議、本機開發與測試見 [操作手冊](docs/operations.md)。
+
+自動化整合：見 [n8n/README.md](n8n/README.md)
 
 ## 文件
 
