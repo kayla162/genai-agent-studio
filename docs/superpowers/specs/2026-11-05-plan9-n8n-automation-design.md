@@ -240,8 +240,8 @@ Sheet 欄位：`brand`、`product`、`brief`、`status`、`jobId`、`score`、`p
 | 變數 | 預設 | 說明 |
 |---|---|---|
 | `AUTOMATION_TOKEN` | 空（停用） | n8n 呼叫自動化 API 用的 token |
-| `WEBHOOK_URL` | 空（停用） | compose 內為 `http://n8n:5678/webhook/poster-job-finished` |
-| `WEBHOOK_SECRET` | 空 | `WEBHOOK_URL` 有設定時必填（啟動時檢查，至少 32 字元） |
+| `JOB_WEBHOOK_URL` | 空（停用） | compose 內為 `http://n8n:5678/webhook/poster-job-finished` |
+| `JOB_WEBHOOK_SECRET` | 空 | `JOB_WEBHOOK_URL` 有設定時必填（啟動時檢查，至少 32 字元） |
 | `STUDIO_BASE_URL` | `http://127.0.0.1:3000` | 組 `studioUrl` |
 | `AUTOMATION_TEMPLATES` | `ig-post,story,ecom-main` | 自動化建任務的預設模板 |
 | `AUTOMATION_VARIANTS` | 2 | 每個模板的預設候選張數 |
@@ -254,7 +254,7 @@ n8n 容器另外使用 `N8N_ENCRYPTION_KEY`、`DB_POSTGRESDB_*`，以及把 `AUT
 - 資料庫：既有 postgres 內的資料庫 `n8n`，由 postgres 的初始化腳本建立；已經初始化過的 volume 由 n8n 的 entrypoint 檢查並建立。
 - entrypoint：匯入 `n8n/workflows/*.json` 後啟動。
 - 啟動指令：`docker compose --profile automation up -d`。
-- 記憶體：n8n 閒置約 200–300 MB（實作時實測，結果記錄在本文件最後新增的「實驗結果」一節）；預設 profile 不啟動，不影響現有的 16 GB 配置。
+- 記憶體：n8n 閒置約 200–300 MB（實作時實測，結果記錄在本文件最後新增的「實驗結果」一節（§14））；預設 profile 不啟動，不影響現有的 16 GB 配置。
 
 ## 9. 測試
 
@@ -286,7 +286,25 @@ n8n 容器另外使用 `N8N_ENCRYPTION_KEY`、`DB_POSTGRESDB_*`，以及把 `AUT
 - 挑圖後存檔與發布：5 種通路尺寸上傳到 Google Drive 或社群草稿。
 - Cloudflare Tunnel：讓 Telegram、Slack 的訊息內按鈕可以直接回呼。
 
-## 12. 已知限制
+## 12. 撰寫實作計畫時的調整（2026-11-05）
+
+讀過程式碼後修改以下幾點，以本節為準：
+
+| 原本 | 改為 | 原因 |
+|---|---|---|
+| §4.2 三個欄位加進 `JobInput` | 改為 `jobs` 資料表的欄位 `client_ref`、`parent_job_id`、`reviewer_feedback`（migration 0004） | `JobInput` 是前後端共用的合約，`contracts/fixtures/` 要求逐欄無損往返；加欄位要同步改前端型別、mock 與重新產生測資，但 Studio 用不到這三個欄位 |
+| §4.2 Agent 透視「另外顯示」 | 任務開頭送出一則 `log`（agent、warn）：「審核者退回（上一個任務 id）：意見」 | 不改合約與前端；Agent 透視本來就顯示 log |
+| §4.2 RAG 查詢加上 feedback | 傳給 retriever 的 `JobInput` 複本把 feedback 接在 `brief` 後面 | 不改 `Retriever` 介面與三個實作 |
+| §4.4 SAQ 任務＋30 秒 cron | worker 內一個發送迴圈，每 2 秒以 `FOR UPDATE SKIP LOCKED` 取到期的 pending | 只有一個 worker；少一條佇列路徑，保證相同（交易內寫入、重送、不重複取得） |
+| §4.5 `failedChecks` 為 id、label、detail | id、name、status、value（`ReviewCheck` 既有的欄位） | 沿用合約的欄位名稱 |
+| §4.5 `imageUrl` | 取 `review.completed.image`（伺服器端繪製的審查用海報）；`REVIEW_MODE=sim` 時為 null，n8n 不附圖 | 生成的背景不含文字與商品，不適合給審核者看 |
+| §4.5 `studioUrl` | `{STUDIO_BASE_URL}/agent?job={jobId}` | 前端既有的任務透視路徑 |
+| §4.7 `pending` 超過 10 筆為 warning | `ComponentStatus` 沒有 warning：有 dead 為 error，其餘為 ok，說明文字附上筆數 | 沿用合約 |
+| §7 `WEBHOOK_URL`、`WEBHOOK_SECRET` | `JOB_WEBHOOK_URL`、`JOB_WEBHOOK_SECRET` | n8n 自己用 `WEBHOOK_URL` 設定對外網址，同名容易設錯 |
+| §4.4 outbox 存目標網址 | 不存，發送時讀目前的 `JOB_WEBHOOK_URL` | 換網址後，還沒送出的通知改送新網址 |
+| §8 每次啟動都匯入工作流 | 只在 n8n volume 第一次啟動時匯入（標記檔 `.imported`）；之後以文件中的指令手動更新 | 每次匯入會蓋掉使用者在介面上的修改與啟用狀態 |
+
+## 13. 已知限制
 
 - 審核表單是 `localhost:5678`，只有本機或同一個區網的人點得開（不開 Tunnel 的取捨）。
 - v1 只有一個 webhook URL；換 URL 時，已經 `dead` 的通知不會自動改送新的 URL。
