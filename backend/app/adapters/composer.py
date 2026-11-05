@@ -121,6 +121,11 @@ def brand_json(brand: Brand) -> dict[str, Any]:
     return data
 
 
+def guard_text(r: SpecRequest) -> str:
+    """護欄判斷「需求沒提到的價格與優惠」時使用的需求文字：一句話需求加上審核者的意見。"""
+    return ' '.join(part for part in (r.text, r.feedback) if part)
+
+
 def spec_request_json(r: SpecRequest) -> dict[str, Any]:
     """POST /spec 的 request（composer 的 GuardRequest）"""
     return {
@@ -129,7 +134,7 @@ def spec_request_json(r: SpecRequest) -> dict[str, Any]:
         'brand': brand_json(r.brand),
         'product': r.product.to_json(),
         'brief': r.brief.to_json(),
-        'text': r.text,
+        'text': guard_text(r),
         'templateId': r.template.id,
         'engine': r.engine,
         'seed': r.seed,

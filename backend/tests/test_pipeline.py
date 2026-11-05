@@ -32,6 +32,7 @@ from app.contract import (
     ReviewCheck,
     TemplateId,
 )
+from app.db.models import JobRow
 from app.db.session import Database
 from app.errors import BudgetExceeded
 from app.events import EventStore
@@ -495,3 +496,65 @@ async def test_reports_the_job_cost_when_saving(store: EventStore, db: Database)
     saving = next(i for i, m in enumerate(events) if m['type'] == 'job.status' and m['stage'] == 'saving')
     logs = [m['message'] for m in events[saving:] if m['type'] == 'log']
     assert '本任務 Gemini 費用 US$0.18（17 次呼叫）' in logs
+
+
+class RecordingRetriever(EmptyRetriever):
+    """記錄收到的需求文字（RAG 查詢的一部分）。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.briefs: list[str] = []
+
+    async def retrieve(
+        self, brand: Brand, product: Product, job_input: JobInput, run: RunContext
+    ) -> tuple[str, list[RagHit]]:
+        self.briefs.append(job_input.brief)
+        return await super().retrieve(brand, product, job_input, run)
+
+
+FIXTURE_BRIEF = load_fixture('timelines/selune-retry.json')['input']['brief']
+
+
+async def set_feedback(db: Database, feedback: str) -> None:
+    """把 store fixture 建立的任務改成「由 job_parent 退回」的任務。"""
+    async with db.session() as s:
+        parent_input = JobInput.model_validate(load_fixture('timelines/selune-retry.json')['input'])
+        await jobs.create_job(s, 'job_parent', parent_input, NOW)
+        row = await s.get(JobRow, JOB)
+        assert row is not None
+        row.reviewer_feedback, row.parent_job_id = feedback, 'job_parent'
+        await s.commit()
+
+
+async def all_events(db: Database) -> list[dict[str, Any]]:
+    async with db.session() as s:
+        snap = await jobs.get_job(s, JOB)
+    assert snap is not None
+    return snap.events
+
+
+async def test_reviewer_feedback_reaches_the_log_rag_and_prompt(store: EventStore, db: Database) -> None:
+    await set_feedback(db, '標題改成限時三天')
+    agent, retriever = FakeAgent(), RecordingRetriever()
+    reviewer = FakeReviewer({1: {'ig-post', 'story'}})
+    await run_job(JOB, db, store, ports(agent, reviewer, retriever=retriever), speed=0)
+    assert retriever.briefs == [f'{FIXTURE_BRIEF}｜審核者的修改意見：標題改成限時三天']
+    assert agent.requests and {r.feedback for r in agent.requests} == {'標題改成限時三天'}
+    assert {r.text for r in agent.requests} == {FIXTURE_BRIEF}  # 一句話需求本身不變
+    events = await all_events(db)
+    warn = next(i for i, m in enumerate(events) if m['type'] == 'log' and m['message'].startswith('審核者退回'))
+    assert events[warn] == {
+        **events[warn],
+        'source': 'agent',
+        'level': 'warn',
+        'message': '審核者退回（job_parent）：標題改成限時三天',
+    }
+    assert warn < next(i for i, m in enumerate(events) if m['type'] == 'brief.parsed')
+
+
+async def test_jobs_without_feedback_are_unchanged(store: EventStore, db: Database) -> None:
+    agent, retriever = FakeAgent(), RecordingRetriever()
+    await run_job(JOB, db, store, ports(agent, FakeReviewer({1: {'ig-post', 'story'}}), retriever=retriever), speed=0)
+    assert retriever.briefs == [FIXTURE_BRIEF]
+    assert {r.feedback for r in agent.requests} == {None}
+    assert not any(m['type'] == 'log' and m['message'].startswith('審核者退回') for m in await all_events(db))
