@@ -47,7 +47,7 @@ def _collect(events: Iterable[Mapping[str, Any]]) -> tuple[dict[str, Candidate],
     return found, checks
 
 
-def candidates(best_render_ids: Mapping[str, str], events: Iterable[Mapping[str, Any]]) -> list[Candidate]:
+def candidates(best_render_ids: Mapping[Any, str], events: Iterable[Mapping[str, Any]]) -> list[Candidate]:
     found, _ = _collect(events)
     by_template: dict[str, Candidate] = {}
     for c in found.values():

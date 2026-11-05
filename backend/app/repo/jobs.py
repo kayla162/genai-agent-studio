@@ -134,3 +134,13 @@ async def get_render(session: AsyncSession, job_id: str, render_id: str) -> Rend
             else:
                 render.score, render.passed = p['score'], p['passed']
     return render
+
+
+async def ancestor_count(session: AsyncSession, job_id: str, limit: int) -> int:
+    """沿著 parent_job_id 往上數有幾個上層任務（最多數到 limit）。"""
+    count = 0
+    current = await session.scalar(select(JobRow.parent_job_id).where(JobRow.id == job_id))
+    while current is not None and count < limit:
+        count += 1
+        current = await session.scalar(select(JobRow.parent_job_id).where(JobRow.id == current))
+    return count

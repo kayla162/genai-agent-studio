@@ -266,8 +266,7 @@ async def stream_job(websocket: WebSocket, job_id: str, services: Services, afte
             raise error
 
 
-@router.post('/api/jobs/{job_id}/select', status_code=201)
-async def select_render(job_id: str, body: SelectRequest, services: Services) -> HistoryEntry:
+async def record_selection(services: ApiServices, job_id: str, render_id: str, copy: Copy) -> HistoryEntry:
     """選定候選圖：寫入歷史紀錄，再由 worker 回寫成歷史切塊（writtenToRag）。
 
     回寫最多等 WRITE_BACK_WAIT 秒；逾時、失敗或被中止時 writtenToRag 為 false。歷史紀錄已經建立，所以不回錯誤。
@@ -276,9 +275,9 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
         summary = await jobs.get_summary(s, job_id)
         if summary is None:
             raise NotFound(f'找不到任務：{job_id}')
-        render = await jobs.get_render(s, job_id, body.render_id)
+        render = await jobs.get_render(s, job_id, render_id)
         if render is None:
-            raise NotFound(f'找不到候選圖：{body.render_id}')
+            raise NotFound(f'找不到候選圖：{render_id}')
         entry = HistoryEntry(
             id=f'hist_{secrets.token_hex(6)}',
             job_id=job_id,
@@ -287,7 +286,7 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
             input=summary.input,
             template_id=render.template_id,
             render=render,
-            copy_=body.copy_,
+            copy_=copy,
             selected_at=iso(utc_now()),
             favorite=False,
             written_to_rag=False,
@@ -302,6 +301,11 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
     if done.completed and done.result:
         entry = entry.model_copy(update={'written_to_rag': True})
     return entry
+
+
+@router.post('/api/jobs/{job_id}/select', status_code=201)
+async def select_render(job_id: str, body: SelectRequest, services: Services) -> HistoryEntry:
+    return await record_selection(services, job_id, body.render_id, body.copy_)
 
 
 @router.get('/api/history')
