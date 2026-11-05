@@ -1,0 +1,54 @@
+{
+  "id": "poster-error",
+  "name": "poster-error（錯誤通知）",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b64582eb-fe66-50fe-9ab9-4a8cc36d6cb8",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: ('⚠️ n8n 工作流「' + $json.workflow.name + '」失敗：' + ($json.execution?.lastNodeExecuted ?? '觸發節點') + '：' + ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? '未知的錯誤')).slice(0, 2000) }) }}",
+        "options": {}
+      },
+      "id": "49d243ca-ddc8-5d91-8808-35f13657d287",
+      "name": "通知 Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "通知 Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
