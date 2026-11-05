@@ -10,6 +10,7 @@ from typing import Literal, Self
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.contract import TemplateId
 from app.rag.state import RagMode
 
 #: 審查：composer（伺服器端繪製審查用海報、量主色、規則審查）或 sim（不畫圖，沿用 mock 的審查；測試與作品集 Demo）
@@ -21,6 +22,8 @@ ImageMode = Literal['comfyui', 'sim']
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+#: AUTOMATION_TOKEN 與 JOB_WEBHOOK_SECRET 的最少字元數
+MIN_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -103,6 +106,19 @@ class Settings(BaseSettings):
     #: 模擬模式：每一輪都失誤（展示「需人工審核」）
     sim_force_all_fail: bool = False
 
+    #: n8n 等自動化呼叫端的 token（/api/automation/*，Authorization: Bearer）；空字串為停用（回 404）
+    automation_token: SecretStr = SecretStr('')
+    #: 任務結束時通知的網址（compose 內為 http://n8n:5678/webhook/poster-job-finished）；空字串為不通知
+    job_webhook_url: str = ''
+    #: webhook 的 HMAC-SHA256 金鑰；job_webhook_url 有設定時必填
+    job_webhook_secret: SecretStr = SecretStr('')
+    #: webhook 的 studioUrl：{studio_base_url}/agent?job={jobId}
+    studio_base_url: str = 'http://127.0.0.1:3000'
+    #: 自動化建任務沒有指定時使用的模板（JSON 陣列）
+    automation_templates: list[TemplateId] = ['ig-post', 'story', 'ecom-main']
+    #: 自動化建任務沒有指定時，每個模板的候選張數
+    automation_variants: int = Field(default=2, ge=1, le=8)
+
     @model_validator(mode='after')
     def _gemini_needs_the_composer_review(self) -> Self:
         """Gemini 的 VLM 審查要讀伺服器端繪製的審查用海報，所以 AGENT_MODE=gemini 不能搭配 REVIEW_MODE=sim。
@@ -122,6 +138,22 @@ class Settings(BaseSettings):
                 'IMAGE_MODE=comfyui 需要 REVIEW_MODE=composer（目前為 sim）：'
                 '請改為 REVIEW_MODE=composer，或設定 IMAGE_MODE=sim'
             )
+        return self
+
+    @model_validator(mode='after')
+    def _automation_secrets(self) -> Self:
+        """token 與 webhook 金鑰太短時啟動失敗：api 與 worker 會在啟動時顯示原因。"""
+        token = self.automation_token.get_secret_value()
+        if token and len(token) < MIN_SECRET_LENGTH:
+            raise ValueError(
+                f'AUTOMATION_TOKEN 至少要 {MIN_SECRET_LENGTH} 個字元'
+                '（可用 python -c "import secrets; print(secrets.token_urlsafe(32))" 產生）'
+            )
+        if self.job_webhook_url:
+            if not self.job_webhook_url.startswith(('http://', 'https://')):
+                raise ValueError('JOB_WEBHOOK_URL 只能是 http:// 或 https:// 開頭的網址')
+            if len(self.job_webhook_secret.get_secret_value()) < MIN_SECRET_LENGTH:
+                raise ValueError(f'JOB_WEBHOOK_URL 有設定時，JOB_WEBHOOK_SECRET 必填且至少 {MIN_SECRET_LENGTH} 個字元')
         return self
 
 

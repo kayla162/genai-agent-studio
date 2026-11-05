@@ -64,6 +64,8 @@ class SpecRequest:
     hits: list[RagHit] = field(default_factory=list)
     #: 這個模板上一輪的結果；第一輪為 None
     previous: PreviousRound | None = None
+    #: 審核者的修改意見（由「退回並重新生成」建立的任務）；沒有時為 None
+    feedback: str | None = None
 
 
 @dataclass(frozen=True)

@@ -41,9 +41,27 @@ def _message(row: JobEventRow) -> dict[str, Any]:
     return {**row.payload, 'seq': row.seq, 'ts': iso(row.ts)}
 
 
-async def create_job(session: AsyncSession, job_id: str, job_input: JobInput, now: datetime) -> None:
+async def create_job(
+    session: AsyncSession,
+    job_id: str,
+    job_input: JobInput,
+    now: datetime,
+    *,
+    client_ref: str | None = None,
+    parent_job_id: str | None = None,
+    reviewer_feedback: str | None = None,
+) -> None:
     session.add(
-        JobRow(id=job_id, brand_id=job_input.brand_id, input=job_input.to_json(), created_at=now, stage='queued')
+        JobRow(
+            id=job_id,
+            brand_id=job_input.brand_id,
+            input=job_input.to_json(),
+            created_at=now,
+            stage='queued',
+            client_ref=client_ref,
+            parent_job_id=parent_job_id,
+            reviewer_feedback=reviewer_feedback,
+        )
     )
     await session.commit()
 
@@ -116,3 +134,13 @@ async def get_render(session: AsyncSession, job_id: str, render_id: str) -> Rend
             else:
                 render.score, render.passed = p['score'], p['passed']
     return render
+
+
+async def ancestor_count(session: AsyncSession, job_id: str, limit: int) -> int:
+    """沿著 parent_job_id 往上數有幾個上層任務（最多數到 limit）。"""
+    count = 0
+    current = await session.scalar(select(JobRow.parent_job_id).where(JobRow.id == job_id))
+    while current is not None and count < limit:
+        count += 1
+        current = await session.scalar(select(JobRow.parent_job_id).where(JobRow.id == current))
+    return count

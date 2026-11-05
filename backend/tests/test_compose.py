@@ -87,3 +87,19 @@ def test_env_example_lists_the_gemini_settings() -> None:
     assert '之後的計畫會加入' not in example
     # docker compose 也讀 .env 的變數：設定 COMFYUI_URL=127.0.0.1 會讓容器連不到 Windows 上的 ComfyUI
     assert not any(line.startswith('COMFYUI_URL=') for line in example.splitlines())
+
+
+def test_n8n_runs_only_in_the_automation_profile_and_never_blocks_the_default_stack() -> None:
+    text = (REPO_ROOT / 'docker-compose.yml').read_text(encoding='utf-8')
+    services = load('docker-compose.yml')['services']
+    for name in ('n8n', 'n8n-db'):
+        assert services[name]['profiles'] == ['automation']
+    n8n = services['n8n']
+    assert n8n['ports'] == ['127.0.0.1:5678:5678']
+    assert not n8n['image'].endswith(':latest')
+    # ${VAR:?訊息} 在解析整份檔案時就檢查：沒有用 automation profile 的 docker compose up 也會失敗
+    assert ':?' not in text
+    for name in ('N8N_ENCRYPTION_KEY', 'AUTOMATION_TOKEN', 'JOB_WEBHOOK_SECRET'):
+        assert '$$' + name in n8n['command'][0]
+    for name in ('api', 'worker'):
+        assert 'api' in services[name]['environment']['ALLOWED_HOSTS']

@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import secrets
+from collections.abc import Sequence
 from contextlib import aclosing
+from dataclasses import dataclass
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -17,6 +19,7 @@ from app.adapters.gemini import NOT_CONFIGURED, GeminiError
 from app.api.catalog import api_options
 from app.api.services import ApiServices, Services
 from app.contract import (
+    Brand,
     Copy,
     DashboardStats,
     HistoryEntry,
@@ -30,6 +33,7 @@ from app.contract import (
     LogEvent,
     Model,
     ParsedBrief,
+    Product,
 )
 from app.core.clock import iso, utc_now
 from app.errors import Invalid, NotFound, Unavailable
@@ -79,10 +83,24 @@ async def parse_brief(body: BriefRequest, services: Services) -> ParsedBrief:
         raise Invalid(f'找不到品牌：{body.brand_id}')
     if body.product_id and product is None:
         raise Invalid(f'找不到商品：{body.product_id}')
+    return await parse_text(services, brand, body.text, product)
+
+
+async def parse_text(services: ApiServices, brand: Brand, text: str, product: Product | None) -> ParsedBrief:
     try:
-        return await asyncio.wait_for(services.agent.parse_brief(brand, body.text, product), BRIEF_TIMEOUT)
+        return await asyncio.wait_for(services.agent.parse_brief(brand, text, product), BRIEF_TIMEOUT)
     except TimeoutError as error:
         raise Unavailable(f'Gemini 沒有在 {BRIEF_TIMEOUT} 秒內完成需求拆解，請稍後再試') from error
+
+
+def check_selection(template_ids: Sequence[str], variants_per_template: int) -> None:
+    """模板與候選張數的檢查：自動化建任務在呼叫（要花錢的）需求拆解前也先檢查。"""
+    if not template_ids:
+        raise Invalid('至少要選一個通路模板')
+    if len(set(template_ids)) != len(template_ids):
+        raise Invalid('通路模板不可重複')
+    if not 1 <= variants_per_template <= 8:
+        raise Invalid('每個模板的候選張數需為 1–8')
 
 
 async def _validate(services: ApiServices, job_input: JobInput) -> None:
@@ -94,12 +112,7 @@ async def _validate(services: ApiServices, job_input: JobInput) -> None:
         raise Invalid(f'找不到品牌：{job_input.brand_id}')
     if product is None:
         raise Invalid(f'找不到商品：{job_input.product_id}')
-    if not job_input.template_ids:
-        raise Invalid('至少要選一個通路模板')
-    if len(set(job_input.template_ids)) != len(job_input.template_ids):
-        raise Invalid('通路模板不可重複')
-    if not 1 <= job_input.variants_per_template <= 8:
-        raise Invalid('每個模板的候選張數需為 1–8')
+    check_selection(job_input.template_ids, job_input.variants_per_template)
     if job_input.max_retries < 0:
         raise Invalid('最大重試次數需為 0 以上的整數')
     if product.brand_id != brand.id:
@@ -130,9 +143,20 @@ async def _check_gemini(services: ApiServices, job_input: JobInput) -> None:
     await services.ledger.check(scope, settings.gemini_llm_model)
 
 
-@router.post('/api/jobs', status_code=201)
-async def create_job(job_input: JobInput, services: Services) -> JobCreated:
-    """寫入任務、送出 job.accepted 與 job.status queued，放進 jobs 佇列。"""
+@dataclass(frozen=True)
+class JobMeta:
+    """自動化建立的任務另外記錄的欄位（不在 JobInput 合約裡）。"""
+
+    client_ref: str | None = None
+    parent_job_id: str | None = None
+    reviewer_feedback: str | None = None
+
+
+NO_META = JobMeta()
+
+
+async def submit_job(services: ApiServices, job_input: JobInput, meta: JobMeta = NO_META) -> str:
+    """檢查、寫入任務、送出 job.accepted 與 job.status queued，放進 jobs 佇列；回傳任務 id。"""
     await _validate(services, job_input)
     now = utc_now()
     local = now.astimezone(ZoneInfo(services.settings.timezone))
@@ -140,7 +164,15 @@ async def create_job(job_input: JobInput, services: Services) -> JobCreated:
         job_id = jobs.make_job_id(local)
         try:
             async with services.db.session() as s:
-                await jobs.create_job(s, job_id, job_input, now)
+                await jobs.create_job(
+                    s,
+                    job_id,
+                    job_input,
+                    now,
+                    client_ref=meta.client_ref,
+                    parent_job_id=meta.parent_job_id,
+                    reviewer_feedback=meta.reviewer_feedback,
+                )
             break
         except IntegrityError:
             # 同一分鐘內 4 位亂數重複：換一個
@@ -155,7 +187,13 @@ async def create_job(job_input: JobInput, services: Services) -> JobCreated:
         if not await _fail_unless_taken(services, job_id):
             raise Unavailable('目前無法排入任務（佇列服務沒有回應），請稍後再試') from error
         # 排入其實成功了（只是回應遺失），worker 已經取走任務：照常回傳
-    return JobCreated(job_id=job_id)
+    return job_id
+
+
+@router.post('/api/jobs', status_code=201)
+async def create_job(job_input: JobInput, services: Services) -> JobCreated:
+    """寫入任務、送出 job.accepted 與 job.status queued，放進 jobs 佇列。"""
+    return JobCreated(job_id=await submit_job(services, job_input))
 
 
 async def _fail_unless_taken(services: ApiServices, job_id: str) -> bool:
@@ -234,8 +272,7 @@ async def stream_job(websocket: WebSocket, job_id: str, services: Services, afte
             raise error
 
 
-@router.post('/api/jobs/{job_id}/select', status_code=201)
-async def select_render(job_id: str, body: SelectRequest, services: Services) -> HistoryEntry:
+async def record_selection(services: ApiServices, job_id: str, render_id: str, copy: Copy) -> HistoryEntry:
     """選定候選圖：寫入歷史紀錄，再由 worker 回寫成歷史切塊（writtenToRag）。
 
     回寫最多等 WRITE_BACK_WAIT 秒；逾時、失敗或被中止時 writtenToRag 為 false。歷史紀錄已經建立，所以不回錯誤。
@@ -244,9 +281,9 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
         summary = await jobs.get_summary(s, job_id)
         if summary is None:
             raise NotFound(f'找不到任務：{job_id}')
-        render = await jobs.get_render(s, job_id, body.render_id)
+        render = await jobs.get_render(s, job_id, render_id)
         if render is None:
-            raise NotFound(f'找不到候選圖：{body.render_id}')
+            raise NotFound(f'找不到候選圖：{render_id}')
         entry = HistoryEntry(
             id=f'hist_{secrets.token_hex(6)}',
             job_id=job_id,
@@ -255,7 +292,7 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
             input=summary.input,
             template_id=render.template_id,
             render=render,
-            copy_=body.copy_,
+            copy_=copy,
             selected_at=iso(utc_now()),
             favorite=False,
             written_to_rag=False,
@@ -270,6 +307,11 @@ async def select_render(job_id: str, body: SelectRequest, services: Services) ->
     if done.completed and done.result:
         entry = entry.model_copy(update={'written_to_rag': True})
     return entry
+
+
+@router.post('/api/jobs/{job_id}/select', status_code=201)
+async def select_render(job_id: str, body: SelectRequest, services: Services) -> HistoryEntry:
+    return await record_selection(services, job_id, body.render_id, body.copy_)
 
 
 @router.get('/api/history')

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from app.adapters.composer import ComposerClient, brand_json
+from app.adapters.composer import ComposerClient, brand_json, guard_text, spec_request_json
 from app.adapters.gemini import GeminiCall
 from app.brands import load_brands
 from app.contract import Brand, BrandRules, PromptSpec, RagChunk, RagHit, ReviewCheck
@@ -225,6 +225,26 @@ async def test_the_next_round_sees_the_previous_round(composer: ComposerClient) 
     )
     text = user_text(gemini.calls[0])
     assert '25.5%' in text and 'product_ratio' in text and first.copy_.subhead in text
+
+
+async def test_reviewer_feedback_goes_to_gemini(composer: ComposerClient) -> None:
+    gemini = FakeGemini(spec=[GOOD, GOOD])
+    agent = GeminiAgent(gemini, composer, SETTINGS)
+    await agent.build_spec(await request(composer), FakeRun('job_agent'))
+    await agent.build_spec(await request(composer, feedback='標題改成限時三天'), FakeRun('job_agent'))
+    first, second = gemini.calls
+    assert json.loads(user_text(first))['reviewerFeedback'] is None
+    assert json.loads(user_text(second))['reviewerFeedback'] == '標題改成限時三天'
+
+
+async def test_the_offer_guard_treats_the_feedback_as_part_of_the_brief(composer: ComposerClient) -> None:
+    """護欄判斷「需求沒提到的價格與優惠」時，意見裡寫的價格可以出現在文案。"""
+    plain = await request(composer)
+    assert guard_text(plain) == TEXT
+    assert spec_request_json(plain)['text'] == TEXT
+    revised = await request(composer, feedback='改成 399 元')
+    assert guard_text(revised) == f'{TEXT} 改成 399 元'
+    assert spec_request_json(revised)['text'] == f'{TEXT} 改成 399 元'
 
 
 async def test_layout_rules_reach_gemini_with_the_brand_numbers(composer: ComposerClient) -> None:

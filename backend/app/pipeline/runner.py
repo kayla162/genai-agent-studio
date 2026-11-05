@@ -180,6 +180,9 @@ class JobContext:
     brand: Brand
     product: Product
     templates: list[ChannelTemplate]
+    #: 審核者的修改意見與被退回的任務（由「退回並重新生成」建立時）
+    feedback: str | None = None
+    parent_job_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,7 @@ async def _load(db: Database, job_id: str) -> JobContext:
         row = await s.get(JobRow, job_id)
         assert row is not None
         job_input = JobInput.model_validate(row.input)
+        feedback, parent_job_id = row.reviewer_feedback, row.parent_job_id
         brand = await catalog.get_brand(s, job_input.brand_id)
         product = await catalog.get_product(s, job_input.product_id)
     if brand is None:
@@ -228,7 +232,14 @@ async def _load(db: Database, job_id: str) -> JobContext:
     if product is None:
         raise AppError(f'找不到商品：{job_input.product_id}（可能已被刪除）')
     templates = [get_template(t) for t in job_input.template_ids]
-    return JobContext(job_id, job_input, brand, product, templates)
+    return JobContext(job_id, job_input, brand, product, templates, feedback=feedback, parent_job_id=parent_job_id)
+
+
+def with_feedback(job_input: JobInput, feedback: str | None) -> JobInput:
+    """RAG 查詢用的輸入：把審核者的意見接在需求後面，讓相關規範也一起被召回。"""
+    if not feedback:
+        return job_input
+    return job_input.model_copy(update={'brief': f'{job_input.brief}｜審核者的修改意見：{feedback}'})
 
 
 async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
@@ -238,6 +249,8 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
 
     # 1. 需求拆解：沿用使用者在表單確認過的欄位
     await run.log('ws', f'→ job.create brand={brand.id} product={product.id} templates={",".join(inp.template_ids)}')
+    if ctx.feedback:
+        await run.log('agent', f'審核者退回（{ctx.parent_job_id}）：{ctx.feedback}', 'warn')
     await run.phase(300)
     await run.log('agent', f'{inp.llm}：拆解需求「{truncate(inp.brief, 24)}」')
     await run.phase(PHASE_MS['parse'] - 300)
@@ -251,7 +264,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
     await run.phase(PHASE_MS['retrieve_start'] - PHASE_MS['parse'])
     await run.status('retrieving', 0)
     await run.log('rag', f'embed query（bge-m3）→ similarity_search(collection="{brand.id}_ci")')
-    query, hits = await ports.retriever.retrieve(brand, product, inp, run)
+    query, hits = await ports.retriever.retrieve(brand, product, with_feedback(inp, ctx.feedback), run)
     await run.phase(PHASE_MS['retrieved'] - PHASE_MS['retrieve_start'])
     await run.emit(RagRetrievedEvent(type='rag.retrieved', query=query, hits=hits))
     await run.log('rag', f'召回 {len(hits)} 筆品牌規範')
@@ -289,6 +302,7 @@ async def _pipeline(run: JobRun, ctx: JobContext, ports: Ports) -> None:
                 text=inp.brief,
                 hits=list(prompt_hits),
                 previous=previous.get(template.id),
+                feedback=ctx.feedback,
             )
             for template in pending
         ]

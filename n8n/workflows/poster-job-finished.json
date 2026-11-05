@@ -1,0 +1,869 @@
+{
+  "id": "poster-job-finished",
+  "name": "poster-job-finished（任務結束通知與審核）",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "poster-job-finished",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "deb92c60-8310-5ab2-b9e8-c5872dbb464f",
+      "name": "收到通知",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        100
+      ],
+      "webhookId": "a0bf5c42-b7ac-518b-b6ed-aa5d5f7df2ae"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first();\nconst h = item.json.headers;\nconst raw = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst timestamp = Number(h['x-webhook-timestamp']);\nconst given = String(h['x-webhook-signature'] || '');\nconst expected = 'v1=' + crypto.createHmac('sha256', $env.JOB_WEBHOOK_SECRET)\n  .update(Buffer.concat([Buffer.from(`${timestamp}.`), raw]))\n  .digest('hex');\nconst fresh = Number.isFinite(timestamp) && Math.abs(Date.now() / 1000 - timestamp) <= 300;\nconst same = given.length === expected.length &&\n  crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));\nif (!fresh || !same) {\n  return [{ json: { valid: false, reason: fresh ? 'bad signature' : 'stale timestamp' } }];\n}\nconst id = String(h['x-webhook-id']);\nconst seen = $getWorkflowStaticData('global');\nseen.ids = seen.ids || [];\nconst duplicate = seen.ids.includes(id);\nif (!duplicate) {\n  seen.ids.push(id);\n  if (seen.ids.length > 1000) seen.ids.splice(0, seen.ids.length - 1000);\n}\nreturn [{ json: { valid: true, duplicate, payload: JSON.parse(raw.toString('utf8')) } }];"
+      },
+      "id": "1cd61262-bbd4-51b9-a8f9-a624e1633f8c",
+      "name": "驗證簽章",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e4c14c24-bcc1-5815-989d-dd4aa81da1a8",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a901e663-90f1-5dff-a126-d3186f99be29",
+      "name": "有效？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.reason }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "80ffedc7-ecd6-514a-906e-04ddf232d9f7",
+      "name": "回覆 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "ok",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c58440d2-4394-50fa-9408-ed1ebca525d2",
+      "name": "回覆 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f7cb45d4-201e-5291-adb0-3c1d3dccccef",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d2786feb-98db-59b8-b183-3b42b04922dd",
+      "name": "重複？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ad5d372b-702a-5c44-9987-f119e233ebb7",
+              "leftValue": "={{ ($json.payload.clientRef || '').startsWith('sheet:') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "51bc07f7-ff48-5707-8f4c-1d6afe742ce6",
+      "name": "來自試算表？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.payload.clientRef.split(':row:')[0].slice('sheet:'.length) }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "需求",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ Number($json.payload.clientRef.split(':row:')[1]) }}",
+            "status": "={{ $json.payload.stage }}",
+            "score": "={{ $json.payload.best?.score ?? '' }}",
+            "posterUrl": "={{ $json.payload.studioUrl }}",
+            "message": "={{ $json.payload.reason ?? $json.payload.failedChecks.map(c => c.name).join('、') }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "score",
+              "displayName": "score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "posterUrl",
+              "displayName": "posterUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "fe133f7d-a8e9-5e91-8d6e-9aea9972b96e",
+      "name": "回填試算表",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1320,
+        -100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "bd1028c7-ee43-53f8-84fd-e7dd1edc930b",
+              "leftValue": "={{ ['done', 'needs_review'].includes($json.payload.stage) && !!$json.payload.best }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0d1fed1e-15f2-5455-95f4-85e320c43121",
+      "name": "需要審核？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3cea3941-5b76-514c-8507-77625eed4830",
+              "name": "content",
+              "value": "={{ [($json.payload.stage === 'done' ? '✅ 海報完成，請審核' : '⚠️ 需要人工審核') + '（任務 ' + $json.payload.jobId + '）', '品牌：' + $json.payload.brandId + '　商品：' + $json.payload.productId, '需求：' + $json.payload.brief, '最高分：' + ($json.payload.best.score ?? '—') + ' 分（' + $json.payload.best.renderId + '）', '未通過的檢查：' + ($json.payload.failedChecks.length ? $json.payload.failedChecks.map(c => c.name).join('、') : '無'), $json.payload.reason ? '原因：' + $json.payload.reason : '', '候選圖：' + $json.payload.renders.map(r => r.renderId + '（' + r.templateId + '，' + (r.score ?? '—') + ' 分）').join('、'), 'Studio：' + $json.payload.studioUrl, '審核表單：' + $execution.resumeFormUrl].filter(line => line).join('\\n').slice(0, 2000) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "6c7a55ed-2840-58c8-919f-9d6e4e89ddc8",
+      "name": "組出訊息",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e69e2ba4-e373-5f99-9281-48f282150c42",
+              "leftValue": "={{ !!$json.payload.best.imageUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b32b7586-f7f3-5802-8a02-9ea4093f53f3",
+      "name": "有縮圖？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.AUTOMATION_API_URL }}{{ $json.payload.best.imageUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "04db151a-91e5-5934-b334-0321127ea957",
+      "name": "下載海報",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "payload_json",
+              "value": "={{ JSON.stringify({ content: $('組出訊息').first().json.content }) }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "files[0]",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "977e83b6-3333-5d62-8ba7-d9be6065e172",
+      "name": "通知 Discord（附圖）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content }) }}",
+        "options": {}
+      },
+      "id": "8ce0c985-3ec1-5517-87fc-e0a8b2db4204",
+      "name": "通知 Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "海報審核",
+        "formDescription": "={{ '任務 ' + $('驗證簽章').first().json.payload.jobId + '：' + $('驗證簽章').first().json.payload.brief }}",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "決定",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "核准"
+                  },
+                  {
+                    "option": "退回"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "候選圖",
+              "placeholder": "候選圖的 renderId；空白為最高分"
+            },
+            {
+              "fieldLabel": "修改意見",
+              "fieldType": "textarea",
+              "placeholder": "退回時給生成的修改意見"
+            }
+          ]
+        },
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 7,
+        "resumeUnit": "days",
+        "options": {}
+      },
+      "id": "92b1342f-1c0a-573c-9684-57e127e796bd",
+      "name": "等待審核",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        100
+      ],
+      "webhookId": "f6041bff-b202-5347-a8e6-4372a1080266"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a8c62c16-84a1-5e06-b730-2565cbad1fbb",
+              "leftValue": "={{ $json['決定'] === '核准' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a3d0645-acb8-5614-bc8f-16f729c85d2b",
+      "name": "核准？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0a93523a-4810-52eb-8a50-0edf1ae2bb16",
+              "leftValue": "={{ $json['決定'] === '退回' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2b0cf457-2346-58a6-9bff-27e34ff07d33",
+      "name": "退回？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AUTOMATION_API_URL }}/api/automation/jobs/{{ $('驗證簽章').first().json.payload.jobId }}/approve",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AUTOMATION_TOKEN }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('驗證簽章').first().json.payload.webhookId }}:approve"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ renderId: String($json['候選圖'] || '').trim() || null }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b25c2c57-4152-53de-b12b-df5db1205da6",
+      "name": "核准",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AUTOMATION_API_URL }}/api/automation/jobs/{{ $('驗證簽章').first().json.payload.jobId }}/revise",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AUTOMATION_TOKEN }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('驗證簽章').first().json.payload.webhookId }}:revise"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ feedback: String($json['修改意見'] || '').trim().slice(0, 500) || '請重新生成' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "580c5ea3-60a1-5e04-8da3-6798609fb245",
+      "name": "退回",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: '任務 ' + $('驗證簽章').first().json.payload.jobId + '：' + ($json.error ? '⚠️ ' + $json.error.message + '，請到 Studio 處理：' + $('驗證簽章').first().json.payload.studioUrl : $json.render ? '✅ 已選定 ' + $json.render.id : '🔁 已退回，新任務 ' + $json.jobId) }) }}",
+        "options": {}
+      },
+      "id": "d8586ced-d550-5925-abf4-0e4c975ee158",
+      "name": "回覆結果",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "收到通知": {
+      "main": [
+        [
+          {
+            "node": "驗證簽章",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "驗證簽章": {
+      "main": [
+        [
+          {
+            "node": "有效？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有效？": {
+      "main": [
+        [
+          {
+            "node": "回覆 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "回覆 200": {
+      "main": [
+        [
+          {
+            "node": "重複？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "重複？": {
+      "main": [
+        [],
+        [
+          {
+            "node": "來自試算表？",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "需要審核？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "來自試算表？": {
+      "main": [
+        [
+          {
+            "node": "回填試算表",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "需要審核？": {
+      "main": [
+        [
+          {
+            "node": "組出訊息",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "組出訊息": {
+      "main": [
+        [
+          {
+            "node": "有縮圖？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有縮圖？": {
+      "main": [
+        [
+          {
+            "node": "下載海報",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下載海報": {
+      "main": [
+        [
+          {
+            "node": "通知 Discord（附圖）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "通知 Discord（附圖）": {
+      "main": [
+        [
+          {
+            "node": "等待審核",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "通知 Discord": {
+      "main": [
+        [
+          {
+            "node": "等待審核",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "等待審核": {
+      "main": [
+        [
+          {
+            "node": "核准？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "核准？": {
+      "main": [
+        [
+          {
+            "node": "核准",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "退回？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "退回？": {
+      "main": [
+        [
+          {
+            "node": "退回",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "核准": {
+      "main": [
+        [
+          {
+            "node": "回覆結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "退回": {
+      "main": [
+        [
+          {
+            "node": "回覆結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "poster-error"
+  },
+  "pinData": {},
+  "tags": []
+}

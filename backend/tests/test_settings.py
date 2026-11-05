@@ -61,3 +61,38 @@ def test_the_api_key_stays_out_of_repr() -> None:
     assert 'AIza-test-key-1234' not in repr(s)
     assert 'AIza-test-key-1234' not in str(s.model_dump())
     assert s.gemini_api_key.get_secret_value() == 'AIza-test-key-1234'
+
+
+TOKEN = 't' * 32
+SECRET = 's' * 32
+
+
+def test_automation_defaults_are_off() -> None:
+    s = Settings(_env_file=None)
+    assert s.automation_token.get_secret_value() == ''
+    assert s.job_webhook_url == ''
+    assert s.job_webhook_secret.get_secret_value() == ''
+    assert s.studio_base_url == 'http://127.0.0.1:3000'
+    assert s.automation_templates == ['ig-post', 'story', 'ecom-main']
+    assert s.automation_variants == 2
+    assert TOKEN not in repr(Settings(_env_file=None, automation_token=TOKEN))
+
+
+def test_automation_token_must_be_long_enough() -> None:
+    with pytest.raises(ValidationError, match='AUTOMATION_TOKEN 至少要 32 個字元'):
+        Settings(_env_file=None, automation_token='short')
+    assert Settings(_env_file=None, automation_token=TOKEN).automation_token.get_secret_value() == TOKEN
+
+
+def test_job_webhook_needs_an_http_url_and_a_secret() -> None:
+    with pytest.raises(ValidationError, match='JOB_WEBHOOK_URL 只能是 http:// 或 https://'):
+        Settings(_env_file=None, job_webhook_url='ftp://n8n/hook', job_webhook_secret=SECRET)
+    with pytest.raises(ValidationError, match='JOB_WEBHOOK_SECRET 必填且至少 32 個字元'):
+        Settings(_env_file=None, job_webhook_url='http://n8n:5678/webhook/x')
+    ok = Settings(_env_file=None, job_webhook_url='http://n8n:5678/webhook/x', job_webhook_secret=SECRET)
+    assert ok.job_webhook_url == 'http://n8n:5678/webhook/x'
+
+
+def test_automation_variants_range() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, automation_variants=9)

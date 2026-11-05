@@ -301,6 +301,7 @@ class GeminiAgent(Agent):
                 'image': {'width': size[0], 'height': size[1], 'aspect': round(size[0] / size[1], 3)} if size else None,
             },
             'brief': {'text': request.text, 'parsed': request.brief.to_json()},
+            'reviewerFeedback': request.feedback,
             'template': {
                 'id': template.id,
                 'label': template.label,

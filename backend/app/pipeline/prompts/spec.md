@@ -10,6 +10,7 @@ user 訊息是一份 JSON：
 - `brand`：品牌名稱、類別、色票、字型、視覺風格、本次語氣的預設文案（`toneExample`，當作範例）、禁用詞（`bannedWords`）、替代用語（`replacements`）、效果宣稱詞（`claimWords`）與註記用語。
 - `product`：商品名稱、特色、售價、原價與商品圖的尺寸（`image`，寬高與長寬比）。
 - `brief`：使用者的一句話（`text`）與拆解後的欄位（`parsed`）。
+- `reviewerFeedback`：審核者退回時寫的修改意見；沒有時為 null。
 - `template`：模板 id、名稱、畫布尺寸（像素）、比例與預設版型（`defaultLayout`，8 個元素的 `[x, y, w, h]`）。
 - `guidelines`：這次檢索到的品牌規範全文。品牌規範以這些為準。
 - `previous`：上一輪最高分候選的文案、版面、未通過的檢查（名稱、規則、數值）與修正項；第一輪為 null。
@@ -27,6 +28,7 @@ user 訊息是一份 JSON：
 - 不可以出現 `brand.bannedWords`；要表達類似的意思時改用 `brand.replacements` 的替代用語。不可以宣稱醫療效能或保證效果。
 - 效果宣稱詞（`brand.claimWords`）可以用，程式會自動在頁尾加上註記。
 - 價格與優惠：`brief.parsed.offer` 有值時，`badge.main` 由程式固定為該優惠。文案裡不可以出現需求沒有提到的折扣、買幾送幾、金額或百分比。
+- `reviewerFeedback` 有值時優先照做（例如改標題、改語氣、強調某個賣點），但仍要遵守品牌規範、禁用詞與長度限制。意見裡提到的價格與優惠視同需求提到的。
 - 售價、原價、商品名稱、色票與頁尾註記由程式決定，不用寫。
 
 ## 版面（layout）

@@ -4,7 +4,20 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, false
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -73,6 +86,12 @@ class JobRow(Base):
     last_seq: Mapped[int] = mapped_column(Integer, server_default='0')
     cancel_requested: Mapped[bool] = mapped_column(Boolean, server_default=false())
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    #: 自動化呼叫端的參照（例如 sheet:<id>:row:12）；原樣存起來，在 webhook 帶回
+    client_ref: Mapped[str | None] = mapped_column(String)
+    #: 由「退回並重新生成」建立時，被退回的任務
+    parent_job_id: Mapped[str | None] = mapped_column(ForeignKey('jobs.id', ondelete='SET NULL'))
+    #: 審核者的修改意見（Prompt 構建、RAG 查詢與價格護欄使用）
+    reviewer_feedback: Mapped[str | None] = mapped_column(Text)
 
 
 class JobEventRow(Base):
@@ -123,3 +142,40 @@ class JobUsageRow(Base):
     #: Plan 7 的 GPU 秒數
     seconds: Mapped[float | None] = mapped_column(Float)
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+
+
+class WebhookOutboxRow(Base):
+    """任務結束的通知：與結束事件在同一個交易內寫入，worker 發送並重試。payload 在寫入時就固定。"""
+
+    __tablename__ = 'webhook_outbox'
+    __table_args__ = (
+        UniqueConstraint('job_id', 'event', name='uq_webhook_outbox_job_event'),
+        Index('ix_webhook_outbox_due', 'status', 'next_attempt_at'),
+    )
+
+    #: wh_<12 位 hex>，也是 X-Webhook-Id（重送時不變）
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey('jobs.id', ondelete='CASCADE'))
+    #: job.finished
+    event: Mapped[str]
+    payload: Mapped[Json]
+    #: pending、delivered、dead
+    status: Mapped[str]
+    attempts: Mapped[int] = mapped_column(Integer, server_default='0')
+    next_attempt_at: Mapped[datetime]
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime]
+    delivered_at: Mapped[datetime | None]
+
+
+class AutomationRequestRow(Base):
+    """自動化 API 的冪等鍵：同一個 (key, action) 再次呼叫時回傳第一次的回應。response 為空表示還在處理中。"""
+
+    __tablename__ = 'automation_requests'
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    #: approve、revise
+    action: Mapped[str] = mapped_column(String, primary_key=True)
+    job_id: Mapped[str]
+    response: Mapped[Json | None]
+    created_at: Mapped[datetime] = mapped_column(index=True)

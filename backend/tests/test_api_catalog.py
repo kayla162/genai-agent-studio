@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,9 @@ from app.adapters.composer import ComposerClient, ComposerHealth
 from app.api import catalog as catalog_api
 from app.brands import BrandLoadError
 from app.contract import ProductCutout
+from app.core.clock import utc_now
 from app.cutout.state import STATE_KEY
+from app.db.models import WebhookOutboxRow
 from app.files import resolve_file
 from app.queues import cutout_key, ingest_channel
 from app.rag.chunking import chunk_document
@@ -32,11 +34,12 @@ from app.rag.engine import RagEngine
 from app.rag.errors import RagError
 from app.rag.extract import MAX_BYTES, MAX_CHUNKS, NO_TEXT
 from app.rag.state import STATE_KEY as RAG_STATE_KEY
-from app.repo import catalog
+from app.repo import catalog, jobs
 from app.settings import Settings
 from tests.conftest import LiveApi
 from tests.fake_encoder import FakeEncoder
 from tests.fixtures import SAMPLE_PDF, load_fixture
+from tests.test_jobs import job_input
 
 PNG = b'\x89PNG\r\n\x1a\n' + bytes(24)
 DRAFT = {
@@ -65,6 +68,85 @@ async def status_of(api: LiveApi) -> dict[str, dict[str, Any]]:
     return {c['id']: c for c in (await api.http.get('/api/status')).json()['components']}
 
 
+async def webhook_status(api: LiveApi) -> dict[str, Any]:
+    components = (await api.http.get('/api/status')).json()['components']
+    return next(c for c in components if c['id'] == 'webhook')
+
+
+async def test_webhook_status_off_ok_and_error(api: LiveApi) -> None:
+    assert await webhook_status(api) == {
+        'id': 'webhook',
+        'label': 'Webhook（任務結束通知）',
+        'status': 'off',
+        'detail': '沒有設定 JOB_WEBHOOK_URL',
+    }
+    api.services.settings.job_webhook_url = 'http://n8n:5678/webhook/x'
+    try:
+        now = utc_now()
+        async with api.services.db.session() as s:
+            await jobs.create_job(s, 'job_s', job_input(), now)
+            s.add_all(
+                [
+                    WebhookOutboxRow(
+                        id='wh_p',
+                        job_id='job_s',
+                        event='a',
+                        payload={},
+                        status='pending',
+                        attempts=0,
+                        next_attempt_at=now,
+                        created_at=now,
+                    ),
+                    WebhookOutboxRow(
+                        id='wh_d',
+                        job_id='job_s',
+                        event='b',
+                        payload={},
+                        status='delivered',
+                        attempts=1,
+                        next_attempt_at=now,
+                        created_at=now,
+                    ),
+                ]
+            )
+            await s.commit()
+        assert await webhook_status(api) == {
+            'id': 'webhook',
+            'label': 'Webhook（任務結束通知）',
+            'status': 'ok',
+            'detail': '待發送 1 則・已送出 1 則',
+        }
+        async with api.services.db.session() as s:
+            s.add(
+                WebhookOutboxRow(
+                    id='wh_x',
+                    job_id='job_s',
+                    event='c',
+                    payload={},
+                    status='dead',
+                    attempts=1,
+                    next_attempt_at=now,
+                    created_at=now,
+                    last_error='HTTP 401：bad signature',
+                )
+            )
+            await s.commit()
+        status = await webhook_status(api)
+        assert status['status'] == 'error'
+        assert status['detail'] == '1 則通知發送失敗（最後一次：HTTP 401：bad signature）・待發送 1 則'
+        # 超過 24 小時的 dead 不再讓狀態變紅，只在說明裡提到
+        async with api.services.db.session() as s:
+            row = await s.get(WebhookOutboxRow, 'wh_x')
+            assert row is not None
+            row.created_at = now - timedelta(hours=25)
+            await s.commit()
+        status = await webhook_status(api)
+        assert status['status'] == 'ok'
+        assert status['detail'] == '待發送 1 則・已送出 1 則・1 則逾期的失敗通知'
+    finally:
+        api.services.settings.job_webhook_url = ''
+
+
 COMPOSER_LABEL = 'composer（排版、繪製與規則審查）'
 
 
@@ -81,6 +163,7 @@ async def test_status_reports_each_component(api: LiveApi) -> None:
         ('gemini', 'sim'),
         ('comfyui', 'sim'),
         ('cutout', 'error'),
+        ('webhook', 'off'),
     ]
     assert status['brands']['detail'] == '已載入 2 個品牌'
     # composer 顯示 REVIEW_MODE（預設 composer）與啟動時註冊的海報字型
