@@ -14,7 +14,7 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 from app.adapters.comfyui import ComfyError
 from app.adapters.composer import ComposerClient, ComposerError
@@ -36,6 +36,7 @@ from app.contract import (
 )
 from app.core.clock import utc_now
 from app.cutout.state import STATE_KEY as CUTOUT_STATE_KEY
+from app.db.models import WebhookOutboxRow
 from app.errors import Invalid, NotFound, Unavailable
 from app.files import product_folder
 from app.pipeline.comfy import load_workflow
@@ -218,7 +219,7 @@ async def _comfyui(services: ApiServices) -> str | tuple[ComponentState, str]:
 
 @router.get('/api/status')
 async def get_status(services: Services) -> SystemStatus:
-    *probed, gemini, comfyui, cutout = await asyncio.gather(
+    *probed, gemini, comfyui, cutout, webhook = await asyncio.gather(
         _probe('db', 'PostgreSQL', _db(services)),
         _probe('redis', 'Redis（佇列與事件推送）', _redis(services)),
         _probe('worker', 'worker（SAQ）', _workers(services)),
@@ -229,8 +230,28 @@ async def get_status(services: Services) -> SystemStatus:
         _probe('gemini', 'Gemini（LLM／VLM）', _gemini(services)),
         _probe('comfyui', 'ComfyUI（生圖）', _comfyui(services)),
         _probe('cutout', '去背模型（BiRefNet）', _cutout_model(services)),
+        _probe('webhook', 'Webhook（任務結束通知）', _webhook(services)),
     )
-    return SystemStatus(components=[*probed, gemini, comfyui, cutout])
+    return SystemStatus(components=[*probed, gemini, comfyui, cutout, webhook])
+
+
+async def _webhook(services: ApiServices) -> str | tuple[ComponentState, str]:
+    """有放棄發送（dead）的通知時為 error，附上最後一次的錯誤；其餘顯示待發送與已送出的筆數。"""
+    if not services.settings.job_webhook_url:
+        return 'off', '沒有設定 JOB_WEBHOOK_URL'
+    async with services.db.session() as s:
+        rows = await s.execute(select(WebhookOutboxRow.status, func.count()).group_by(WebhookOutboxRow.status))
+        counts: dict[str, int] = {status: n for status, n in rows}
+        pending, delivered, dead = (counts.get(k, 0) for k in ('pending', 'delivered', 'dead'))
+        if dead:
+            last = await s.scalar(
+                select(WebhookOutboxRow.last_error)
+                .where(WebhookOutboxRow.status == 'dead')
+                .order_by(WebhookOutboxRow.created_at.desc(), WebhookOutboxRow.id.desc())
+                .limit(1)
+            )
+            return 'error', f'{dead} 則通知發送失敗（最後一次：{last}）・待發送 {pending} 則'
+    return f'待發送 {pending} 則・已送出 {delivered} 則'
 
 
 async def _rag_model(services: ApiServices) -> tuple[ComponentState, str]:
