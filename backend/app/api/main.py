@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.adapters.composer import ComposerError
-from app.api import catalog, files, jobs
+from app.api import automation, catalog, files, jobs
 from app.api.services import ApiServices, start_services, stop_services
 from app.errors import AppError
 from app.pipeline.runner import failure_reason
@@ -76,6 +76,7 @@ def create_app(services: ApiServices | None = None) -> FastAPI:
     app.add_middleware(HostCheck, hosts=(services.settings if services else settings).allowed_hosts)
     app.include_router(catalog.router)
     app.include_router(jobs.router)
+    app.include_router(automation.router)
     app.include_router(files.router)
 
     @app.exception_handler(AppError)
