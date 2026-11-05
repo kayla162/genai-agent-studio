@@ -54,6 +54,15 @@ def test_job_finished_verifies_the_signature_before_responding() -> None:
     assert flow['settings']['errorWorkflow'] == 'poster-error'
 
 
+def test_sheet_write_back_never_blocks_the_review() -> None:
+    # 回填失敗（沒有憑證、Sheets 5xx、列被刪除）時照樣送出審核：200 已經回覆，後端不會重送
+    flow = load('poster-job-finished')
+    sheets = [n for n in flow['nodes'] if n['type'] == 'n8n-nodes-base.googleSheets']
+    assert [n['name'] for n in sheets] == ['回填試算表']
+    for node in sheets:
+        assert node.get('onError') == 'continueRegularOutput', node['name']
+
+
 def test_batch_submit_calls_the_automation_api() -> None:
     flow = load('poster-batch-submit')
     urls = [n['parameters'].get('url', '') for n in flow['nodes'] if n['type'] == 'n8n-nodes-base.httpRequest']
