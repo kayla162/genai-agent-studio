@@ -7,6 +7,7 @@
   （同步發現索引有差異時就載入 RAG 模型；沒有差異時，第一次檢索才載入）
 - 啟動時復原：原本執行中的任務標記失敗（不自動重跑），排隊中的任務與去背中的商品重新放回佇列；
   去背中的商品在執行期間也會定時補排（寫入佇列時出錯、紀錄遺失的商品不會一直卡在去背中）
+- 任務結束的通知：JOB_WEBHOOK_URL 有設定時，每 2 秒發送 outbox 裡到期的通知（失敗依退避表重試）
 """
 
 import asyncio
@@ -69,6 +70,7 @@ from app.rag.sync import UPSERT_BATCH, BrandLocks, sync_all, vector_record
 from app.repo import catalog, history
 from app.settings import Settings, settings
 from app.usage import Pricing, UsageLedger
+from app.webhooks.delivery import deliver_periodically
 
 logger = logging.getLogger(__name__)
 
@@ -477,6 +479,12 @@ async def main() -> None:
     requeueing = asyncio.create_task(requeue_cutouts_periodically(services, queues))
     # data/jobs/ 的舊檔案：啟動時清理一次，之後每天一次
     cleaning = asyncio.create_task(clean_job_files_periodically(services.db, services.settings))
+    # 任務結束的通知（JOB_WEBHOOK_URL 有設定時）：每 2 秒發送到期的通知，失敗依退避表重試
+    delivering = (
+        asyncio.create_task(deliver_periodically(services.db, services.settings))
+        if services.settings.job_webhook_url
+        else None
+    )
     workers = build_workers(services, queues)
     stop_on_signals(workers)
     try:
@@ -486,6 +494,8 @@ async def main() -> None:
         rag_warming.cancel()
         requeueing.cancel()
         cleaning.cancel()
+        if delivering is not None:
+            delivering.cancel()
         await queues.disconnect()
         await services.composer.aclose()
         await services.vectors.aclose()
