@@ -15,6 +15,11 @@ class NotFound(AppError):
     code = 'not_found'
 
 
+class Unauthorized(AppError):
+    status = 401
+    code = 'unauthorized'
+
+
 class Invalid(AppError):
     status = 400
     code = 'invalid'
