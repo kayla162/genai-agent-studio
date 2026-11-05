@@ -141,3 +141,31 @@ async def test_nothing_happens_without_a_webhook_url(seeded: Database) -> None:
         assert await deliver_due(seeded, Settings(_env_file=None, image_mode='sim', agent_mode='sim'), http, NOW) == 0
     async with seeded.session() as s:
         assert [r.attempts for r in await s.scalars(select(WebhookOutboxRow))] == [0]
+
+
+@respx.mock
+async def test_one_failing_row_does_not_undo_the_others(seeded: Database) -> None:
+    await add(seeded, outbox_row('wh_good'), outbox_row('wh_bad', due=NOW + timedelta(seconds=0)))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers['X-Webhook-Id'] == 'wh_bad':
+            raise ValueError('boom')
+        return httpx.Response(200)
+
+    respx.post(URL).mock(side_effect=handler)
+    async with httpx.AsyncClient() as http:
+        assert await deliver_due(seeded, SETTINGS, http, NOW) == 1
+    assert (await get(seeded, 'wh_good')).status == 'delivered'
+    bad = await get(seeded, 'wh_bad')
+    assert (bad.status, bad.attempts) == ('pending', 1)
+    assert bad.last_error is not None and bad.last_error.startswith('發送失敗')
+
+
+@respx.mock
+async def test_nul_characters_are_stripped_from_the_stored_error(seeded: Database) -> None:
+    await add(seeded, outbox_row('wh_nul'))
+    respx.post(URL).mock(return_value=httpx.Response(500, text='bad\x00body'))
+    async with httpx.AsyncClient() as http:
+        assert await deliver_due(seeded, SETTINGS, http, NOW) == 0
+    row = await get(seeded, 'wh_nul')
+    assert (row.status, row.attempts, row.last_error) == ('pending', 1, 'HTTP 500：badbody')

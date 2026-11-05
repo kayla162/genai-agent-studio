@@ -1,6 +1,7 @@
 """發送任務結束的通知：worker 每 POLL_INTERVAL 秒取一批到期的 pending（FOR UPDATE SKIP LOCKED，不會重複取得），
-簽章後 POST，依結果標記送達、排定重試或放棄（dead）。接收端依 X-Webhook-Id 去重：worker 在送出後、寫入結果前
-被結束時，同一則通知會再送一次。"""
+簽章後 POST，依結果標記送達、排定重試或放棄（dead）。每一筆各用一個交易：送出後立刻寫入結果，
+某一筆出錯不會連累其他筆。接收端依 X-Webhook-Id 去重：worker 在送出後、寫入結果前被結束時，
+同一則通知會再送一次。"""
 
 import asyncio
 import logging
@@ -41,6 +42,11 @@ class Outcome:
     error: str | None
 
 
+def clean(text: str) -> str:
+    """PostgreSQL 的文字欄位不能含 NUL。"""
+    return text.replace('\x00', '')
+
+
 async def send(http: httpx.AsyncClient, settings: Settings, row: WebhookOutboxRow, now: datetime) -> Outcome:
     body = encode(row.payload)
     timestamp = int(now.timestamp())
@@ -52,11 +58,13 @@ async def send(http: httpx.AsyncClient, settings: Settings, row: WebhookOutboxRo
             headers=headers(webhook_id=row.id, event=row.event, secret=secret, timestamp=timestamp, body=body),
         )
     except httpx.HTTPError as error:
-        return Outcome(False, True, f'連線失敗：{error!r}')
+        return Outcome(False, True, clean(f'連線失敗：{error!r}'))
+    except Exception as error:  # 網址格式錯誤等：當作可重試，仍受 MAX_ATTEMPTS 限制，不能讓迴圈卡住
+        return Outcome(False, True, clean(f'發送失敗：{error!r}'))
     if 200 <= res.status_code < 300:
         return Outcome(True, False, None)
     retry = res.status_code >= 500 or res.status_code in RETRY_STATUSES
-    return Outcome(False, retry, f'HTTP {res.status_code}：{res.text[:ERROR_CHARS]}')
+    return Outcome(False, retry, clean(f'HTTP {res.status_code}：{res.text[:ERROR_CHARS]}'))
 
 
 def apply_outcome(row: WebhookOutboxRow, outcome: Outcome, now: datetime) -> None:
@@ -74,24 +82,24 @@ async def deliver_due(db: Database, settings: Settings, http: httpx.AsyncClient,
     if not settings.job_webhook_url:
         return 0
     delivered = 0
-    async with db.session() as s:
-        rows = (
-            await s.scalars(
+    for _ in range(BATCH):
+        async with db.session() as s:
+            row = await s.scalar(
                 select(WebhookOutboxRow)
                 .where(WebhookOutboxRow.status == 'pending', WebhookOutboxRow.next_attempt_at <= now)
                 .order_by(WebhookOutboxRow.next_attempt_at)
-                .limit(BATCH)
+                .limit(1)
                 .with_for_update(skip_locked=True)
             )
-        ).all()
-        for row in rows:
+            if row is None:
+                break
             outcome = await send(http, settings, row, now)
             apply_outcome(row, outcome, now)
+            await s.commit()
             if outcome.delivered:
                 delivered += 1
             elif row.status == 'dead':
                 logger.warning('webhook 放棄發送：%s（任務 %s）：%s', row.id, row.job_id, row.last_error)
-        await s.commit()
     return delivered
 
 
