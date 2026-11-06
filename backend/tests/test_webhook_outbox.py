@@ -92,3 +92,33 @@ async def test_expect_stage_mismatch_writes_neither_event_nor_outbox(db: Databas
     assert await outbox(db) == []
     async with db.session() as s:
         assert [e.type for e in await s.scalars(select(JobEventRow).where(JobEventRow.job_id == job))] == ['job.status']
+
+
+async def test_a_failing_payload_builder_still_finishes_the_job(
+    db: Database, redis: Redis, job: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(**kwargs: object) -> dict[str, object]:
+        raise KeyError('brandId')
+
+    monkeypatch.setattr('app.events.build_job_finished', broken)
+    store = EventStore(db, redis, TARGET)
+    assert await store.append(job, status('done', 2)) is not None
+    async with db.session() as s:
+        snap = await jobs.get_job(s, job)
+    assert snap is not None
+    assert (snap.summary.stage, snap.summary.round) == ('done', 2)
+    [row] = await outbox(db)
+    assert (row.job_id, row.status) == (job, 'pending')
+    assert row.payload == {
+        'event': 'job.finished',
+        'webhookId': row.id,
+        'jobId': job,
+        'clientRef': 'sheet:abc:row:2',
+        'stage': 'done',
+        'round': 2,
+        'studioUrl': f'http://127.0.0.1:3000/agent?job={job}',
+        'finishedAt': row.payload['finishedAt'],
+        'payloadError': "KeyError: 'brandId'",
+    }
+    assert row.payload['finishedAt'].startswith('20')
+    assert f'組不出任務 {job} 的 job.finished 內容' in caplog.text

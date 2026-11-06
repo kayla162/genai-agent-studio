@@ -117,3 +117,28 @@ def build_job_finished(
         'studioUrl': studio_url(studio_base_url, job_id),
         'finishedAt': finished_at,
     }
+
+
+def minimal_job_finished(
+    *,
+    webhook_id: str,
+    job_id: str,
+    stage: str,
+    round: int,
+    client_ref: str | None,
+    studio_base_url: str,
+    finished_at: str,
+    error: str,
+) -> dict[str, Any]:
+    """build_job_finished 失敗時的替代內容：只用任務列本身的欄位，並以 payloadError 說明原因（收端到 Studio 查看）。"""
+    return {
+        'event': EVENT,
+        'webhookId': webhook_id,
+        'jobId': job_id,
+        'clientRef': client_ref,
+        'stage': stage,
+        'round': round,
+        'studioUrl': studio_url(studio_base_url, job_id),
+        'finishedAt': finished_at,
+        'payloadError': error,
+    }

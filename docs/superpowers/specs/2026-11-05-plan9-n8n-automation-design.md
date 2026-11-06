@@ -308,6 +308,8 @@ n8n 容器另外使用 `N8N_ENCRYPTION_KEY`、`DB_POSTGRESDB_*`，以及把 `AUT
 | §9 live E2E 加進 `docker-compose.e2e.yml` | 以不進 repo 的 override 與假接收端執行，結果記錄在 §14 | 不為一次性的驗證增加維護中的設定 |
 | §4.4 outbox 存目標網址 | 不存，發送時讀目前的 `JOB_WEBHOOK_URL` | 換網址後，還沒送出的通知改送新網址 |
 | §8 每次啟動都匯入工作流 | 只在 n8n volume 第一次啟動時匯入（標記檔 `.imported`）；之後以文件中的指令手動更新 | 每次匯入會蓋掉使用者在介面上的修改與啟用狀態 |
+| §4.1 只有 approve、revise 接受 `Idempotency-Key` | `POST /api/automation/jobs` 也接受（action `create`，沿用 `idempotent()`，整段含需求拆解都只執行一次）。`poster-batch-submit` 的「建立任務」送 `sheet:<試算表 id>:row:<列號>:<品牌、商品、需求與上一個 jobId 的 SHA-256>`；`automation_requests.job_id` 改為可空，建立成功後補上（migration 0005）；鍵的長度上限放寬為 300 | 排程重疊或回寫試算表失敗後重跑時，同一列會再建一個要花錢的 Gemini 任務；鍵依列的內容產生，改了需求或跑完後清空 `status` 重新產生（`jobId` 已回填）就是新的鍵。鍵保留 7 天，兩次請求剛好同時處理時第二次回 409 |
+| §4.4 outbox 的內容一律由 `build_job_finished` 組成 | 組不出來（例外）時記錄例外，改存精簡版：`event`、`webhookId`、`jobId`、`clientRef`、`stage`、`round`、`studioUrl`、`finishedAt` 與 `payloadError` | outbox 與結束狀態在同一個交易，組 payload 的程式出錯會讓任務的結束狀態跟著回滾；精簡版仍會送出，收端可到 Studio 查看 |
 
 ## 13. 已知限制
 

@@ -84,6 +84,10 @@
             {
               "name": "Authorization",
               "value": "=Bearer {{ $env.AUTOMATION_TOKEN }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'sheet:' + $env.GOOGLE_SHEET_ID + ':row:' + $json.row_number + ':' + JSON.stringify([String($json.brand ?? ''), String($json.product ?? ''), String($json.brief ?? ''), String($json.jobId ?? '')]).hash('sha256') }}"
             }
           ]
         },

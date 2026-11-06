@@ -30,7 +30,7 @@ from app.db.session import Database
 from app.errors import NotFound
 from app.settings import Settings
 from app.webhooks.payload import EVENT as WEBHOOK_EVENT
-from app.webhooks.payload import build_job_finished
+from app.webhooks.payload import build_job_finished, minimal_job_finished
 
 logger = logging.getLogger(__name__)
 
@@ -114,19 +114,32 @@ class EventStore:
             await s.scalars(select(JobEventRow.payload).where(JobEventRow.job_id == row.id).order_by(JobEventRow.seq))
         )
         webhook_id = new_webhook_id()
-        payload = build_job_finished(
-            webhook_id=webhook_id,
-            job_id=row.id,
-            stage=row.stage,
-            round=row.round,
-            job_input=row.input,
-            client_ref=row.client_ref,
-            parent_job_id=row.parent_job_id,
-            best_render_ids=row.best_render_ids,
-            events=events,
-            studio_base_url=self.webhook.studio_base_url,
-            finished_at=finished_at,
-        )
+        try:
+            payload = build_job_finished(
+                webhook_id=webhook_id,
+                job_id=row.id,
+                stage=row.stage,
+                round=row.round,
+                job_input=row.input,
+                client_ref=row.client_ref,
+                parent_job_id=row.parent_job_id,
+                best_render_ids=row.best_render_ids,
+                events=events,
+                studio_base_url=self.webhook.studio_base_url,
+                finished_at=finished_at,
+            )
+        except Exception as error:  # noqa: BLE001 - 組不出完整內容不能讓結束狀態跟著回滾；改送只有任務列欄位的通知
+            logger.exception('組不出任務 %s 的 %s 內容，改送精簡版', row.id, WEBHOOK_EVENT)
+            payload = minimal_job_finished(
+                webhook_id=webhook_id,
+                job_id=row.id,
+                stage=row.stage,
+                round=row.round,
+                client_ref=row.client_ref,
+                studio_base_url=self.webhook.studio_base_url,
+                finished_at=finished_at,
+                error=f'{type(error).__name__}: {error}',
+            )
         await s.execute(
             pg_insert(WebhookOutboxRow)
             .values(

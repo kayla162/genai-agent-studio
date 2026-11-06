@@ -80,7 +80,9 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
 
 - 只處理 `status` 為空的列；處理後依序變成 `queued` → 任務結束的階段（`done`、`needs_review`、`failed`、`cancelled`）或 `error`。
 - `score` 為最高分候選圖的分數，`posterUrl` 為 Studio 的任務頁，`message` 為失敗原因或沒通過的檢查。
-- 想重新產生某一列時，清空它的 `status`。
+- 想重新產生某一列時，清空它的 `status`（保留 `jobId`）。
+- 「建立任務」送出 `Idempotency-Key`：列號加上品牌、商品、需求與上一個 `jobId` 的 SHA-256。排程重疊或回寫試算表失敗後重跑時，
+  內容沒變的列回傳同一個任務，不會重複花錢；改了內容或清空 `status` 重新產生時是新的鍵。
 
 ## 5. 啟用
 

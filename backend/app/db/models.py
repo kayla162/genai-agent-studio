@@ -174,8 +174,9 @@ class AutomationRequestRow(Base):
     __tablename__ = 'automation_requests'
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
-    #: approve、revise
+    #: create、approve、revise
     action: Mapped[str] = mapped_column(String, primary_key=True)
-    job_id: Mapped[str]
+    #: create 在任務建立成功後才補上
+    job_id: Mapped[str | None]
     response: Mapped[Json | None]
     created_at: Mapped[datetime] = mapped_column(index=True)

@@ -39,6 +39,15 @@ async def require_token(services: Services, authorization: Annotated[str | None,
 router = APIRouter(prefix='/api/automation', tags=['自動化'], dependencies=[Depends(require_token)])
 
 
+#: 一條退回鏈最多幾次
+MAX_REVISIONS = 3
+#: 冪等鍵保留的天數
+IDEMPOTENCY_DAYS = 7
+
+#: 建立任務的鍵是 client_ref（最多 200 字）加上列內容的 SHA-256
+IdempotencyKey = Annotated[str | None, Header(alias='Idempotency-Key', max_length=300)]
+
+
 class AutomationJobRequest(Model):
     brand_id: str
     product_id: str
@@ -51,52 +60,59 @@ class AutomationJobRequest(Model):
 
 
 @router.post('/jobs', status_code=201)
-async def create_job(body: AutomationJobRequest, services: Services) -> JobCreated:
-    """在伺服器端拆解需求，其餘欄位以設定與可用選項的預設值補齊，再走與 Studio 相同的建任務流程。"""
-    async with services.db.session() as s:
-        brand = await catalog.get_brand(s, body.brand_id)
-        product = await catalog.get_product(s, body.product_id)
-    if brand is None:
-        raise Invalid(f'找不到品牌：{body.brand_id}')
-    if product is None:
-        raise Invalid(f'找不到商品：{body.product_id}')
-    # 先做不花錢的檢查：沒給的欄位以設定補齊（之後由 submit_job 檢查）
-    check_selection(
-        body.template_ids if body.template_ids is not None else ['x'],
-        body.variants_per_template if body.variants_per_template is not None else 1,
-    )
-    parsed = await parse_text(services, brand, body.brief, product)
-    settings = services.settings
-    options = api_options(settings)
-    job_input = JobInput(
-        brand_id=body.brand_id,
-        product_id=body.product_id,
-        brief=body.brief,
-        parsed_brief=parsed,
-        template_ids=body.template_ids or list(settings.automation_templates),
-        variants_per_template=body.variants_per_template or settings.automation_variants,
-        llm=options.llm[0],
-        engine=options.engines[0],
-        vlm=options.vlm[0],
-        max_retries=DEFAULT_MAX_RETRIES,
-        visual_style_id=body.visual_style_id,
-    )
-    return JobCreated(job_id=await submit_job(services, job_input, JobMeta(client_ref=body.client_ref)))
+async def create_job(
+    body: AutomationJobRequest, services: Services, idempotency_key: IdempotencyKey = None
+) -> JobCreated:
+    """在伺服器端拆解需求，其餘欄位以設定與可用選項的預設值補齊，再走與 Studio 相同的建任務流程。
 
+    帶 Idempotency-Key 時同一個鍵只建一個任務（n8n 排程重疊、回寫試算表失敗後重跑都不會重複花錢）；
+    鍵應由呼叫端依列的內容產生，內容改了就換一個鍵。"""
 
-#: 一條退回鏈最多幾次
-MAX_REVISIONS = 3
-#: 冪等鍵保留的天數
-IDEMPOTENCY_DAYS = 7
+    async def run() -> JobCreated:
+        async with services.db.session() as s:
+            brand = await catalog.get_brand(s, body.brand_id)
+            product = await catalog.get_product(s, body.product_id)
+        if brand is None:
+            raise Invalid(f'找不到品牌：{body.brand_id}')
+        if product is None:
+            raise Invalid(f'找不到商品：{body.product_id}')
+        # 先做不花錢的檢查：沒給的欄位以設定補齊（之後由 submit_job 檢查）
+        check_selection(
+            body.template_ids if body.template_ids is not None else ['x'],
+            body.variants_per_template if body.variants_per_template is not None else 1,
+        )
+        parsed = await parse_text(services, brand, body.brief, product)
+        settings = services.settings
+        options = api_options(settings)
+        job_input = JobInput(
+            brand_id=body.brand_id,
+            product_id=body.product_id,
+            brief=body.brief,
+            parsed_brief=parsed,
+            template_ids=body.template_ids or list(settings.automation_templates),
+            variants_per_template=body.variants_per_template or settings.automation_variants,
+            llm=options.llm[0],
+            engine=options.engines[0],
+            vlm=options.vlm[0],
+            max_retries=DEFAULT_MAX_RETRIES,
+            visual_style_id=body.visual_style_id,
+        )
+        return JobCreated(job_id=await submit_job(services, job_input, JobMeta(client_ref=body.client_ref)))
 
-IdempotencyKey = Annotated[str | None, Header(alias='Idempotency-Key', max_length=100)]
+    return await idempotent(services, idempotency_key, 'create', None, JobCreated, run)
 
 
 async def idempotent[M: Model](
-    services: Services, key: str | None, action: str, job_id: str, model: type[M], run: Callable[[], Awaitable[M]]
+    services: Services,
+    key: str | None,
+    action: str,
+    job_id: str | None,
+    model: type[M],
+    run: Callable[[], Awaitable[M]],
 ) -> M:
     """同一個 (key, action) 只執行一次：先佔用鍵，執行成功後存下回應；再次呼叫時回傳存下的回應。
-    執行失敗時放掉鍵（呼叫端可以重試）；另一個相同的請求還在處理中時回 409。"""
+    執行失敗時放掉鍵（呼叫端可以重試）；另一個相同的請求還在處理中時回 409。
+    job_id 為 None（建立任務）時，回應是 JobCreated 就以新任務的 id 補上。"""
     if key is None:
         return await run()
     now = utc_now()
@@ -132,6 +148,8 @@ async def idempotent[M: Model](
         row = await s.get(AutomationRequestRow, (key, action))
         assert row is not None
         row.response = result.to_json()
+        if row.job_id is None and isinstance(result, JobCreated):
+            row.job_id = result.job_id
         await s.commit()
     return result
 
