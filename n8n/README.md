@@ -8,7 +8,7 @@
 | 工作流 | 做什麼 |
 |---|---|
 | `poster-batch-submit` | 每 5 分鐘（或在介面按 Execute workflow 手動執行）讀取 Google Sheet 中 `status` 為空的列，逐列呼叫 `POST /api/automation/jobs`（`clientRef` 為 `sheet:<sheetId>:row:<列號>`）。成功時該列寫入 `status=queued` 與 `jobId`；失敗時寫入 `status=error` 與 API 回傳的說明，繼續處理下一列 |
-| `poster-job-finished` | 接收後端的 `job.finished` 與 `history.selected` webhook（`POST /webhook/poster-job-finished`）：驗證簽章、拒絕時間差超過 300 秒的請求、依 `X-Webhook-Id` 去重（保留最近 1000 筆），不通過回 401，通過立即回 200。來自試算表的任務回填 `status`、`score`、`posterUrl`、`message`；`done` 或 `needs_review` 時把最高分的審查用海報縮成 JPEG 預覽圖上傳到 Cloudflare R2，以 LINE 圖片訊息加上文字（分數、未通過的檢查、候選圖與審核表單連結）推播；沒有設定 R2、沒有海報或上傳失敗時只送文字，表單送出後呼叫 `approve`（核准）或 `revise`（退回並附修改意見）；退回與核准失敗時推播結果。<br>**選圖後發布**：Studio 選定或表單核准後收到 `history.selected`，下載定稿（選定時的文案、模板原尺寸 PNG）與預覽，上傳到 R2 的 `final/{jobId}/{historyId}.png`，以 LINE 圖片訊息加上下載原圖的連結推播；沒有設定 R2 或任何一步失敗時只送文字 |
+| `poster-job-finished` | 接收後端的 `job.finished` 與 `history.selected` webhook（`POST /webhook/poster-job-finished`）：驗證簽章、拒絕時間差超過 300 秒的請求、依 `X-Webhook-Id` 去重（保留最近 1000 筆），不通過回 401，通過立即回 200。來自試算表的任務以 `jobId` 找到那一列（退回產生的任務找上一個任務的 `jobId`，並把 `jobId` 換成新任務），回填 `status`、`score`、`posterUrl`、`message`；`done` 或 `needs_review` 時把最高分的審查用海報縮成 JPEG 預覽圖上傳到 Cloudflare R2，以 LINE 圖片訊息加上文字（分數、未通過的檢查、候選圖與審核表單連結）推播；沒有設定 R2、沒有海報或上傳失敗時只送文字，表單送出後呼叫 `approve`（核准）或 `revise`（退回並附修改意見）；退回與核准失敗時推播結果。<br>**選圖後發布**：Studio 選定或表單核准後收到 `history.selected`，下載定稿（選定時的文案、模板原尺寸 PNG）與預覽，上傳到 R2 的 `final/{jobId}/{historyId}.png`，以 LINE 圖片訊息加上下載原圖的連結推播；沒有設定 R2 或任何一步失敗時只送文字 |
 | `poster-error` | 上面兩條的錯誤工作流（Settings → Error workflow）：把工作流名稱、出錯的節點與錯誤訊息推播到 LINE |
 
 ```mermaid
@@ -96,6 +96,7 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
 - 只處理 `status` 為空的列；處理後依序變成 `queued` → 任務結束的階段（`done`、`needs_review`、`failed`、`cancelled`）或 `error`。
 - `score` 為最高分候選圖的分數，`posterUrl` 為 Studio 的任務頁，`message` 為失敗原因或沒通過的檢查。
 - 想重新產生某一列時，清空它的 `status`（保留 `jobId`）。
+- 任務結束時以 `jobId` 欄找到要回填的列，所以任務進行中插入、刪除或排序列都沒關係；不要修改 `jobId` 欄。
 - 「建立任務」送出 `Idempotency-Key`：列號加上品牌、商品、需求與上一個 `jobId` 的 SHA-256。排程重疊或回寫試算表失敗後重跑時，
   內容沒變的列回傳同一個任務，不會重複花錢；改了內容或清空 `status` 重新產生時是新的鍵。
 
@@ -149,7 +150,6 @@ docker compose exec postgres psql -U genai -d genai -c "UPDATE webhook_outbox SE
 
 - 不使用 R2 時，「上傳 R2」節點沒有選憑證會讓 n8n 拒絕 webhook（§3）：在介面把它停用（Deactivate），或照樣建立一個 `Cloudflare R2` 憑證。
 - Studio 建立的任務結束時也會發 LINE 審核訊息；在 Studio 選定海報後又在審核表單核准，歷史紀錄會多一筆。
-- 試算表回填依列號比對，任務進行中不要在試算表插入或刪除列。
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` 讓能編輯工作流的人讀到容器的環境變數（本機單人使用可以接受）。
 - n8n 與應用程式共用資料庫帳號 `genai`。
 
