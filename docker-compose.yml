@@ -181,8 +181,11 @@ services:
       GENERIC_TIMEZONE: Asia/Taipei
       TZ: Asia/Taipei
       # 審核表單與 webhook 的對外網址（LINE 訊息裡的表單連結）；經 Cloudflare Tunnel 開啟時設定 N8N_PUBLIC_URL
-      WEBHOOK_URL: ${N8N_PUBLIC_URL:-http://127.0.0.1:5678/}
+      # （n8n 2 起舊名稱 WEBHOOK_URL 已列為淘汰）
+      N8N_WEBHOOK_URL: ${N8N_PUBLIC_URL:-http://127.0.0.1:5678/}
       N8N_DIAGNOSTICS_ENABLED: 'false'
+      # Code 節點的逾時（秒）：明確設定，n8n 之後的版本把預設從 300 降到 60 時不受影響
+      N8N_RUNNERS_TASK_TIMEOUT: '300'
       N8N_PERSONALIZATION_ENABLED: 'false'
       # Code 節點驗簽要用 crypto；工作流以 $env 讀下面的變數
       NODE_FUNCTION_ALLOW_BUILTIN: crypto

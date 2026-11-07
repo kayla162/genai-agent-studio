@@ -120,7 +120,10 @@ def test_the_public_host_is_accepted_by_nginx_and_the_api() -> None:
     assert services['web']['environment']['PUBLIC_HOST'] == '${PUBLIC_HOST:-localhost}'
     for name in ('api', 'worker'):
         assert '"${PUBLIC_HOST:-localhost}"' in services[name]['environment']['ALLOWED_HOSTS']
-    assert services['n8n']['environment']['WEBHOOK_URL'] == '${N8N_PUBLIC_URL:-http://127.0.0.1:5678/}'
+    env = services['n8n']['environment']
+    assert env['N8N_WEBHOOK_URL'] == '${N8N_PUBLIC_URL:-http://127.0.0.1:5678/}'
+    # 已淘汰的舊名稱不再使用
+    assert 'WEBHOOK_URL' not in env
     nginx = (REPO_ROOT / 'web' / 'nginx.conf').read_text(encoding='utf-8')
     assert 'server_name 127.0.0.1 localhost ${PUBLIC_HOST};' in nginx
     dockerfile = (REPO_ROOT / 'web' / 'Dockerfile').read_text(encoding='utf-8')
