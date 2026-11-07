@@ -8,7 +8,7 @@
 | 工作流 | 做什麼 |
 |---|---|
 | `poster-batch-submit` | 每 5 分鐘（或在介面按 Execute workflow 手動執行）讀取 Google Sheet 中 `status` 為空的列，逐列呼叫 `POST /api/automation/jobs`（`clientRef` 為 `sheet:<sheetId>:row:<列號>`）。成功時該列寫入 `status=queued` 與 `jobId`；失敗時寫入 `status=error` 與 API 回傳的說明，繼續處理下一列 |
-| `poster-job-finished` | 接收後端的 `job.finished` webhook（`POST /webhook/poster-job-finished`）：驗證簽章、拒絕時間差超過 300 秒的請求、依 `X-Webhook-Id` 去重（保留最近 1000 筆），不通過回 401，通過立即回 200。來自試算表的任務回填 `status`、`score`、`posterUrl`、`message`；`done` 或 `needs_review` 時把最高分的審查用海報縮成 JPEG 預覽圖上傳到 Cloudflare R2，以 LINE 圖片訊息加上文字（分數、未通過的檢查、候選圖與審核表單連結）推播；沒有設定 R2、沒有海報或上傳失敗時只送文字，表單送出後呼叫 `approve`（核准）或 `revise`（退回並附修改意見），結果推播到 LINE |
+| `poster-job-finished` | 接收後端的 `job.finished` 與 `history.selected` webhook（`POST /webhook/poster-job-finished`）：驗證簽章、拒絕時間差超過 300 秒的請求、依 `X-Webhook-Id` 去重（保留最近 1000 筆），不通過回 401，通過立即回 200。來自試算表的任務回填 `status`、`score`、`posterUrl`、`message`；`done` 或 `needs_review` 時把最高分的審查用海報縮成 JPEG 預覽圖上傳到 Cloudflare R2，以 LINE 圖片訊息加上文字（分數、未通過的檢查、候選圖與審核表單連結）推播；沒有設定 R2、沒有海報或上傳失敗時只送文字，表單送出後呼叫 `approve`（核准）或 `revise`（退回並附修改意見）；退回與核准失敗時推播結果。<br>**選圖後發布**：Studio 選定或表單核准後收到 `history.selected`，下載定稿（選定時的文案、模板原尺寸 PNG）與預覽，上傳到 R2 的 `final/{jobId}/{historyId}.png`，以 LINE 圖片訊息加上下載原圖的連結推播；沒有設定 R2 或任何一步失敗時只送文字 |
 | `poster-error` | 上面兩條的錯誤工作流（Settings → Error workflow）：把工作流名稱、出錯的節點與錯誤訊息推播到 LINE |
 
 ```mermaid
@@ -75,9 +75,9 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
 - **Cloudflare R2**（LINE 訊息附海報；不設定時只送文字）：LINE 的圖片訊息只接受公開的 HTTPS 網址，所以 n8n 從 api 下載預覽圖（`/files/jobs/…png?variant=preview`：長邊最多 1600 px、1 MB 以內的 JPEG）後上傳到 R2，物件名稱為 `review/{jobId}/{renderId}-{webhookId}.jpg`。
   1. Cloudflare 控制台 → **R2** → **Create bucket**（例如 `posters`），填入 `.env` 的 `R2_BUCKET`。
   2. bucket 的 **Settings** → **Public access** 開啟 **R2.dev subdomain**（或連接自己的網域），把網址（`https://pub-….r2.dev`，結尾不要 `/`）填入 `R2_PUBLIC_BASE_URL`。
-  3. 建議在 bucket 的 **Settings** → **Object lifecycle rules** 設定 `review/` 前綴的物件 30 天後刪除。
+  3. 建議在 bucket 的 **Settings** → **Object lifecycle rules** 設定 `review/` 前綴（審查用海報）的物件 30 天後刪除；`final/` 是定稿，依需要保留。
   4. **R2** → **Manage API tokens** → **Create API token**：權限選 **Object Read & Write**、只限這個 bucket，記下 Access Key ID、Secret Access Key 與 S3 endpoint（`https://<帳戶 id>.r2.cloudflarestorage.com`）。
-  5. n8n 新增 **S3** 憑證，命名為 `Cloudflare R2`：S3 Endpoint 填上面的 endpoint、Region 填 `auto`、填入兩個 key，勾選 **Force Path Style**。在 `poster-job-finished` 的「上傳 R2」節點選擇這個憑證（或先建立憑證再依 §6 重新匯入）。
+  5. n8n 新增 **S3** 憑證，命名為 `Cloudflare R2`：S3 Endpoint 填上面的 endpoint、Region 填 `auto`、填入兩個 key，勾選 **Force Path Style**。在 `poster-job-finished` 的「上傳 R2」、「上傳定稿」、「上傳定稿預覽」三個節點選擇這個憑證（或先建立憑證再依 §6 重新匯入：依名稱自動選上）。
   6. 修改 `.env` 後執行 `docker compose --profile automation up -d n8n`。
   注意：bucket 公開後，知道網址的人都看得到海報（網址含任務與通知 id，不容易猜到）。未發表的商品不想放到公開網址時，不要設定 R2，只送文字。
   修改 `.env` 後執行 `docker compose --profile automation up -d n8n` 讓 n8n 讀到新的值。
@@ -107,6 +107,10 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
 審核流程：LINE 訊息附上最高分的審查用海報（有設定 R2 時）與「審核表單」連結。表單的「決定」選核准或退回；「候選圖」填訊息裡列出的 `renderId`
 （空白為最高分）；「修改意見」在退回時使用（空白為「請重新生成」）。同一張表單送出兩次時，後端以 `Idempotency-Key` 回傳第一次的結果。
 表單 7 天內沒有送出就結束等待，不核准也不退回。
+
+核准成功後不另外回覆「已選定」，改由定稿訊息通知（見下一段）。
+
+選圖後發布：在 Studio 按「選定」或在表單核准，幾秒內 LINE 收到「🎉 定稿」訊息：定稿圖片（選定時的文案）、品牌、商品、通路、分數，以及 R2 上原尺寸 PNG 的下載連結。定稿第一次被下載時由 api 繪製並存到 `data/history/{historyId}.png`（`GET /api/history/{historyId}/poster.png`）。同一個任務選定兩次會收到兩則定稿。
 
 ## 6. 更新工作流
 

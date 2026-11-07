@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from redis.asyncio import Redis
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.contract import JobFailedEvent, JobStatusEvent
 from app.db.models import JobEventRow, WebhookOutboxRow
@@ -13,6 +14,7 @@ from app.db.session import Database
 from app.events import EventStore, WebhookTarget, webhook_target
 from app.repo import jobs
 from app.settings import Settings
+from tests.test_catalog import alembic
 from tests.test_jobs import job_input
 
 NOW = datetime(2026, 11, 5, 2, 0, tzinfo=UTC)
@@ -122,3 +124,44 @@ async def test_a_failing_payload_builder_still_finishes_the_job(
     }
     assert row.payload['finishedAt'].startswith('20')
     assert f'組不出任務 {job} 的 job.finished 內容' in caplog.text
+
+
+def outbox_row(webhook_id: str, job_id: str, event: str) -> WebhookOutboxRow:
+    return WebhookOutboxRow(
+        id=webhook_id,
+        job_id=job_id,
+        event=event,
+        payload={},
+        status='pending',
+        attempts=0,
+        next_attempt_at=NOW,
+        created_at=NOW,
+    )
+
+
+async def test_only_job_finished_is_unique_per_job(db: Database, job: str) -> None:
+    # 選定可以有很多次（migration 0006 的部分唯一索引）；job.finished 每個任務一則
+    async with db.session() as s:
+        s.add_all([outbox_row('wh_a', job, 'history.selected'), outbox_row('wh_b', job, 'history.selected')])
+        s.add(outbox_row('wh_c', job, 'job.finished'))
+        await s.commit()
+    with pytest.raises(IntegrityError):
+        async with db.session() as s:
+            s.add(outbox_row('wh_d', job, 'job.finished'))
+            await s.commit()
+
+
+async def test_migration_0006_round_trip(db: Database, job: str) -> None:
+    async with db.session() as s:
+        s.add_all([outbox_row('wh_a', job, 'job.finished'), outbox_row('wh_b', job, 'history.selected')])
+        await s.commit()
+    await alembic(db, 'downgrade', '0005')
+    try:
+        # 舊的 (job_id, event) 限制：history.selected 已刪除，job.finished 保留
+        assert [(r.id, r.event) for r in await outbox(db)] == [('wh_a', 'job.finished')]
+    finally:
+        await alembic(db, 'upgrade', 'head')
+    async with db.session() as s:
+        s.add_all([outbox_row('wh_c', job, 'history.selected'), outbox_row('wh_d', job, 'history.selected')])
+        await s.commit()
+    assert sorted(r.id for r in await outbox(db)) == ['wh_a', 'wh_c', 'wh_d']

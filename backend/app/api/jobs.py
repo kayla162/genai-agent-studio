@@ -7,10 +7,11 @@ import secrets
 from collections.abc import Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, WebSocket
+from fastapi.responses import FileResponse, Response
 from pydantic import Field
 from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError
@@ -36,12 +37,17 @@ from app.contract import (
     Product,
 )
 from app.core.clock import iso, utc_now
+from app.db.models import JobRow, WebhookOutboxRow
 from app.errors import Invalid, NotFound, Unavailable
+from app.events import new_webhook_id
+from app.files import jpeg_preview
+from app.final_poster import final_poster
 from app.queues import TaskFailed
 from app.repo import catalog, history, jobs
 from app.repo import usage as usage_repo
 from app.stats import dashboard_stats
 from app.usage import UsageScope
+from app.webhooks.payload import HISTORY_SELECTED, build_history_selected
 
 logger = logging.getLogger(__name__)
 
@@ -272,9 +278,16 @@ async def stream_job(websocket: WebSocket, job_id: str, services: Services, afte
             raise error
 
 
-async def record_selection(services: ApiServices, job_id: str, render_id: str, copy: Copy) -> HistoryEntry:
+async def record_selection(
+    services: ApiServices,
+    job_id: str,
+    render_id: str,
+    copy: Copy,
+    source: Literal['studio', 'automation'] = 'studio',
+) -> HistoryEntry:
     """選定候選圖：寫入歷史紀錄，再由 worker 回寫成歷史切塊（writtenToRag）。
 
+    有設定 JOB_WEBHOOK_URL 時，同一個交易也寫入 history.selected 的通知（n8n 發布定稿）。
     回寫最多等 WRITE_BACK_WAIT 秒；逾時、失敗或被中止時 writtenToRag 為 false。歷史紀錄已經建立，所以不回錯誤。
     """
     async with services.db.session() as s:
@@ -297,6 +310,30 @@ async def record_selection(services: ApiServices, job_id: str, render_id: str, c
             favorite=False,
             written_to_rag=False,
         )
+        webhook = services.store.webhook
+        if webhook is not None:
+            job = await s.get(JobRow, job_id)
+            webhook_id = new_webhook_id()
+            now = utc_now()
+            s.add(
+                WebhookOutboxRow(
+                    id=webhook_id,
+                    job_id=job_id,
+                    event=HISTORY_SELECTED,
+                    payload=build_history_selected(
+                        webhook_id=webhook_id,
+                        entry=entry,
+                        source=source,
+                        client_ref=job.client_ref if job else None,
+                        studio_base_url=webhook.studio_base_url,
+                    ),
+                    status='pending',
+                    attempts=0,
+                    next_attempt_at=now,
+                    created_at=now,
+                )
+            )
+        # 歷史紀錄與通知一起 commit
         await history.add_history(s, entry)
     try:
         done = await services.queues.run_task('write_back', wait=WRITE_BACK_WAIT, history_id=entry.id)
@@ -320,6 +357,18 @@ async def list_history(
 ) -> list[HistoryEntry]:
     async with services.db.session() as s:
         return await history.list_history(s, brand_id)
+
+
+@router.get('/api/history/{history_id}/poster.png', response_model=None)
+async def history_poster(
+    history_id: str, services: Services, variant: Literal['preview'] | None = None
+) -> FileResponse | Response:
+    """定稿海報（選定時的文案，模板原尺寸 PNG）；第一次請求時繪製並存檔。variant=preview 為 1 MB 以內的 JPEG。"""
+    target = await final_poster(services.settings, services.db, services.composer, history_id)
+    headers = {'X-Content-Type-Options': 'nosniff'}
+    if variant == 'preview':
+        return Response(await asyncio.to_thread(jpeg_preview, target), media_type='image/jpeg', headers=headers)
+    return FileResponse(target, media_type='image/png', headers=headers)
 
 
 @router.patch('/api/history/{history_id}')

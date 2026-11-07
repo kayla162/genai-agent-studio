@@ -86,7 +86,7 @@ flowchart LR
 ### 自動化整合（n8n）
 
 - **試算表批次產圖**：n8n 讀 Google Sheet 的每一列，以 token 呼叫 `/api/automation/jobs`；任務結束後回填分數與連結。
-- **LINE 審核**：結束通知以 LINE 推播審查用海報（經 Cloudflare R2 公開）、合規分數、未通過的檢查與審核表單連結，審核者在 n8n 表單核准（寫入歷史並回寫 RAG）或退回並附意見（意見進入 RAG 查詢、Prompt 構建與價格護欄）。
+- **LINE 審核**：結束通知以 LINE 推播審查用海報（經 Cloudflare R2 公開）、合規分數、未通過的檢查與審核表單連結，審核者在 n8n 表單核准（寫入歷史並回寫 RAG）或退回並附意見（意見進入 RAG 查詢、Prompt 構建與價格護欄）。選定或核准後，定稿海報（選定時的文案、原尺寸 PNG）上傳到 R2 並推播到 LINE，附下載連結。
 - **不漏送的 webhook**：通知與任務的結束事件在同一個 PostgreSQL 交易內寫入 outbox；worker 以 `FOR UPDATE SKIP LOCKED` 發送、HMAC-SHA256 簽章、依退避表最多發送 8 次，接收端依 id 去重；核准與退回支援 Idempotency-Key。
 
 ### 工程方法
