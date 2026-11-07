@@ -36,7 +36,7 @@
 
 ## 展示影片
 
-https://github.com/user-attachments/assets/5c50f123-16b9-4516-a47b-bd3e6f8f0511
+https://github.com/user-attachments/assets/51fe7d6e-edaf-4d47-9fde-d8366d132252
 
 約 60 秒，以本機的完整系統跑一個真實任務（加速播放，生圖等待的部分為 12 倍速）：
 
