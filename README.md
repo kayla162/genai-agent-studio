@@ -86,7 +86,7 @@ flowchart LR
 ### 自動化整合（n8n）
 
 - **試算表批次產圖**：n8n 讀 Google Sheet 的每一列，以 token 呼叫 `/api/automation/jobs`；任務結束後回填分數與連結。
-- **Discord 審核**：結束通知附上審查用海報與合規分數，審核者在 n8n 表單核准（寫入歷史並回寫 RAG）或退回並附意見（意見進入 RAG 查詢、Prompt 構建與價格護欄）。
+- **LINE 審核**：結束通知以 LINE 推播審查用海報（經 Cloudflare R2 公開）、合規分數、未通過的檢查與審核表單連結，審核者在 n8n 表單核准（寫入歷史並回寫 RAG）或退回並附意見（意見進入 RAG 查詢、Prompt 構建與價格護欄）。
 - **不漏送的 webhook**：通知與任務的結束事件在同一個 PostgreSQL 交易內寫入 outbox；worker 以 `FOR UPDATE SKIP LOCKED` 發送、HMAC-SHA256 簽章、依退避表最多發送 8 次，接收端依 id 去重；核准與退回支援 Idempotency-Key。
 
 ### 工程方法
@@ -130,7 +130,7 @@ flowchart LR
   worker --> gemini{{Gemini API<br/>Agent 與 VLM}}
   worker --> comfy{{ComfyUI<br/>Windows・GPU・SDXL}}
   api --> gemini
-  n8n[n8n<br/>試算表批次、Discord 審核] -- token --> api
+  n8n[n8n<br/>試算表批次、LINE 審核] -- token --> api
   worker -- webhook --> n8n
   demo([作品集 Demo]) -. mock 模式的靜態輸出 .-> cf[Cloudflare<br/>靜態網站]
 ```

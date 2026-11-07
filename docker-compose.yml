@@ -161,7 +161,7 @@ services:
       postgres: { condition: service_healthy }
     restart: 'no'
 
-  # n8n：試算表批次產圖與 Discord 審核（docker compose --profile automation up -d）。只綁 127.0.0.1:5678；
+  # n8n：試算表批次產圖與 LINE 審核（docker compose --profile automation up -d）。只綁 127.0.0.1:5678；
   # 第一次啟動時匯入 n8n/workflows/，之後的更新見 n8n/README.md。映像檔內建 node 使用者（非 root）
   n8n:
     profiles: [automation]
@@ -176,7 +176,7 @@ services:
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-}
       GENERIC_TIMEZONE: Asia/Taipei
       TZ: Asia/Taipei
-      # 審核表單與 webhook 的對外網址（Discord 訊息裡的表單連結）
+      # 審核表單與 webhook 的對外網址（LINE 訊息裡的表單連結）
       WEBHOOK_URL: http://127.0.0.1:5678/
       N8N_DIAGNOSTICS_ENABLED: 'false'
       N8N_PERSONALIZATION_ENABLED: 'false'
@@ -186,7 +186,10 @@ services:
       AUTOMATION_API_URL: http://api:8000
       AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:-}
       JOB_WEBHOOK_SECRET: ${JOB_WEBHOOK_SECRET:-}
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-}
+      LINE_TO: ${LINE_TO:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
       GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID:-}
     # 取代映像檔原本的 entrypoint（tini）：init 讓 Docker 補上 PID 1 的訊號轉送與回收子程序（task runner）
     init: true

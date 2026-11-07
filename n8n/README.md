@@ -1,6 +1,6 @@
 # n8n 自動化
 
-以 n8n 串起「試算表批次產圖」與「Discord 通知＋人工審核」。工作流放在 `n8n/workflows/`，n8n 第一次啟動時自動匯入；
+以 n8n 串起「試算表批次產圖」與「LINE 通知＋人工審核」。工作流放在 `n8n/workflows/`，n8n 第一次啟動時自動匯入；
 後端的自動化 API 與 webhook 見 `docs/superpowers/specs/2026-11-05-plan9-n8n-automation-design.md`。
 
 ## 1. 用途
@@ -8,8 +8,8 @@
 | 工作流 | 做什麼 |
 |---|---|
 | `poster-batch-submit` | 每 5 分鐘（或在介面按 Execute workflow 手動執行）讀取 Google Sheet 中 `status` 為空的列，逐列呼叫 `POST /api/automation/jobs`（`clientRef` 為 `sheet:<sheetId>:row:<列號>`）。成功時該列寫入 `status=queued` 與 `jobId`；失敗時寫入 `status=error` 與 API 回傳的說明，繼續處理下一列 |
-| `poster-job-finished` | 接收後端的 `job.finished` webhook（`POST /webhook/poster-job-finished`）：驗證簽章、拒絕時間差超過 300 秒的請求、依 `X-Webhook-Id` 去重（保留最近 1000 筆），不通過回 401，通過立即回 200。來自試算表的任務回填 `status`、`score`、`posterUrl`、`message`；`done` 或 `needs_review` 時把審查用海報附在 Discord 訊息裡，附上審核表單連結，表單送出後呼叫 `approve`（核准）或 `revise`（退回並附修改意見），結果回覆到 Discord |
-| `poster-error` | 上面兩條的錯誤工作流（Settings → Error workflow）：把工作流名稱、出錯的節點與錯誤訊息發到 Discord |
+| `poster-job-finished` | 接收後端的 `job.finished` webhook（`POST /webhook/poster-job-finished`）：驗證簽章、拒絕時間差超過 300 秒的請求、依 `X-Webhook-Id` 去重（保留最近 1000 筆），不通過回 401，通過立即回 200。來自試算表的任務回填 `status`、`score`、`posterUrl`、`message`；`done` 或 `needs_review` 時把最高分的審查用海報縮成 JPEG 預覽圖上傳到 Cloudflare R2，以 LINE 圖片訊息加上文字（分數、未通過的檢查、候選圖與審核表單連結）推播；沒有設定 R2、沒有海報或上傳失敗時只送文字，表單送出後呼叫 `approve`（核准）或 `revise`（退回並附修改意見），結果推播到 LINE |
+| `poster-error` | 上面兩條的錯誤工作流（Settings → Error workflow）：把工作流名稱、出錯的節點與錯誤訊息推播到 LINE |
 
 ```mermaid
 flowchart LR
@@ -19,8 +19,10 @@ flowchart LR
   worker -- 任務結束 --> pg
   pg -- 待發送 --> sender[worker：deliver_webhook]
   sender -- "POST＋HMAC 簽章" --> n8n
-  n8n --> discord[Discord：縮圖、分數、審核連結]
-  discord -. 點連結 .-> form[n8n 審核表單]
+  n8n -- 預覽圖 --> r2[(Cloudflare R2<br/>公開 bucket)]
+  r2 -. 圖片網址 .-> line
+  n8n --> line[LINE：海報、分數、檢查、審核連結]
+  line -. 點連結 .-> form[n8n 審核表單]
   form -- "approve／revise" --> api
 ```
 
@@ -41,7 +43,7 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
    | `JOB_WEBHOOK_SECRET` | webhook 的簽章金鑰（至少 32 字元），後端簽章、n8n 驗證用同一個值 |
    | `N8N_ENCRYPTION_KEY` | n8n 加密已儲存憑證的金鑰；設定後不要更改，否則 n8n 讀不到已儲存的憑證 |
 
-   另外視需要設定 `DISCORD_WEBHOOK_URL`（§3）與 `GOOGLE_SHEET_ID`（Sheet 網址 `/d/` 與 `/edit` 之間的那一段）。
+   另外視需要設定 `LINE_CHANNEL_ACCESS_TOKEN`、`LINE_TO`、`R2_BUCKET`、`R2_PUBLIC_BASE_URL`（§3）與 `GOOGLE_SHEET_ID`（Sheet 網址 `/d/` 與 `/edit` 之間的那一段）。
    `AUTOMATION_TOKEN`、`JOB_WEBHOOK_SECRET`、`N8N_ENCRYPTION_KEY` 任一個沒有設定時，n8n 容器會印出說明並結束。
 
 2. 啟動（含原本的整套服務）：
@@ -64,7 +66,20 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
   接著在四個 Google Sheets 節點選擇這個憑證：`poster-batch-submit` 的「讀取待處理的列」、「標記排隊中」、「標記錯誤」，
   以及 `poster-job-finished` 的「回填試算表」。
   也可以先建立憑證並命名為 `Google Sheets account`（工作流裡的憑證名稱），再依 §6 重新匯入：匯入時 n8n 依名稱與類型自動選上同名的憑證。
-- **Discord**：不需要在 n8n 建立憑證，只要 `.env` 的 `DISCORD_WEBHOOK_URL`（Discord 頻道設定 → 整合 → Webhook → 複製網址）。
+- **LINE**：不需要在 n8n 建立憑證，只要 `.env` 的 `LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_TO`。通知用 LINE Messaging API 的推播（LINE Notify 已停止服務）：
+  1. 在 [LINE Developers](https://developers.line.biz/console/) 建立 Provider 與 **Messaging API** channel（會同時建立一個 LINE 官方帳號）。
+  2. channel 的 **Messaging API** 分頁最下方發行 **Channel access token (long-lived)**，填入 `LINE_CHANNEL_ACCESS_TOKEN`。
+  3. 推播給自己：**Basic settings** 分頁的 **Your user ID**（U 開頭）填入 `LINE_TO`，並用手機掃 Messaging API 分頁的 QR code 加官方帳號為好友（沒有加好友收不到）。
+     推播到群組：把官方帳號邀進群組（官方帳號管理頁要允許加入群組），群組 id（C 開頭）要從 LINE 送到 channel webhook 的 `join` 事件取得。
+  4. 免費方案每月的推播則數有上限（每個結束的任務一則，加上審核結果與錯誤各一則），超過時推播回 429，n8n 的錯誤工作流也推不出去；用量見 LINE Official Account Manager。
+- **Cloudflare R2**（LINE 訊息附海報；不設定時只送文字）：LINE 的圖片訊息只接受公開的 HTTPS 網址，所以 n8n 從 api 下載預覽圖（`/files/jobs/…png?variant=preview`：長邊最多 1600 px、1 MB 以內的 JPEG）後上傳到 R2，物件名稱為 `review/{jobId}/{renderId}-{webhookId}.jpg`。
+  1. Cloudflare 控制台 → **R2** → **Create bucket**（例如 `posters`），填入 `.env` 的 `R2_BUCKET`。
+  2. bucket 的 **Settings** → **Public access** 開啟 **R2.dev subdomain**（或連接自己的網域），把網址（`https://pub-….r2.dev`，結尾不要 `/`）填入 `R2_PUBLIC_BASE_URL`。
+  3. 建議在 bucket 的 **Settings** → **Object lifecycle rules** 設定 `review/` 前綴的物件 30 天後刪除。
+  4. **R2** → **Manage API tokens** → **Create API token**：權限選 **Object Read & Write**、只限這個 bucket，記下 Access Key ID、Secret Access Key 與 S3 endpoint（`https://<帳戶 id>.r2.cloudflarestorage.com`）。
+  5. n8n 新增 **S3** 憑證，命名為 `Cloudflare R2`：S3 Endpoint 填上面的 endpoint、Region 填 `auto`、填入兩個 key，勾選 **Force Path Style**。在 `poster-job-finished` 的「上傳 R2」節點選擇這個憑證（或先建立憑證再依 §6 重新匯入）。
+  6. 修改 `.env` 後執行 `docker compose --profile automation up -d n8n`。
+  注意：bucket 公開後，知道網址的人都看得到海報（網址含任務與通知 id，不容易猜到）。未發表的商品不想放到公開網址時，不要設定 R2，只送文字。
   修改 `.env` 後執行 `docker compose --profile automation up -d n8n` 讓 n8n 讀到新的值。
 
 `poster-job-finished` 的節點還沒選好憑證時，n8n 會以 400 拒絕 webhook，後端會把這筆通知標記為發送失敗（`/api/status` 的 Webhook 顯示錯誤）。
@@ -89,7 +104,7 @@ n8n 在 compose 內部網路直接呼叫 `http://api:8000`，不經過 nginx。
 在介面開啟三條工作流，各按一次右上角的 **Publish**（n8n 2 以發布取代舊版的 Active 開關）。
 `poster-error` 也要發布：n8n 2.46.6 不會執行沒有發布的錯誤工作流（log 顯示 `Workflow "poster-error" is not active and cannot be executed`）。
 
-審核流程：Discord 訊息附上審查用海報與「審核表單」連結。表單的「決定」選核准或退回；「候選圖」填訊息裡列出的 `renderId`
+審核流程：LINE 訊息附上最高分的審查用海報（有設定 R2 時）與「審核表單」連結。表單的「決定」選核准或退回；「候選圖」填訊息裡列出的 `renderId`
 （空白為最高分）；「修改意見」在退回時使用（空白為「請重新生成」）。同一張表單送出兩次時，後端以 `Idempotency-Key` 回傳第一次的結果。
 表單 7 天內沒有送出就結束等待，不核准也不退回。
 
@@ -114,7 +129,7 @@ docker compose cp n8n:/tmp/wf/. n8n/workflows/
 
 匯出後檢查：檔名與 JSON 的 `id` 是固定的 `poster-batch-submit`、`poster-job-finished`、`poster-error`；
 每個節點 `credentials` 裡的 `id` 改成空字串（保留 `name`）；兩條主要工作流的 `settings.errorWorkflow` 為 `poster-error`。
-`backend/tests/test_n8n_workflows.py` 會檢查這幾點，以及檔案裡沒有 Discord webhook 網址。
+`backend/tests/test_n8n_workflows.py` 會檢查這幾點，以及檔案裡沒有 LINE 的 token。
 
 ## 7. 重新發送失敗的通知
 
@@ -128,7 +143,8 @@ docker compose exec postgres psql -U genai -d genai -c "UPDATE webhook_outbox SE
 
 ## 8. 注意事項
 
-- Studio 建立的任務結束時也會發 Discord 審核訊息；在 Studio 選定海報後又在 Discord 核准，歷史紀錄會多一筆。
+- 不使用 R2 時，「上傳 R2」節點沒有選憑證會讓 n8n 拒絕 webhook（§3）：在介面把它停用（Deactivate），或照樣建立一個 `Cloudflare R2` 憑證。
+- Studio 建立的任務結束時也會發 LINE 審核訊息；在 Studio 選定海報後又在審核表單核准，歷史紀錄會多一筆。
 - 試算表回填依列號比對，任務進行中不要在試算表插入或刪除列。
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` 讓能編輯工作流的人讀到容器的環境變數（本機單人使用可以接受）。
 - n8n 與應用程式共用資料庫帳號 `genai`。
@@ -136,5 +152,5 @@ docker compose exec postgres psql -U genai -d genai -c "UPDATE webhook_outbox SE
 ## 9. 已知限制
 
 - 審核表單的網址是 `http://127.0.0.1:5678/...`，只有本機（或改用區網位址時同一個區網）的人打得開；沒有對外公開（Cloudflare Tunnel 不在這一版）。
-- `REVIEW_MODE=sim` 時沒有審查用海報，Discord 訊息不附圖。
+- LINE 訊息只在設定 R2 時附圖；`REVIEW_MODE=sim` 時沒有審查用海報，只送文字。訊息裡的 Studio 與審核表單連結是 `127.0.0.1`，在手機上點開不了，要在這台電腦上開。
 - v1 只有一個 webhook 網址；換網址時，已經發送失敗的通知不會改送新的網址。
