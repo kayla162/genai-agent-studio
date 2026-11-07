@@ -18,6 +18,7 @@ import ctypes
 import json
 import statistics
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -82,6 +83,9 @@ class MemoryStatus(ctypes.Structure):
 
 def system_used_gb() -> float:
     """Windows 的系統記憶體使用量（GB）；其他系統回傳 0。"""
+    # ctypes.windll 只有 Windows 有：以 sys.platform 判斷，mypy 在 Linux（CI）上才不會報 windll 不存在
+    if sys.platform != 'win32':
+        return 0.0
     try:
         status = MemoryStatus()
         status.dwLength = ctypes.sizeof(MemoryStatus)
