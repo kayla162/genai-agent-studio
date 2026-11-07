@@ -30,7 +30,7 @@ docker compose up -d --build
 - 舊任務的檔案：worker 啟動時與之後每天一次，清理結束超過 `JOB_FILES_RETENTION_DAYS` 天（預設 30）的任務在 `data/jobs/` 的審查用海報與生成的背景；歷史紀錄用到的背景會保留，歷史紀錄與品牌案例照常顯示。清理後，舊任務的任務透視看不到審查用海報。設為 0 時不清理。
 - 安全性：
   - 容器不以 root 執行：api 與 worker 以 `app` 使用者執行（進入點先把 `data/` 與 `models` volume 交給 `app`，舊版以 root 建立的 volume 照常使用），composer 以 `node`、web 的 nginx 以 `nginx` 使用者執行（容器內聽 8080）。
-  - 防止 DNS rebinding（惡意網頁把自己的網域解析到 127.0.0.1，再從瀏覽器呼叫 api）：nginx 只接受 `127.0.0.1` 與 `localhost`，其他主機名稱直接斷線；api 也只接受 `ALLOWED_HOSTS`（預設同上），HTTP 回 400、WebSocket 拒絕連線。要用其他名稱（例如區網的 IP）開啟前端時，`web/nginx.conf` 的 `server_name` 與 `.env` 的 `ALLOWED_HOSTS` 都要加上（`.env` 的值會取代預設；使用 n8n 時要保留 `"api"`，容器之間以 `http://api:8000` 呼叫），再 `docker compose up -d --build web api`。
+  - 防止 DNS rebinding（惡意網頁把自己的網域解析到 127.0.0.1，再從瀏覽器呼叫 api）：nginx 只接受 `127.0.0.1` 與 `localhost`，其他主機名稱直接斷線；api 也只接受 `ALLOWED_HOSTS`（預設同上），HTTP 回 400、WebSocket 拒絕連線。要用其他名稱（例如區網的 IP）開啟前端時，`web/nginx.conf` 的 `server_name` 與 `.env` 的 `ALLOWED_HOSTS` 都要加上（`.env` 的值會取代預設；使用 n8n 時要保留 `"api"`，容器之間以 `http://api:8000` 呼叫），再 `docker compose up -d --build web api`。經 Cloudflare Tunnel 開啟時改設定 `.env` 的 `PUBLIC_HOST`，nginx 與 api 會一起接受（見 [tunnel.md](tunnel.md)）。
 
 自己的資料：
 

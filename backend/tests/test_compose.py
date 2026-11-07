@@ -103,3 +103,27 @@ def test_n8n_runs_only_in_the_automation_profile_and_never_blocks_the_default_st
         assert '$$' + name in n8n['command'][0]
     for name in ('api', 'worker'):
         assert 'api' in services[name]['environment']['ALLOWED_HOSTS']
+
+
+def test_cloudflare_tunnel_is_opt_in_and_opens_no_ports() -> None:
+    # 只在 tunnel profile 啟動；cloudflared 主動連到 Cloudflare，不需要對外的埠
+    services = load('docker-compose.yml')['services']
+    tunnel = services['cloudflared']
+    assert tunnel['profiles'] == ['tunnel']
+    assert 'ports' not in tunnel
+    assert tunnel['image'].startswith('cloudflare/cloudflared:') and not tunnel['image'].endswith(':latest')
+    assert tunnel['environment'] == {'TUNNEL_TOKEN': '${TUNNEL_TOKEN:-}'}
+
+
+def test_the_public_host_is_accepted_by_nginx_and_the_api() -> None:
+    services = load('docker-compose.yml')['services']
+    assert services['web']['environment']['PUBLIC_HOST'] == '${PUBLIC_HOST:-localhost}'
+    for name in ('api', 'worker'):
+        assert '"${PUBLIC_HOST:-localhost}"' in services[name]['environment']['ALLOWED_HOSTS']
+    assert services['n8n']['environment']['WEBHOOK_URL'] == '${N8N_PUBLIC_URL:-http://127.0.0.1:5678/}'
+    nginx = (REPO_ROOT / 'web' / 'nginx.conf').read_text(encoding='utf-8')
+    assert 'server_name 127.0.0.1 localhost ${PUBLIC_HOST};' in nginx
+    dockerfile = (REPO_ROOT / 'web' / 'Dockerfile').read_text(encoding='utf-8')
+    # 只代入 PUBLIC_HOST：$host、$api 等 nginx 變數不能被 envsubst 換掉
+    assert 'NGINX_ENVSUBST_FILTER=^PUBLIC_HOST$' in dockerfile
+    assert 'COPY nginx.conf /etc/nginx/templates/default.conf.template' in dockerfile

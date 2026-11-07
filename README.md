@@ -167,6 +167,7 @@ docker compose up -d --build
 | 文件 | 內容 |
 |---|---|
 | [操作手冊](docs/operations.md) | 安裝、設定、執行、測試與系統行為細節 |
+| [從手機開啟](docs/tunnel.md) | Cloudflare Tunnel＋Access：LINE 訊息裡的 Studio 與審核表單連結在手機上也打得開 |
 | [設計規格](docs/superpowers/specs/) | 每個階段的設計、實驗結果與決策（[第二階段總覽](docs/superpowers/specs/2026-10-07-phase2-backend-design.md)） |
 | [實作計畫](docs/superpowers/plans/) | 每個階段的實作步驟 |
 | [backend/README.md](backend/README.md)、[web/README.md](web/README.md) | 後端與前端各自的說明 |

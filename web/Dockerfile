@@ -14,8 +14,11 @@ RUN NEXT_PUBLIC_API_MODE=live npm run build
 FROM public.ecr.aws/docker/library/nginx:1.29-alpine AS web
 # 以 nginx 使用者執行（官方映像檔的主程序是 root）：pid 檔改放 /tmp、拿掉只有 root 才用得到的 user 指令、
 # 快取資料夾交給 nginx；聽 8080（非 root 不能聽 1024 以下的埠）
-RUN sed -i -e 's,^pid .*,pid /tmp/nginx.pid;,' -e '/^user /d' /etc/nginx/nginx.conf     && chown -R nginx:nginx /var/cache/nginx
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# conf.d 也交給 nginx：啟動時由官方映像檔的 entrypoint 把 templates/ 的設定檔代入環境變數後寫到這裡
+RUN sed -i -e 's,^pid .*,pid /tmp/nginx.pid;,' -e '/^user /d' /etc/nginx/nginx.conf     && chown -R nginx:nginx /var/cache/nginx /etc/nginx/conf.d
+# PUBLIC_HOST：經 Cloudflare Tunnel 開啟時的網域（server_name 多接受這個名稱）；只代入這個變數，$host 等 nginx 變數不動
+ENV PUBLIC_HOST=localhost NGINX_ENVSUBST_FILTER=^PUBLIC_HOST$
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/web/out /usr/share/nginx/html
 USER nginx
 EXPOSE 8080

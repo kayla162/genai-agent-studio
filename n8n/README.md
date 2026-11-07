@@ -151,6 +151,6 @@ docker compose exec postgres psql -U genai -d genai -c "UPDATE webhook_outbox SE
 
 ## 9. 已知限制
 
-- 審核表單的網址是 `http://127.0.0.1:5678/...`，只有本機（或改用區網位址時同一個區網）的人打得開；沒有對外公開（Cloudflare Tunnel 不在這一版）。
-- LINE 訊息只在設定 R2 時附圖；`REVIEW_MODE=sim` 時沒有審查用海報，只送文字。訊息裡的 Studio 與審核表單連結是 `127.0.0.1`，在手機上點開不了，要在這台電腦上開。
+- 審核表單的網址預設是 `http://127.0.0.1:5678/...`，只有本機打得開；要從手機開啟見 [docs/tunnel.md](../docs/tunnel.md)（Cloudflare Tunnel＋Access）。
+- LINE 訊息只在設定 R2 時附圖；`REVIEW_MODE=sim` 時沒有審查用海報，只送文字。訊息裡的 Studio 與審核表單連結預設是 `127.0.0.1`，在手機上點開不了；設定 Cloudflare Tunnel（[docs/tunnel.md](../docs/tunnel.md)）後改為你的網域。
 - v1 只有一個 webhook 網址；換網址時，已經發送失敗的通知不會改送新的網址。
