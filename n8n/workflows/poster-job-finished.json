@@ -173,10 +173,48 @@
     },
     {
       "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('驗證簽章').first().json.payload.clientRef.split(':row:')[0].slice('sheet:'.length) }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "需求",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "jobId",
+              "lookupValue": "={{ $('驗證簽章').first().json.payload.parentJobId ?? $('驗證簽章').first().json.payload.jobId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9ebee80c-3783-5e5a-877a-24be2c16f80e",
+      "name": "找出試算表列",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        -100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
         "operation": "update",
         "documentId": {
           "__rl": true,
-          "value": "={{ $json.payload.clientRef.split(':row:')[0].slice('sheet:'.length) }}",
+          "value": "={{ $('驗證簽章').first().json.payload.clientRef.split(':row:')[0].slice('sheet:'.length) }}",
           "mode": "id"
         },
         "sheetName": {
@@ -187,11 +225,12 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "row_number": "={{ Number($json.payload.clientRef.split(':row:')[1]) }}",
-            "status": "={{ $json.payload.stage }}",
-            "score": "={{ $json.payload.best?.score ?? '' }}",
-            "posterUrl": "={{ $json.payload.studioUrl }}",
-            "message": "={{ $json.payload.reason ?? $json.payload.failedChecks.map(c => c.name).join('、') }}"
+            "row_number": "={{ $json.row_number }}",
+            "jobId": "={{ $('驗證簽章').first().json.payload.jobId }}",
+            "status": "={{ $('驗證簽章').first().json.payload.stage }}",
+            "score": "={{ $('驗證簽章').first().json.payload.best?.score ?? '' }}",
+            "posterUrl": "={{ $('驗證簽章').first().json.payload.studioUrl }}",
+            "message": "={{ $('驗證簽章').first().json.payload.reason ?? $('驗證簽章').first().json.payload.failedChecks.map(c => c.name).join('、') }}"
           },
           "matchingColumns": [
             "row_number"
@@ -206,6 +245,16 @@
               "type": "number",
               "canBeUsedToMatch": true,
               "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "jobId",
+              "displayName": "jobId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
               "removed": false
             },
             {
@@ -259,7 +308,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1540,
+        1760,
         -100
       ],
       "credentials": {
@@ -1033,7 +1082,7 @@
       "main": [
         [
           {
-            "node": "回填試算表",
+            "node": "找出試算表列",
             "type": "main",
             "index": 0
           }
@@ -1332,6 +1381,18 @@
         [
           {
             "node": "回覆結果",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "找出試算表列": {
+      "main": [
+        [
+          {
+            "node": "回填試算表",
             "type": "main",
             "index": 0
           }

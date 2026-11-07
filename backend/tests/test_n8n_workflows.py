@@ -55,12 +55,40 @@ def test_job_finished_verifies_the_signature_before_responding() -> None:
 
 
 def test_sheet_write_back_never_blocks_the_review() -> None:
-    # 回填失敗（沒有憑證、Sheets 5xx、列被刪除）時照樣送出審核：200 已經回覆，後端不會重送
+    # 回填失敗（沒有憑證、Sheets 5xx、找不到列）時照樣送出審核：200 已經回覆，後端不會重送
     flow = load('poster-job-finished')
-    sheets = [n for n in flow['nodes'] if n['type'] == 'n8n-nodes-base.googleSheets']
-    assert [n['name'] for n in sheets] == ['回填試算表']
-    for node in sheets:
-        assert node.get('onError') == 'continueRegularOutput', node['name']
+    sheets = {n['name']: n for n in flow['nodes'] if n['type'] == 'n8n-nodes-base.googleSheets'}
+    assert sorted(sheets) == ['回填試算表', '找出試算表列']
+    assert sheets['回填試算表'].get('onError') == 'continueRegularOutput'
+    # 讀取失敗走錯誤輸出（沒有接任何節點）：不會帶著錯誤去回填
+    assert sheets['找出試算表列'].get('onError') == 'continueErrorOutput'
+    assert flow['connections']['找出試算表列']['main'][1] == []
+
+
+def test_sheet_write_back_finds_the_row_by_job_id() -> None:
+    # 不信任建立任務時的列號（之後可能插入或刪除列）：以 jobId 欄找到那一列再回填
+    flow = load('poster-job-finished')
+    nodes = {n['name']: n for n in flow['nodes']}
+    c = flow['connections']
+    assert c['來自試算表？']['main'][0] == to('找出試算表列')
+    assert c['找出試算表列']['main'][0] == to('回填試算表')
+    lookup = nodes['找出試算表列']['parameters']
+    assert 'operation' not in lookup  # 預設的讀取（Get Row(s)）
+    (rule,) = lookup['filtersUI']['values']
+    assert rule['lookupColumn'] == 'jobId'
+    # 退回產生的任務：列上是上一個任務的 jobId
+    assert '.payload.parentJobId ?? ' in rule['lookupValue'] and rule['lookupValue'].endswith('.payload.jobId }}')
+    write = nodes['回填試算表']['parameters']
+    assert write['operation'] == 'update'
+    assert write['columns']['matchingColumns'] == ['row_number']
+    values = write['columns']['value']
+    assert values['row_number'] == '={{ $json.row_number }}'
+    # 新任務接手這一列，之後的退回仍然找得到
+    assert values['jobId'].endswith('.payload.jobId }}')
+    assert 'jobId' in [s['id'] for s in write['columns']['schema']]
+    # 讀到的是試算表的列，payload 要從驗證簽章的輸出讀
+    for key in ('status', 'score', 'posterUrl', 'message'):
+        assert "$('驗證簽章').first().json.payload." in values[key], key
 
 
 def test_batch_submit_calls_the_automation_api() -> None:
