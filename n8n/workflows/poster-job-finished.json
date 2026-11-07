@@ -167,7 +167,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1100,
+        1320,
         -100
       ]
     },
@@ -259,7 +259,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1320,
+        1540,
         -100
       ],
       "credentials": {
@@ -300,7 +300,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1100,
+        1320,
         100
       ]
     },
@@ -330,7 +330,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1320,
+        1540,
         100
       ]
     },
@@ -364,7 +364,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1540,
+        1760,
         100
       ]
     },
@@ -384,7 +384,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1760,
+        1980,
         0
       ],
       "onError": "continueErrorOutput"
@@ -401,7 +401,7 @@
       "type": "n8n-nodes-base.s3",
       "typeVersion": 1,
       "position": [
-        1980,
+        2200,
         0
       ],
       "credentials": {
@@ -435,7 +435,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2200,
+        2420,
         0
       ]
     },
@@ -462,7 +462,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2200,
+        2420,
         200
       ]
     },
@@ -510,7 +510,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        2640,
+        2860,
         100
       ],
       "webhookId": "f6041bff-b202-5347-a8e6-4372a1080266"
@@ -545,7 +545,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2860,
+        3080,
         100
       ]
     },
@@ -579,7 +579,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3080,
+        3300,
         200
       ]
     },
@@ -616,7 +616,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3300,
+        3520,
         0
       ]
     },
@@ -653,7 +653,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3300,
+        3520,
         200
       ]
     },
@@ -680,8 +680,288 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3520,
+        3960,
         100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b880e8fa-59a8-5d6c-aa5c-4e3f4f5ae145",
+              "leftValue": "={{ $json.payload.event === 'history.selected' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b4ea78a0-f320-56bf-bfcb-d531d832f055",
+      "name": "定稿？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "703bface-f46f-5f30-b9ce-c683b97dbbdd",
+              "name": "content",
+              "value": "={{ ['🎉 定稿（' + ($json.payload.source === 'studio' ? 'Studio 選定' : '審核表單核准') + '）', '品牌：' + $json.payload.brandId + '　商品：' + $json.payload.productId, '通路：' + $json.payload.templateId + '　分數：' + ($json.payload.score ?? '—') + ' 分', '需求：' + $json.payload.brief, 'Studio：' + $json.payload.studioUrl].join('\\n') }}",
+              "type": "string"
+            },
+            {
+              "id": "02933940-7e49-53cc-a1fb-d7dbe0dd29f7",
+              "name": "finalKey",
+              "value": "={{ 'final/' + $json.payload.jobId + '/' + $json.payload.historyId + '.png' }}",
+              "type": "string"
+            },
+            {
+              "id": "e729e0b5-9492-54ae-9db0-bbb1265faafc",
+              "name": "finalPreviewKey",
+              "value": "={{ 'final/' + $json.payload.jobId + '/' + $json.payload.historyId + '-preview.jpg' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "7d036412-f689-5575-931b-38c823c43a53",
+      "name": "組出定稿訊息",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dc40405d-0f22-5c4d-a034-3794a936b3fa",
+              "leftValue": "={{ !!$env.R2_BUCKET && !!$env.R2_PUBLIC_BASE_URL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c142e18f-560a-5842-b6b4-b5086fe813ab",
+      "name": "定稿附圖？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.AUTOMATION_API_URL }}{{ $('組出定稿訊息').first().json.payload.posterUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "0e8f090f-865e-5d61-803f-1f176fca96d3",
+      "name": "下載定稿",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        400
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "={{ $env.R2_BUCKET }}",
+        "fileName": "={{ $('組出定稿訊息').first().json.finalKey }}",
+        "additionalFields": {}
+      },
+      "id": "fa2414b6-13da-5604-a451-b2e2323f02d9",
+      "name": "上傳定稿",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        400
+      ],
+      "credentials": {
+        "s3": {
+          "id": "",
+          "name": "Cloudflare R2"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.AUTOMATION_API_URL }}{{ $('組出定稿訊息').first().json.payload.posterUrl }}?variant=preview",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "6739c3ec-601b-5d30-af20-a4415682af2d",
+      "name": "下載定稿預覽",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        400
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "={{ $env.R2_BUCKET }}",
+        "fileName": "={{ $('組出定稿訊息').first().json.finalPreviewKey }}",
+        "additionalFields": {}
+      },
+      "id": "5ea52beb-c343-58cc-b87a-7446fa0a4877",
+      "name": "上傳定稿預覽",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        400
+      ],
+      "credentials": {
+        "s3": {
+          "id": "",
+          "name": "Cloudflare R2"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.line.me/v2/bot/message/push",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LINE_CHANNEL_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $env.LINE_TO, messages: [{ type: 'image', originalContentUrl: $env.R2_PUBLIC_BASE_URL.replace(/\\/+$/, '') + '/' + $('組出定稿訊息').first().json.finalKey, previewImageUrl: $env.R2_PUBLIC_BASE_URL.replace(/\\/+$/, '') + '/' + $('組出定稿訊息').first().json.finalPreviewKey }, { type: 'text', text: String($('組出定稿訊息').first().json.content + '\\n下載原圖：' + $env.R2_PUBLIC_BASE_URL.replace(/\\/+$/, '') + '/' + $('組出定稿訊息').first().json.finalKey).slice(0, 5000) }] }) }}",
+        "options": {}
+      },
+      "id": "8e9dcb4a-244c-52e9-b5e9-b454bcace941",
+      "name": "通知 LINE（定稿）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.line.me/v2/bot/message/push",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LINE_CHANNEL_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $env.LINE_TO, messages: [{ type: 'text', text: String($('組出定稿訊息').first().json.content).slice(0, 5000) }] }) }}",
+        "options": {}
+      },
+      "id": "180d25db-92a2-5d32-b166-8b046105933e",
+      "name": "通知 LINE（定稿文字）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c5888896-2df7-523e-a60c-835d17c4e777",
+              "leftValue": "={{ !!$json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a02557b4-b2cf-5476-bc0d-df2a466dcb75",
+      "name": "核准失敗？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        0
       ]
     }
   ],
@@ -742,12 +1022,7 @@
         [],
         [
           {
-            "node": "來自試算表？",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "需要審核？",
+            "node": "定稿？",
             "type": "main",
             "index": 0
           }
@@ -845,7 +1120,7 @@
       "main": [
         [
           {
-            "node": "回覆結果",
+            "node": "核准失敗？",
             "type": "main",
             "index": 0
           }
@@ -926,6 +1201,142 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "定稿？": {
+      "main": [
+        [
+          {
+            "node": "組出定稿訊息",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "來自試算表？",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "需要審核？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "組出定稿訊息": {
+      "main": [
+        [
+          {
+            "node": "定稿附圖？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "定稿附圖？": {
+      "main": [
+        [
+          {
+            "node": "下載定稿",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE（定稿文字）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下載定稿": {
+      "main": [
+        [
+          {
+            "node": "上傳定稿",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE（定稿文字）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "上傳定稿": {
+      "main": [
+        [
+          {
+            "node": "下載定稿預覽",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE（定稿文字）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下載定稿預覽": {
+      "main": [
+        [
+          {
+            "node": "上傳定稿預覽",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE（定稿文字）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "上傳定稿預覽": {
+      "main": [
+        [
+          {
+            "node": "通知 LINE（定稿）",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE（定稿文字）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "核准失敗？": {
+      "main": [
+        [
+          {
+            "node": "回覆結果",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     }
   },

@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -177,8 +177,10 @@ def test_review_message_is_pushed_with_the_r2_poster_or_as_text() -> None:
 def test_workflow_payload_fields_exist_in_the_webhook_payload() -> None:
     """工作流引用的 payload 欄位都要是後端實際送出的欄位（取代 contracts 測資）。"""
     import re
+    from types import SimpleNamespace
 
-    from app.webhooks.payload import build_job_finished
+    from app.contract import HistoryEntry
+    from app.webhooks.payload import build_history_selected, build_job_finished
 
     text = (WORKFLOWS / 'poster-job-finished.json').read_text(encoding='utf-8')
     used = set(re.findall(r'\.payload\.([A-Za-z_]\w*)', text))
@@ -196,4 +198,59 @@ def test_workflow_payload_fields_exist_in_the_webhook_payload() -> None:
         studio_base_url='http://h',
         finished_at='t',
     )
-    assert used <= set(data), f'後端沒有這些欄位：{sorted(used - set(data))}'
+    # history.selected（定稿分支）的欄位
+    entry = HistoryEntry.model_construct(
+        id='hist_1',
+        job_id='job_1',
+        brand_id='b',
+        product_id='p',
+        template_id='ig-post',
+        selected_at='t',
+        favorite=False,
+        written_to_rag=False,
+        # build_history_selected 只讀 input.brief 與 render 的 id、score
+        input=cast(Any, SimpleNamespace(brief='x')),
+        render=cast(Any, SimpleNamespace(id='r1', score=80)),
+        copy_=cast(Any, None),
+    )
+    selected = build_history_selected(
+        webhook_id='wh_2', entry=entry, source='studio', client_ref=None, studio_base_url='http://h'
+    )
+    assert used <= set(data) | set(selected), f'後端沒有這些欄位：{sorted(used - set(data) - set(selected))}'
+
+
+def test_history_selected_publishes_the_final_poster() -> None:
+    # 定稿：下載原圖與預覽 → 上傳 R2 → LINE 圖片＋下載連結；沒有設定 R2 或任何一步失敗 → 只送文字
+    flow = load('poster-job-finished')
+    c = flow['connections']
+    nodes = {n['name']: n for n in flow['nodes']}
+    assert c['重複？']['main'][1] == to('定稿？')
+    assert (
+        "$json.payload.event === 'history.selected'"
+        in nodes['定稿？']['parameters']['conditions']['conditions'][0]['leftValue']
+    )
+    # job.finished 照原本的流程
+    assert c['定稿？']['main'][1] == to('來自試算表？') + to('需要審核？')
+    assert c['定稿？']['main'][0] == to('組出定稿訊息')
+    assert c['定稿附圖？']['main'] == [to('下載定稿'), to('通知 LINE（定稿文字）')]
+    chain = ['下載定稿', '上傳定稿', '下載定稿預覽', '上傳定稿預覽', '通知 LINE（定稿）']
+    for here, after in zip(chain, chain[1:], strict=False):
+        assert c[here]['main'] == [to(after), to('通知 LINE（定稿文字）')], here
+        assert nodes[here].get('onError') == 'continueErrorOutput', here
+    assert nodes['下載定稿']['parameters']['url'].endswith('.json.payload.posterUrl }}')
+    assert nodes['下載定稿預覽']['parameters']['url'].endswith('.json.payload.posterUrl }}?variant=preview')
+    for name in ('上傳定稿', '上傳定稿預覽'):
+        assert nodes[name]['credentials'] == {'s3': {'id': '', 'name': 'Cloudflare R2'}}
+    keys = {a['name']: a['value'] for a in nodes['組出定稿訊息']['parameters']['assignments']['assignments']}
+    assert "'final/' + $json.payload.jobId + '/' + $json.payload.historyId + '.png'" in keys['finalKey']
+    image = nodes['通知 LINE（定稿）']['parameters']['jsonBody']
+    assert 'originalContentUrl' in image and '.finalKey' in image and '.finalPreviewKey' in image
+    assert '下載原圖' in image
+
+
+def test_successful_approvals_are_announced_by_the_final_poster_only() -> None:
+    # 核准成功時定稿訊息會送到 LINE；只有核准失敗才回覆「回覆結果」，退回照舊回覆
+    c = load('poster-job-finished')['connections']
+    assert c['核准']['main'] == [to('核准失敗？')]
+    assert c['核准失敗？']['main'] == [to('回覆結果'), []]
+    assert c['退回']['main'] == [to('回覆結果')]

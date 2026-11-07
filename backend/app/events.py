@@ -152,7 +152,7 @@ class EventStore:
                 next_attempt_at=ts,
                 created_at=ts,
             )
-            .on_conflict_do_nothing(index_elements=['job_id', 'event'])
+            .on_conflict_do_nothing(index_elements=['job_id'], index_where=WebhookOutboxRow.event == WEBHOOK_EVENT)
         )
 
     async def publish(self, job_id: str, message: dict[str, Any]) -> None:

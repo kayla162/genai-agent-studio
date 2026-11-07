@@ -185,7 +185,7 @@ async def approve(
             render = await jobs.get_render(s, job_id, render_id)
         if render is None:
             raise NotFound(f'找不到候選圖：{render_id}')
-        return await record_selection(services, job_id, render_id, render.spec.copy_)
+        return await record_selection(services, job_id, render_id, render.spec.copy_, source='automation')
 
     return await idempotent(services, idempotency_key, 'approve', job_id, HistoryEntry, run)
 

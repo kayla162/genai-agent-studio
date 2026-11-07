@@ -104,10 +104,10 @@ class ComposerPosters:
         await asyncio.to_thread(_write, target, poster.png)
         return ComposedPoster(url=url, measured_primary=poster.measured_primary, background=poster.background)
 
-    def _images(self, render: Render, product: Product, brand: Brand) -> PosterImages:
-        """在執行緒裡讀圖與縮圖（大張照片解碼約需數百毫秒）。"""
+    def _images(self, render: Render, product: Product | None, brand: Brand) -> PosterImages:
+        """在執行緒裡讀圖與縮圖（大張照片解碼約需數百毫秒）。商品已刪除（定稿重畫時）為 None：只畫背景與文字。"""
         return PosterImages(
-            product=product_image(self.settings, product),
+            product=product_image(self.settings, product) if product else None,
             logo=self._logo(brand),
             background=required_image(self.settings, render.background.url, '背景圖')
             if isinstance(render.background, UrlBackground)

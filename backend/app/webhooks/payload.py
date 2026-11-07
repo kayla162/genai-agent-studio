@@ -5,9 +5,9 @@ needs_review 沒有 job.completed，所以一樣依分數挑選；failed、cance
 """
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
-from app.contract import TEMPLATE_IDS
+from app.contract import TEMPLATE_IDS, HistoryEntry
 
 EVENT = 'job.finished'
 
@@ -141,4 +141,40 @@ def minimal_job_finished(
         'studioUrl': studio_url(studio_base_url, job_id),
         'finishedAt': finished_at,
         'payloadError': error,
+    }
+
+
+#: 選定海報（Studio 的選定或自動化 API 的核准）：n8n 下載定稿、上傳 R2 並推送
+HISTORY_SELECTED = 'history.selected'
+
+
+def history_poster_path(history_id: str) -> str:
+    """定稿 PNG 的 api 路徑（n8n 以 AUTOMATION_API_URL 加上這個路徑下載）。"""
+    return f'/api/history/{history_id}/poster.png'
+
+
+def build_history_selected(
+    *,
+    webhook_id: str,
+    entry: HistoryEntry,
+    source: Literal['studio', 'automation'],
+    client_ref: str | None,
+    studio_base_url: str,
+) -> dict[str, Any]:
+    return {
+        'event': HISTORY_SELECTED,
+        'webhookId': webhook_id,
+        'historyId': entry.id,
+        'jobId': entry.job_id,
+        'renderId': entry.render.id,
+        'templateId': entry.template_id,
+        'brandId': entry.brand_id,
+        'productId': entry.product_id,
+        'brief': entry.input.brief,
+        'score': entry.render.score,
+        'source': source,
+        'clientRef': client_ref,
+        'posterUrl': history_poster_path(entry.id),
+        'studioUrl': studio_url(studio_base_url, entry.job_id),
+        'selectedAt': entry.selected_at,
     }

@@ -15,8 +15,8 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    UniqueConstraint,
     false,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -145,18 +145,24 @@ class JobUsageRow(Base):
 
 
 class WebhookOutboxRow(Base):
-    """任務結束的通知：與結束事件在同一個交易內寫入，worker 發送並重試。payload 在寫入時就固定。"""
+    """要送給 n8n 的通知：與觸發它的變更（任務結束、選定海報）在同一個交易內寫入，worker 發送並重試。
+    payload 在寫入時就固定。job.finished 每個任務只有一則；history.selected 每次選定一則。"""
 
     __tablename__ = 'webhook_outbox'
     __table_args__ = (
-        UniqueConstraint('job_id', 'event', name='uq_webhook_outbox_job_event'),
+        Index(
+            'uq_webhook_outbox_job_finished',
+            'job_id',
+            unique=True,
+            postgresql_where=text("event = 'job.finished'"),
+        ),
         Index('ix_webhook_outbox_due', 'status', 'next_attempt_at'),
     )
 
     #: wh_<12 位 hex>，也是 X-Webhook-Id（重送時不變）
     id: Mapped[str] = mapped_column(String, primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey('jobs.id', ondelete='CASCADE'))
-    #: job.finished
+    #: job.finished 或 history.selected
     event: Mapped[str]
     payload: Mapped[Json]
     #: pending、delivered、dead
