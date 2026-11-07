@@ -17,14 +17,23 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "url": "https://api.line.me/v2/bot/message/push",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LINE_CHANNEL_ACCESS_TOKEN }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ content: ('⚠️ n8n 工作流「' + $json.workflow.name + '」失敗：' + ($json.execution?.lastNodeExecuted ?? '觸發節點') + '：' + ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? '未知的錯誤')).slice(0, 2000) }) }}",
+        "jsonBody": "={{ JSON.stringify({ to: $env.LINE_TO, messages: [{ type: 'text', text: String('⚠️ n8n 工作流「' + $json.workflow.name + '」失敗：' + ($json.execution?.lastNodeExecuted ?? '觸發節點') + '：' + ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? '未知的錯誤')).slice(0, 5000) }] }) }}",
         "options": {}
       },
       "id": "49d243ca-ddc8-5d91-8808-35f13657d287",
-      "name": "通知 Discord",
+      "name": "通知 LINE",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -38,7 +47,7 @@
       "main": [
         [
           {
-            "node": "通知 Discord",
+            "node": "通知 LINE",
             "type": "main",
             "index": 0
           }

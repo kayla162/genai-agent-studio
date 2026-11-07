@@ -5,9 +5,12 @@
 - /files/brands/… → 品牌設定檔資料夾（Logo 等圖檔）
 """
 
+import io
 import re
 from pathlib import Path
 from urllib.parse import unquote
+
+from PIL import Image
 
 from app.errors import Invalid, NotFound
 from app.settings import Settings
@@ -41,6 +44,33 @@ def resolve_file(settings: Settings, path: str) -> Path | None:
     if not target.is_relative_to(base) or target.suffix.lower() not in FILE_TYPES or not target.is_file():
         return None
     return target
+
+
+#: LINE 圖片訊息的預覽圖上限是 1 MB；原圖與預覽共用同一張，長邊 1600 px 在手機上夠清楚
+PREVIEW_MAX_SIDE = 1600
+PREVIEW_MAX_BYTES = 1_000_000
+
+
+def jpeg_preview(path: Path) -> bytes:
+    """點陣圖 → 長邊最多 PREVIEW_MAX_SIDE、不超過 PREVIEW_MAX_BYTES 的 JPEG（透明的部分補白色）。
+    品質由高往低試，還是太大就再縮小。SVG 不支援。"""
+    if path.suffix.lower() == '.svg':
+        raise Invalid('SVG 沒有預覽圖')
+    with Image.open(path) as source:
+        source.load()
+        image = source.convert('RGBA')
+    flat = Image.new('RGB', image.size, (255, 255, 255))
+    flat.paste(image, mask=image.getchannel('A'))
+    side = PREVIEW_MAX_SIDE
+    while True:
+        scaled = flat.copy()
+        scaled.thumbnail((side, side), Image.Resampling.LANCZOS)
+        for quality in (85, 75, 65):
+            buf = io.BytesIO()
+            scaled.save(buf, 'JPEG', quality=quality, optimize=True)
+            if buf.tell() <= PREVIEW_MAX_BYTES or side <= 200:
+                return buf.getvalue()
+        side = side * 3 // 4
 
 
 def resolve_url(settings: Settings, url: str) -> Path | None:

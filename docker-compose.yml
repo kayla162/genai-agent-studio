@@ -35,8 +35,9 @@ x-backend: &backend
     COMFYUI_URL: ${COMFYUI_URL:-http://host.docker.internal:8188}
     # ComfyUI 的 workflow 與參數對照表（repo 的 comfyui/workflows，唯讀掛載）
     COMFYUI_WORKFLOWS_DIR: /app/comfyui/workflows
-    # 容器之間以 http://api:8000 呼叫（n8n 不經過 nginx）：Host 為 api 也要接受（.env 自訂 ALLOWED_HOSTS 時要保留 "api"）
-    ALLOWED_HOSTS: '${ALLOWED_HOSTS:-["127.0.0.1", "localhost", "api"]}'
+    # 容器之間以 http://api:8000 呼叫（n8n 不經過 nginx）：Host 為 api 也要接受（.env 自訂 ALLOWED_HOSTS 時要保留 "api"）。
+    # PUBLIC_HOST（Cloudflare Tunnel 的網域）也要接受；.env 自訂 ALLOWED_HOSTS 時要自己加上
+    ALLOWED_HOSTS: '${ALLOWED_HOSTS:-["127.0.0.1", "localhost", "api", "${PUBLIC_HOST:-localhost}"]}'
   # Docker Desktop 內建 host.docker.internal；Linux 的 Docker 要加上這一行
   extra_hosts: ['host.docker.internal:host-gateway']
   volumes:
@@ -143,6 +144,9 @@ services:
       target: web
     # nginx 以非 root 執行，聽容器內的 8080
     ports: ['127.0.0.1:3000:8080']
+    environment:
+      # Cloudflare Tunnel 的網域：nginx 的 server_name 多接受這個名稱（見 docs/tunnel.md）
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
     depends_on:
       api: { condition: service_healthy }
     restart: unless-stopped
@@ -161,7 +165,7 @@ services:
       postgres: { condition: service_healthy }
     restart: 'no'
 
-  # n8n：試算表批次產圖與 Discord 審核（docker compose --profile automation up -d）。只綁 127.0.0.1:5678；
+  # n8n：試算表批次產圖與 LINE 審核（docker compose --profile automation up -d）。只綁 127.0.0.1:5678；
   # 第一次啟動時匯入 n8n/workflows/，之後的更新見 n8n/README.md。映像檔內建 node 使用者（非 root）
   n8n:
     profiles: [automation]
@@ -176,8 +180,8 @@ services:
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-}
       GENERIC_TIMEZONE: Asia/Taipei
       TZ: Asia/Taipei
-      # 審核表單與 webhook 的對外網址（Discord 訊息裡的表單連結）
-      WEBHOOK_URL: http://127.0.0.1:5678/
+      # 審核表單與 webhook 的對外網址（LINE 訊息裡的表單連結）；經 Cloudflare Tunnel 開啟時設定 N8N_PUBLIC_URL
+      WEBHOOK_URL: ${N8N_PUBLIC_URL:-http://127.0.0.1:5678/}
       N8N_DIAGNOSTICS_ENABLED: 'false'
       N8N_PERSONALIZATION_ENABLED: 'false'
       # Code 節點驗簽要用 crypto；工作流以 $env 讀下面的變數
@@ -186,7 +190,10 @@ services:
       AUTOMATION_API_URL: http://api:8000
       AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:-}
       JOB_WEBHOOK_SECRET: ${JOB_WEBHOOK_SECRET:-}
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-}
+      LINE_TO: ${LINE_TO:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
       GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID:-}
     # 取代映像檔原本的 entrypoint（tini）：init 讓 Docker 補上 PID 1 的訊號轉送與回收子程序（task runner）
     init: true
@@ -205,6 +212,16 @@ services:
     depends_on:
       n8n-db: { condition: service_completed_successfully }
       api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Cloudflare Tunnel：手機在外面也能開 Studio 與審核表單（docker compose --profile tunnel up -d）。
+  # 不開任何對外的埠：cloudflared 主動連到 Cloudflare。網域與 Cloudflare Access 在 Cloudflare 的介面設定（docs/tunnel.md）
+  cloudflared:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:2026.10.3
+    command: ['tunnel', '--no-autoupdate', 'run']
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     restart: unless-stopped
 
 volumes:

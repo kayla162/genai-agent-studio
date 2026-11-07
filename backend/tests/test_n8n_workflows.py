@@ -100,6 +100,78 @@ def test_no_credentials_or_secrets_are_committed(path: Path) -> None:
             assert credential.get('id') in (None, ''), f'{node["name"]} 帶著憑證 id'
     assert 'discord.com/api/webhooks/' not in text
     assert 'Bearer ' + 't' * 8 not in text
+    # Authorization 只能從環境變數組出（AUTOMATION_TOKEN、LINE_CHANNEL_ACCESS_TOKEN），不寫死 token
+    for node in flow['nodes']:
+        headers = node['parameters'].get('headerParameters', {}).get('parameters', [])
+        for header in headers:
+            if header['name'] == 'Authorization':
+                assert header['value'].startswith('=Bearer {{ $env.'), node['name']
+
+
+@pytest.mark.parametrize('name', ['poster-error', 'poster-job-finished'])
+def test_notifications_go_to_line_push(name: str) -> None:
+    # 通知改用 LINE Messaging API 的推播（純文字）；不再有 Discord
+    flow = load(name)
+    text = (WORKFLOWS / f'{name}.json').read_text(encoding='utf-8')
+    assert 'discord' not in text.lower()
+    pushes = [n for n in flow['nodes'] if n['parameters'].get('url') == 'https://api.line.me/v2/bot/message/push']
+    assert pushes
+    for node in pushes:
+        params = node['parameters']
+        assert params['method'] == 'POST'
+        assert {h['name']: h['value'] for h in params['headerParameters']['parameters']} == {
+            'Authorization': '=Bearer {{ $env.LINE_CHANNEL_ACCESS_TOKEN }}'
+        }
+        assert params['jsonBody'].startswith('={{ JSON.stringify({ to: $env.LINE_TO, messages: [{ type: ')
+        # 最後一則是文字（LINE 文字訊息上限 5000 字）
+        assert "{ type: 'text', text: " in params['jsonBody']
+        assert params['jsonBody'].endswith('.slice(0, 5000) }] }) }}')
+    # 每個節點的連線都指向存在的節點（移除附圖分支後沒有懸空的連線）
+    names = {n['name'] for n in flow['nodes']}
+    for src, outputs in flow['connections'].items():
+        assert src in names
+        for branch in outputs['main']:
+            for target in branch:
+                assert target['node'] in names
+
+
+def to(name: str) -> list[dict[str, Any]]:
+    return [{'node': name, 'type': 'main', 'index': 0}]
+
+
+def test_review_message_is_pushed_with_the_r2_poster_or_as_text() -> None:
+    # 有審查用海報、也設定了 R2 時：下載預覽圖 → 上傳 R2 → LINE 圖片＋文字；
+    # 沒有海報、沒有設定 R2，或下載、上傳失敗時改送純文字，審核照常進行
+    flow = load('poster-job-finished')
+    c = flow['connections']
+    assert c['組出訊息']['main'] == [to('附圖？')]
+    assert c['附圖？']['main'] == [to('下載預覽圖'), to('通知 LINE')]
+    assert c['下載預覽圖']['main'] == [to('上傳 R2'), to('通知 LINE')]
+    assert c['上傳 R2']['main'] == [to('通知 LINE（附圖）'), to('通知 LINE')]
+    assert c['通知 LINE（附圖）']['main'] == [to('等待審核')]
+    assert c['通知 LINE']['main'] == [to('等待審核')]
+
+    nodes = {n['name']: n for n in flow['nodes']}
+    for name in ('下載預覽圖', '上傳 R2'):
+        assert nodes[name].get('onError') == 'continueErrorOutput', name
+    condition = nodes['附圖？']['parameters']['conditions']['conditions'][0]['leftValue']
+    for needle in ('$json.posterKey', '$env.R2_BUCKET', '$env.R2_PUBLIC_BASE_URL'):
+        assert needle in condition
+    assert nodes['下載預覽圖']['parameters']['url'].endswith('{{ $json.payload.best.imageUrl }}?variant=preview')
+    upload = nodes['上傳 R2']
+    assert (upload['type'], upload['parameters']['operation']) == ('n8n-nodes-base.s3', 'upload')
+    assert upload['parameters']['bucketName'] == '={{ $env.R2_BUCKET }}'
+    assert upload['credentials'] == {'s3': {'id': '', 'name': 'Cloudflare R2'}}
+    image = nodes['通知 LINE（附圖）']['parameters']['jsonBody']
+    assert "type: 'image'" in image and 'originalContentUrl' in image and 'previewImageUrl' in image
+    # 錯誤輸出的 $json 是錯誤，不是訊息：兩個 LINE 節點都從「組出訊息」讀文字
+    for name in ('通知 LINE', '通知 LINE（附圖）'):
+        assert "$('組出訊息').first().json.content" in nodes[name]['parameters']['jsonBody'], name
+    key = next(
+        a['value'] for a in nodes['組出訊息']['parameters']['assignments']['assignments'] if a['name'] == 'posterKey'
+    )
+    for needle in ('$json.payload.jobId', '$json.payload.best.renderId', '$json.payload.webhookId'):
+        assert needle in key
 
 
 def test_workflow_payload_fields_exist_in_the_webhook_payload() -> None:

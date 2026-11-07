@@ -759,6 +759,37 @@ def test_files_stay_inside_their_folders(tmp_path: Path) -> None:
         assert resolve_file(settings, path) is None, path
 
 
+def noisy_png(size: tuple[int, int], mode: str = 'RGB') -> bytes:
+    """隨機雜訊幾乎壓不小：2000×2000 的 PNG 約 12 MB，JPEG 也要縮小才會在 1 MB 以內。"""
+    buf = io.BytesIO()
+    Image.frombytes(mode, size, os.urandom(size[0] * size[1] * len(mode))).save(buf, 'PNG')
+    return buf.getvalue()
+
+
+async def test_preview_variant_is_a_small_jpeg(api: LiveApi) -> None:
+    # LINE 的圖片訊息：預覽圖最多 1 MB，只接受 JPEG 或 PNG
+    folder = api.services.settings.data_dir / 'jobs' / 'job_x'
+    folder.mkdir(parents=True)
+    (folder / 'big.png').write_bytes(noisy_png((2000, 2400)))
+    (folder / 'clear.png').write_bytes(noisy_png((300, 200), 'RGBA'))
+    big = await api.http.get('/files/jobs/job_x/big.png', params={'variant': 'preview'})
+    assert (big.status_code, big.headers['content-type']) == (200, 'image/jpeg')
+    assert len(big.content) <= 1_000_000
+    with Image.open(io.BytesIO(big.content)) as image:
+        assert image.format == 'JPEG' and max(image.size) <= 1600
+        assert abs(image.size[0] / image.size[1] - 2000 / 2400) < 0.01
+    small = await api.http.get('/files/jobs/job_x/clear.png', params={'variant': 'preview'})
+    with Image.open(io.BytesIO(small.content)) as image:
+        # 小圖不放大；透明圖補白色
+        assert (image.size, image.mode) == ((300, 200), 'RGB')
+    original = await api.http.get('/files/jobs/job_x/clear.png')
+    assert original.headers['content-type'] == 'image/png'
+    unknown = await api.http.get('/files/jobs/job_x/clear.png', params={'variant': 'huge'})
+    assert unknown.status_code in (400, 422)
+    missing = await api.http.get('/files/jobs/job_x/none.png', params={'variant': 'preview'})
+    assert missing.status_code == 404
+
+
 async def test_requests_with_an_unknown_host_are_refused(api: LiveApi) -> None:
     """DNS rebinding：惡意網頁把自己的網域指到 127.0.0.1 後，瀏覽器送出的 Host 是那個網域，一律拒絕。"""
     assert (await api.http.get('/api/health')).status_code == 200

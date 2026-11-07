@@ -313,6 +313,12 @@
               "name": "content",
               "value": "={{ [($json.payload.stage === 'done' ? '✅ 海報完成，請審核' : '⚠️ 需要人工審核') + '（任務 ' + $json.payload.jobId + '）', '品牌：' + $json.payload.brandId + '　商品：' + $json.payload.productId, '需求：' + $json.payload.brief, '最高分：' + ($json.payload.best.score ?? '—') + ' 分（' + $json.payload.best.renderId + '）', '未通過的檢查：' + ($json.payload.failedChecks.length ? $json.payload.failedChecks.map(c => c.name).join('、') : '無'), $json.payload.reason ? '原因：' + $json.payload.reason : '', '候選圖：' + $json.payload.renders.map(r => r.renderId + '（' + r.templateId + '，' + (r.score ?? '—') + ' 分）').join('、'), 'Studio：' + $json.payload.studioUrl, '審核表單：' + $execution.resumeFormUrl].filter(line => line).join('\\n').slice(0, 2000) }}",
               "type": "string"
+            },
+            {
+              "id": "abf54e75-6362-573b-96a4-94013bb03e6b",
+              "name": "posterKey",
+              "value": "={{ $json.payload.best.imageUrl ? 'review/' + $json.payload.jobId + '/' + $json.payload.best.renderId + '-' + $json.payload.webhookId + '.jpg' : '' }}",
+              "type": "string"
             }
           ]
         },
@@ -339,8 +345,8 @@
           },
           "conditions": [
             {
-              "id": "e69e2ba4-e373-5f99-9281-48f282150c42",
-              "leftValue": "={{ !!$json.payload.best.imageUrl }}",
+              "id": "7bc50d24-1712-516a-a17e-b70ad2e46bf6",
+              "leftValue": "={{ !!$json.posterKey && !!$env.R2_BUCKET && !!$env.R2_PUBLIC_BASE_URL }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -353,8 +359,8 @@
         },
         "options": {}
       },
-      "id": "b32b7586-f7f3-5802-8a02-9ea4093f53f3",
-      "name": "有縮圖？",
+      "id": "1a383c2d-66bc-5ae4-886d-ad028f96a5bb",
+      "name": "附圖？",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -364,7 +370,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.AUTOMATION_API_URL }}{{ $json.payload.best.imageUrl }}",
+        "url": "={{ $env.AUTOMATION_API_URL }}{{ $json.payload.best.imageUrl }}?variant=preview",
         "options": {
           "response": {
             "response": {
@@ -373,61 +379,90 @@
           }
         }
       },
-      "id": "04db151a-91e5-5934-b334-0321127ea957",
-      "name": "下載海報",
+      "id": "de72ee67-c04e-5046-a8e2-4a1ecb45ebb4",
+      "name": "下載預覽圖",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         1760,
         0
-      ]
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "={{ $env.R2_BUCKET }}",
+        "fileName": "={{ $('組出訊息').first().json.posterKey }}",
+        "additionalFields": {}
+      },
+      "id": "448e1c5e-2648-5c72-95ca-ccb4159246b9",
+      "name": "上傳 R2",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        0
+      ],
+      "credentials": {
+        "s3": {
+          "id": "",
+          "name": "Cloudflare R2"
+        }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
+        "url": "https://api.line.me/v2/bot/message/push",
+        "sendHeaders": true,
+        "headerParameters": {
           "parameters": [
             {
-              "parameterType": "formData",
-              "name": "payload_json",
-              "value": "={{ JSON.stringify({ content: $('組出訊息').first().json.content }) }}"
-            },
-            {
-              "parameterType": "formBinaryData",
-              "name": "files[0]",
-              "inputDataFieldName": "data"
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LINE_CHANNEL_ACCESS_TOKEN }}"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $env.LINE_TO, messages: [{ type: 'image', originalContentUrl: $env.R2_PUBLIC_BASE_URL.replace(/\\/+$/, '') + '/' + $('組出訊息').first().json.posterKey, previewImageUrl: $env.R2_PUBLIC_BASE_URL.replace(/\\/+$/, '') + '/' + $('組出訊息').first().json.posterKey }, { type: 'text', text: String($('組出訊息').first().json.content).slice(0, 5000) }] }) }}",
         "options": {}
       },
-      "id": "977e83b6-3333-5d62-8ba7-d9be6065e172",
-      "name": "通知 Discord（附圖）",
+      "id": "fa365eb4-0ee8-55a7-aa4c-db498601817b",
+      "name": "通知 LINE（附圖）",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1980,
+        2200,
         0
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "url": "https://api.line.me/v2/bot/message/push",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LINE_CHANNEL_ACCESS_TOKEN }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ content: $json.content }) }}",
+        "jsonBody": "={{ JSON.stringify({ to: $env.LINE_TO, messages: [{ type: 'text', text: String($('組出訊息').first().json.content).slice(0, 5000) }] }) }}",
         "options": {}
       },
       "id": "8ce0c985-3ec1-5517-87fc-e0a8b2db4204",
-      "name": "通知 Discord",
+      "name": "通知 LINE",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1980,
+        2200,
         200
       ]
     },
@@ -475,7 +510,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        2200,
+        2640,
         100
       ],
       "webhookId": "f6041bff-b202-5347-a8e6-4372a1080266"
@@ -510,7 +545,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2420,
+        2860,
         100
       ]
     },
@@ -544,7 +579,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        2640,
+        3080,
         200
       ]
     },
@@ -581,7 +616,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2860,
+        3300,
         0
       ]
     },
@@ -618,17 +653,26 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2860,
+        3300,
         200
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "url": "https://api.line.me/v2/bot/message/push",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LINE_CHANNEL_ACCESS_TOKEN }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ content: '任務 ' + $('驗證簽章').first().json.payload.jobId + '：' + ($json.error ? '⚠️ ' + $json.error.message + '，請到 Studio 處理：' + $('驗證簽章').first().json.payload.studioUrl : $json.render ? '✅ 已選定 ' + $json.render.id : '🔁 已退回，新任務 ' + $json.jobId) }) }}",
+        "jsonBody": "={{ JSON.stringify({ to: $env.LINE_TO, messages: [{ type: 'text', text: String('任務 ' + $('驗證簽章').first().json.payload.jobId + '：' + ($json.error ? '⚠️ ' + $json.error.message + '，請到 Studio 處理：' + $('驗證簽章').first().json.payload.studioUrl : $json.render ? '✅ 已選定 ' + $json.render.id : '🔁 已退回，新任務 ' + $json.jobId)).slice(0, 5000) }] }) }}",
         "options": {}
       },
       "id": "d8586ced-d550-5925-abf4-0e4c975ee158",
@@ -636,7 +680,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3080,
+        3520,
         100
       ]
     }
@@ -738,54 +782,14 @@
       "main": [
         [
           {
-            "node": "有縮圖？",
+            "node": "附圖？",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "有縮圖？": {
-      "main": [
-        [
-          {
-            "node": "下載海報",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "通知 Discord",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "下載海報": {
-      "main": [
-        [
-          {
-            "node": "通知 Discord（附圖）",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "通知 Discord（附圖）": {
-      "main": [
-        [
-          {
-            "node": "等待審核",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "通知 Discord": {
+    "通知 LINE": {
       "main": [
         [
           {
@@ -853,6 +857,71 @@
         [
           {
             "node": "回覆結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "附圖？": {
+      "main": [
+        [
+          {
+            "node": "下載預覽圖",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下載預覽圖": {
+      "main": [
+        [
+          {
+            "node": "上傳 R2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "上傳 R2": {
+      "main": [
+        [
+          {
+            "node": "通知 LINE（附圖）",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "通知 LINE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "通知 LINE（附圖）": {
+      "main": [
+        [
+          {
+            "node": "等待審核",
             "type": "main",
             "index": 0
           }
